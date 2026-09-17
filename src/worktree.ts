@@ -94,13 +94,24 @@ async function untrackedLines(root: string, paths: string[]): Promise<number> {
   return total;
 }
 
+/** 900 → `900`, 1000 → `1k`, 1500 → `1.5k`, 21746 → `21.7k`, 2_000_000 → `2m`. */
+export function compactCount(n: number): string {
+  const unit = (v: number, suffix: string) => {
+    const rounded = Math.round(v * 10) / 10;
+    return `${rounded >= 100 ? Math.round(rounded) : rounded}${suffix}`;
+  };
+  if (n >= 1_000_000) return unit(n / 1_000_000, 'm');
+  if (n >= 1000) return unit(n / 1000, 'k');
+  return String(n);
+}
+
 /** `↑a ↓b +i −d`, each omitted when zero; empty for a clean, level worktree. */
 export function statsInline(stats: WorktreeStats): string {
   const bits: string[] = [];
   if (stats.commitsAhead) bits.push(`↑${stats.commitsAhead}`);
   if (stats.commitsBehind) bits.push(`↓${stats.commitsBehind}`);
-  if (stats.insertions) bits.push(`+${stats.insertions}`);
-  if (stats.deletions) bits.push(`−${stats.deletions}`);
+  if (stats.insertions) bits.push(`+${compactCount(stats.insertions)}`);
+  if (stats.deletions) bits.push(`−${compactCount(stats.deletions)}`);
   return bits.join(' ');
 }
 
