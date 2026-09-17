@@ -247,7 +247,7 @@ async function readCodexPlan(home: string): Promise<{ plan: string | undefined; 
  */
 function codexPlanLabel(planType: string | undefined, until: string | undefined): string | undefined {
   if (!planType) return undefined;
-  const name = `ChatGPT ${planType.charAt(0).toUpperCase() + planType.slice(1)}`;
+  const name = planType.charAt(0).toUpperCase() + planType.slice(1);
   const t = until ? Date.parse(until) : NaN;
   return Number.isFinite(t) ? `${name} · renews ${new Date(t).toLocaleDateString()}` : name;
 }

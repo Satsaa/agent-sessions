@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { isLive, STATE_ORDER, toolLabel, type Session, type SessionState } from './types.js';
 import { relativeTime, repoRootOf } from './util.js';
 import { statsInline, type WorktreeStats } from './worktree.js';
-import { tintFor, tintedToolIcon, toolIcon } from './icons.js';
+import { stateIcon, toolIcon } from './icons.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
 
@@ -29,7 +29,7 @@ export class SessionItem extends vscode.TreeItem {
     super(session.title, vscode.TreeItemCollapsibleState.None);
     const archived = session.archived || archivedHere;
     this.id = `${idPrefix}${session.tool}:${session.id}`;
-    this.iconPath = tintedToolIcon(session.tool, tintFor(session.state, archived));
+    this.iconPath = stateIcon(session.tool, session.state, archived);
     this.description = describe(session, showTool, stats);
     this.tooltip = tooltipFor(session, archived, stats);
     this.contextValue = ['session', session.tool, archived ? 'archived' : '', isLive(session.state) ? 'live' : 'stopped']
