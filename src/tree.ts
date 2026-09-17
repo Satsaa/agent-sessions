@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { isLive, STATE_ORDER, toolLabel, type Session, type SessionState } from './types.js';
 import { relativeTime, repoRootOf } from './util.js';
 import { statsInline, type WorktreeStats } from './worktree.js';
-import { toolIcon } from './icons.js';
+import { tintFor, tintedToolIcon, toolIcon } from './icons.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
 
@@ -29,7 +29,7 @@ export class SessionItem extends vscode.TreeItem {
     super(session.title, vscode.TreeItemCollapsibleState.None);
     const archived = session.archived || archivedHere;
     this.id = `${idPrefix}${session.tool}:${session.id}`;
-    this.iconPath = iconFor(session.state, archived);
+    this.iconPath = tintedToolIcon(session.tool, tintFor(session.state, archived));
     this.description = describe(session, showTool, stats);
     this.tooltip = tooltipFor(session, archived, stats);
     this.contextValue = ['session', session.tool, archived ? 'archived' : '', isLive(session.state) ? 'live' : 'stopped']
@@ -56,20 +56,6 @@ export class GroupItem extends vscode.TreeItem {
 }
 
 type Node = SessionItem | GroupItem;
-
-function iconFor(state: SessionState, archived: boolean): vscode.ThemeIcon {
-  if (archived) return new vscode.ThemeIcon('archive', new vscode.ThemeColor('disabledForeground'));
-  switch (state) {
-    case 'running':
-      return new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.green'));
-    case 'waiting':
-      return new vscode.ThemeIcon('bell-dot', new vscode.ThemeColor('charts.orange'));
-    case 'replied':
-      return new vscode.ThemeIcon('comment-discussion', new vscode.ThemeColor('charts.blue'));
-    case 'stopped':
-      return new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('disabledForeground'));
-  }
-}
 
 const STATE_LABEL: Record<SessionState, string> = {
   running: 'Working',
