@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -426,12 +426,12 @@
         },
         {
           "command": "agentSessions.pin",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem !~ /-pinned-/",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /-pinned-/)",
           "group": "inline@4"
         },
         {
           "command": "agentSessions.pin",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem !~ /-pinned-/",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /-pinned-/)",
           "group": "2_pin@1"
         },
         {
