@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isLive, STATE_ORDER, toolLabel, type Session, type SessionState } from './types.js';
 import { relativeTime, repoRootOf } from './util.js';
-import type { WorktreeStats } from './worktree.js';
+import { statsInline, type WorktreeStats } from './worktree.js';
 import { toolIcon } from './icons.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
@@ -86,8 +86,8 @@ function describe(session: Session, showTool: boolean, stats: WorktreeStats | un
     let text = `⎇ ${wt.name}`;
     if (stats?.gone) text += ' (gone)';
     else if (stats) {
-      if (stats.commitsAhead !== undefined) text += ` ↑${stats.commitsAhead}`;
-      if (stats.changedFiles !== undefined) text += ` ✎${stats.changedFiles}`;
+      const inline = statsInline(stats);
+      if (inline) text += ` ${inline}`;
     }
     parts.push(text);
   } else if (session.branch) parts.push(session.branch);
@@ -109,7 +109,7 @@ function tooltipFor(session: Session, archived: boolean, stats: WorktreeStats | 
     else if (stats) {
       const bits: string[] = [];
       if (stats.commitsAhead !== undefined) bits.push(`${stats.commitsAhead} ahead${stats.commitsBehind !== undefined ? `, ${stats.commitsBehind} behind` : ''} ${stats.base ?? 'base'}`);
-      if (stats.changedFiles !== undefined) bits.push(`${stats.changedFiles} changed file${stats.changedFiles === 1 ? '' : 's'}`);
+      if (stats.changedFiles !== undefined) bits.push(stats.changedFiles ? `+${stats.insertions ?? '?'} −${stats.deletions ?? '?'} lines in ${stats.changedFiles} file${stats.changedFiles === 1 ? '' : 's'}` : 'clean');
       if (bits.length) md.appendMarkdown(`$(git-commit) ${bits.join(', ')}\n\n`);
     }
     if (session.cwd) md.appendMarkdown(`$(folder) started in \`${session.cwd}\`\n\n`);

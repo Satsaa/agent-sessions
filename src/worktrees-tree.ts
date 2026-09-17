@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { SessionItem } from './tree.js';
 import { isLive, STATE_ORDER, type Session } from './types.js';
-import type { RepoWorktree, WorktreeStats } from './worktree.js';
+import { statsInline, type RepoWorktree, type WorktreeStats } from './worktree.js';
 
 const RECENT_STOPPED = 3;
 
@@ -13,31 +13,17 @@ export class WorktreeItem extends vscode.TreeItem {
     public readonly sessions: Session[],
     locallyArchived: ReadonlySet<string>,
   ) {
-    super(worktree.isMain ? `${worktree.name} (main checkout)` : worktree.name, sessions.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+    super(worktree.isMain ? `${worktree.name} (main checkout)` : worktree.name, sessions.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
     this.id = `worktree:${worktree.path}`;
     this.contextValue = worktree.isMain ? 'worktree-main' : 'worktree';
     this.iconPath = iconFor(worktree, stats, sessions);
     this.description = describe(worktree, stats, sessions);
     this.tooltip = tooltip(worktree, stats, sessions);
     this.resourceUri = vscode.Uri.file(worktree.path);
-    this.children = [
-      new ChangesItem(worktree, stats),
-      ...sessions.map((s) => new SessionItem(s, locallyArchived.has(`${s.tool}:${s.id}`), true, undefined, `wt:${worktree.path}:`)),
-    ];
+    this.children = sessions.map((s) => new SessionItem(s, locallyArchived.has(`${s.tool}:${s.id}`), true, undefined, `wt:${worktree.path}:`));
   }
 
   readonly children: vscode.TreeItem[];
-}
-
-class ChangesItem extends vscode.TreeItem {
-  constructor(worktree: RepoWorktree, stats: WorktreeStats | undefined) {
-    super(changesLabel(stats), vscode.TreeItemCollapsibleState.None);
-    this.id = `worktree-changes:${worktree.path}`;
-    this.contextValue = 'worktree-changes';
-    this.iconPath = new vscode.ThemeIcon(stats?.gone ? 'warning' : 'git-commit');
-    if (stats?.base) this.description = `vs ${stats.base}`;
-    this.command = { command: 'agentSessions.worktree.openFolder', title: 'Open Folder', arguments: [worktree.path] };
-  }
 }
 
 class RepoItem extends vscode.TreeItem {
@@ -72,8 +58,8 @@ function describe(wt: RepoWorktree, stats: WorktreeStats | undefined, sessions: 
   else if (wt.detached) parts.push(`detached ${wt.head?.slice(0, 7) ?? ''}`.trim());
   if (stats?.gone) parts.push('gone');
   else if (stats) {
-    if (stats.commitsAhead !== undefined || stats.commitsBehind !== undefined) parts.push(`↑${stats.commitsAhead ?? '?'} ↓${stats.commitsBehind ?? '?'}`);
-    if (stats.changedFiles !== undefined) parts.push(`✎${stats.changedFiles}`);
+    const inline = statsInline(stats);
+    if (inline) parts.push(inline);
   }
   const live = sessions.filter((s) => isLive(s.state)).length;
   if (live) parts.push(`${live} agent${live === 1 ? '' : 's'}`);
@@ -81,18 +67,14 @@ function describe(wt: RepoWorktree, stats: WorktreeStats | undefined, sessions: 
   return parts.join(' · ');
 }
 
-function changesLabel(stats: WorktreeStats | undefined): string {
-  if (!stats) return 'Reading git status…';
-  if (stats.gone) return 'Directory is gone';
-  const bits: string[] = [];
-  if (stats.commitsAhead !== undefined) bits.push(`${stats.commitsAhead} ahead`);
-  if (stats.commitsBehind !== undefined) bits.push(`${stats.commitsBehind} behind`);
-  const changes: string[] = [];
-  if (stats.staged) changes.push(`${stats.staged} staged`);
-  if (stats.unstaged) changes.push(`${stats.unstaged} unstaged`);
-  if (stats.untracked) changes.push(`${stats.untracked} untracked`);
-  bits.push(changes.length ? changes.join(', ') : stats.changedFiles === undefined ? 'status unavailable' : 'clean');
-  return bits.join(' · ');
+function changesText(stats: WorktreeStats): string {
+  if (stats.changedFiles === undefined) return 'status unavailable';
+  if (!stats.changedFiles) return 'clean';
+  const files: string[] = [];
+  if (stats.staged) files.push(`${stats.staged} staged`);
+  if (stats.unstaged) files.push(`${stats.unstaged} unstaged`);
+  if (stats.untracked) files.push(`${stats.untracked} untracked`);
+  return `+${stats.insertions ?? '?'} −${stats.deletions ?? '?'} lines (${files.join(', ')})`;
 }
 
 function tooltip(wt: RepoWorktree, stats: WorktreeStats | undefined, sessions: Session[]): vscode.MarkdownString {
@@ -103,7 +85,7 @@ function tooltip(wt: RepoWorktree, stats: WorktreeStats | undefined, sessions: S
   else if (wt.detached) md.appendMarkdown(`$(git-commit) detached at \`${wt.head?.slice(0, 12) ?? '?'}\`\n\n`);
   if (stats && !stats.gone) {
     if (stats.base) md.appendMarkdown(`$(arrow-swap) ${stats.commitsAhead ?? '?'} ahead, ${stats.commitsBehind ?? '?'} behind \`${stats.base}\`\n\n`);
-    md.appendMarkdown(`$(diff) ${changesLabel(stats).split(' · ').pop()}\n\n`);
+    md.appendMarkdown(`$(diff) ${changesText(stats)}\n\n`);
   }
   if (wt.locked) md.appendMarkdown(`$(lock) locked: ${wt.locked}\n\n`);
   if (wt.prunable) md.appendMarkdown(`$(warning) prunable: ${wt.prunable}\n\n`);

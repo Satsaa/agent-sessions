@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Session, Worktree } from './types.js';
 import { repoRootOf, statOrUndefined, worktreeTopOf } from './util.js';
@@ -28,6 +29,9 @@ export interface WorktreeStats {
   staged: number | undefined;
   unstaged: number | undefined;
   untracked: number | undefined;
+  /** Lines added / removed across staged, unstaged and untracked changes (`git diff HEAD --numstat` plus untracked file lengths). */
+  insertions: number | undefined;
+  deletions: number | undefined;
   /** Branch checked out right now. */
   branch: string | undefined;
   /** The directory no longer exists. */
@@ -68,6 +72,38 @@ async function baseRef(wt: Worktree, isMain: boolean): Promise<string | undefine
   return undefined;
 }
 
+async function untrackedLines(root: string, paths: string[]): Promise<number> {
+  let total = 0;
+  await Promise.all(
+    paths.slice(0, 200).map(async (rel) => {
+      const full = path.join(root, rel);
+      const st = await statOrUndefined(full);
+      if (!st?.isFile() || st.size > 4 * 1024 * 1024) return;
+      try {
+        const buf = await fsp.readFile(full);
+        if (buf.includes(0)) return; // binary
+        let n = 0;
+        for (const b of buf) if (b === 10) n++;
+        if (buf.length && buf[buf.length - 1] !== 10) n++;
+        total += n;
+      } catch {
+        // unreadable: skip
+      }
+    }),
+  );
+  return total;
+}
+
+/** `↑a ↓b +i −d`, each omitted when zero; empty for a clean, level worktree. */
+export function statsInline(stats: WorktreeStats): string {
+  const bits: string[] = [];
+  if (stats.commitsAhead) bits.push(`↑${stats.commitsAhead}`);
+  if (stats.commitsBehind) bits.push(`↓${stats.commitsBehind}`);
+  if (stats.insertions) bits.push(`+${stats.insertions}`);
+  if (stats.deletions) bits.push(`−${stats.deletions}`);
+  return bits.join(' ');
+}
+
 async function computeStats(wt: Worktree, isMain: boolean): Promise<WorktreeStats> {
   const asOf = Date.now();
   const empty: WorktreeStats = {
@@ -78,14 +114,17 @@ async function computeStats(wt: Worktree, isMain: boolean): Promise<WorktreeStat
     staged: undefined,
     unstaged: undefined,
     untracked: undefined,
+    insertions: undefined,
+    deletions: undefined,
     branch: wt.branch,
     gone: false,
     asOf,
   };
   if (!(await statOrUndefined(wt.path))?.isDirectory()) return { ...empty, gone: true };
 
-  const [status, branchOut, base] = await Promise.all([
+  const [status, numstat, branchOut, base] = await Promise.all([
     git(wt.path, ['status', '--porcelain=v1', '--untracked-files=normal']),
+    git(wt.path, ['diff', 'HEAD', '--numstat', '--no-renames']),
     git(wt.path, ['rev-parse', '--abbrev-ref', 'HEAD']),
     baseRef(wt, isMain),
   ]);
@@ -108,6 +147,24 @@ async function computeStats(wt: Worktree, isMain: boolean): Promise<WorktreeStat
     out.unstaged = unstaged;
     out.untracked = untracked;
     out.changedFiles = status.split('\n').filter((l) => l.length > 0).length;
+    if (numstat !== undefined) {
+      let ins = 0;
+      let del = 0;
+      for (const line of numstat.split('\n')) {
+        const m = /^(\d+|-)\t(\d+|-)\t/.exec(line);
+        if (!m) continue;
+        if (m[1] !== '-') ins += Number(m[1]);
+        if (m[2] !== '-') del += Number(m[2]);
+      }
+      // An untracked file is all insertions; count its lines the way `git add -N` would show them.
+      const untrackedPaths = status
+        .split('\n')
+        .filter((l) => l.startsWith('?? '))
+        .map((l) => l.slice(3).replace(/^"(.*)"$/, '$1'));
+      ins += await untrackedLines(wt.path, untrackedPaths);
+      out.insertions = ins;
+      out.deletions = del;
+    }
   }
   const branch = branchOut?.trim();
   out.branch = branch && branch !== 'HEAD' ? branch : wt.branch;
