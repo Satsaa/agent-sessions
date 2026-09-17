@@ -13,7 +13,12 @@ A VS Code sidebar that lists your **Claude Code** and **Codex** sessions togethe
 | speech bubbles (blue) | Replied | it finished its turn and its process is alive, waiting for your next message |
 | hollow circle (grey) | Stopped | no process holds the session; it is history |
 
-Each row's description shows the tool, the **worktree** (or branch when it is the main checkout) and how long ago it was touched. The tooltip has the working directory, branch, PID and session id.
+Each row's description shows the tool, the **worktree** (or branch when it is the main checkout) and how long ago it was touched. A worktree row also carries `↑N` commits ahead of its upstream (or of the main checkout when the branch has no upstream) and `✎N` changed files, refreshed with the list. The tooltip has the worktree path, branch, the directory the session was started in, PID and session id.
+
+Worktrees are detected from what the agent actually did, not from where it was launched — sessions usually start in the repository and move into a worktree later:
+
+- Claude Code writes a `worktree-state` record into the transcript when a session enters or leaves a worktree (`EnterWorktree` / `ExitWorktree`, `claude -w`); the latest one wins. Without one, the shell's most recent recorded cwd decides.
+- Codex records a thread's cwd once and never moves it, so the rollout's tool calls are scanned for the last `workdir`, `cd` or `git -C` directory; a directory inside a linked worktree names it.
 
 **Usage view** — subscription limits for both accounts:
 
@@ -24,6 +29,7 @@ Two status bar items mirror this: working / waiting / replied counts on the left
 
 ## Actions
 
+- **Agent Sessions: Show Sessions** (or **View: Show Agent Sessions**) opens the sidebar from the command palette.
 - **Click a session** to open it. Claude sessions open in a Claude Code tab in the *active* editor group (not a new locked group). Codex threads open in the Codex conversation editor. If a session is already open, its tab is revealed.
 - **New Claude / New Codex** buttons in the view title start a fresh session, again as a tab.
 - Right-click: Resume in Terminal (`claude --resume` / `codex resume` in the session's cwd), Copy Resume Command, Open Transcript File, Open Working Directory in New Window, Archive / Unarchive.

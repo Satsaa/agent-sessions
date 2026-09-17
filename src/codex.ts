@@ -2,8 +2,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { createReadStream } from 'node:fs';
+import * as fsp from 'node:fs/promises';
 import type { Session, SessionState } from './types.js';
 import { cleanTitle, expandHome, listDir, statOrUndefined, walkFiles } from './util.js';
+import { worktreeFromCwd } from './worktree.js';
+import type { Worktree } from './types.js';
 
 export function codexHome(configured: string): string {
   if (configured) return expandHome(configured);
@@ -102,6 +105,87 @@ function stateFor(locked: boolean, lastTurn: string | undefined): SessionState {
   return 'replied';
 }
 
+// ---- Where a thread's commands actually run ----
+
+const DIR_REF = /"workdir"\s*:\s*"([^"]+)"|\bcd\s+(\/[^\s;&|"')]+)|\bgit\s+-C\s+(\/[^\s;&|"')]+)/g;
+const TAIL_BYTES = 256 * 1024;
+const workDirCache = new Map<string, { mtimeMs: number; size: number; dir: string | undefined }>();
+
+/**
+ * Codex records a thread's cwd once and never moves it, but the agent addresses a worktree through
+ * the `workdir` of its exec calls (or `cd` / `git -C`), so the last such directory in the rollout is
+ * where the thread is working now.
+ */
+function lastDirInLine(line: string): string | undefined {
+  if (!line.includes('"response_item"') || !(line.includes('"function_call"') || line.includes('"custom_tool_call"'))) return undefined;
+  let d: { type?: string; payload?: { type?: string; input?: string; arguments?: string } };
+  try {
+    d = JSON.parse(line) as typeof d;
+  } catch {
+    return undefined;
+  }
+  const p = d.payload;
+  if (!p || (p.type !== 'function_call' && p.type !== 'custom_tool_call')) return undefined;
+  const text = p.input ?? p.arguments ?? '';
+  let last: string | undefined;
+  for (const m of text.matchAll(DIR_REF)) last = m[1] ?? m[2] ?? m[3];
+  return last;
+}
+
+async function lastDirInTail(rolloutPath: string, size: number): Promise<string | undefined> {
+  const fh = await fsp.open(rolloutPath, 'r');
+  try {
+    const start = Math.max(0, size - TAIL_BYTES);
+    const buf = Buffer.alloc(size - start);
+    await fh.read(buf, 0, buf.length, start);
+    const lines = buf.toString('utf8').split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const dir = lastDirInLine(lines[i] ?? '');
+      if (dir) return dir;
+    }
+  } finally {
+    await fh.close();
+  }
+  return undefined;
+}
+
+async function lastDirInFile(rolloutPath: string): Promise<string | undefined> {
+  let dir: string | undefined;
+  const rl = readline.createInterface({ input: createReadStream(rolloutPath, { encoding: 'utf8' }), crlfDelay: Infinity });
+  try {
+    for await (const line of rl) dir = lastDirInLine(line) ?? dir;
+  } finally {
+    rl.close();
+  }
+  return dir;
+}
+
+async function lastCommandDir(rolloutPath: string, mtimeMs: number, size: number): Promise<string | undefined> {
+  const cached = workDirCache.get(rolloutPath);
+  if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.dir;
+  let dir: string | undefined;
+  try {
+    // The tail is enough while the thread keeps issuing commands; a stretch of pure output
+    // (one tool result can be far larger than the tail) must not make a known directory vanish,
+    // so the previous answer sticks, and a rollout seen for the first time is read in full.
+    dir = (await lastDirInTail(rolloutPath, size)) ?? cached?.dir ?? (cached ? undefined : await lastDirInFile(rolloutPath));
+  } catch {
+    dir = cached?.dir;
+  }
+  workDirCache.set(rolloutPath, { mtimeMs, size, dir });
+  return dir;
+}
+
+const STREAM_SCAN_AGE_MS = 14 * 24 * 3600 * 1000;
+
+async function worktreeForThread(cwd: string | undefined, branch: string | undefined, rolloutPath: string, live: boolean, mtimeMs: number, size: number): Promise<Worktree | undefined> {
+  const direct = worktreeFromCwd(cwd, branch);
+  if (direct) return direct;
+  if (!live && Date.now() - mtimeMs > STREAM_SCAN_AGE_MS) return undefined;
+  const dir = await lastCommandDir(rolloutPath, mtimeMs, size);
+  return worktreeFromCwd(dir, undefined);
+}
+
 async function listFromSqlite(home: string, names: Map<string, string>, locks: Set<string>): Promise<Session[] | undefined> {
   const mod = loadSqlite();
   if (!mod) return undefined;
@@ -150,6 +234,8 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: S
   for (const r of rows) {
     const st = await statOrUndefined(r.rollout_path);
     const updatedAt = st?.mtimeMs ?? r.updated_at * 1000;
+    const locked = locks.has(r.id);
+    const worktree = st ? await worktreeForThread(r.cwd || undefined, r.git_branch ?? undefined, r.rollout_path, locked, st.mtimeMs, st.size) : undefined;
     const prompt = r.first_user_message ? cleanTitle(r.first_user_message) : '';
     const title = names.get(r.id) ?? (r.title ? cleanTitle(r.title) : '') ?? prompt;
     sessions.push({
@@ -158,8 +244,9 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: S
       title: title || prompt || '(no prompt yet)',
       cwd: r.cwd || undefined,
       branch: r.git_branch ?? undefined,
+      worktree,
       updatedAt,
-      state: stateFor(locks.has(r.id), lastTurn.get(r.id)),
+      state: stateFor(locked, lastTurn.get(r.id)),
       archived: r.archived === 1,
       subagent: isSubagentSource(r.source),
       empty: !r.first_user_message,
@@ -252,6 +339,7 @@ async function listFromRollouts(home: string, names: Map<string, string>, locks:
         title: names.get(s.id) ?? s.firstPrompt ?? '(no prompt yet)',
         cwd: s.cwd,
         branch: s.branch,
+        worktree: await worktreeForThread(s.cwd, s.branch, file, locked, st.mtimeMs, st.size),
         updatedAt: st.mtimeMs,
         state: stateFor(locked, s.lastTurnInProgress ? 'inProgress' : undefined),
         archived,

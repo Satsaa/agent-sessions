@@ -7,6 +7,7 @@ import { SessionItem, SessionsProvider, type GroupBy, type ViewOptions } from '.
 import { isLive, type Session, type Tool } from './types.js';
 import { fetchClaudeUsage, readCodexUsage, type ToolUsage } from './usage.js';
 import { UsageProvider, usageStatusText, usageStatusTooltip } from './usage-tree.js';
+import { loadWorktreeStats } from './worktree.js';
 
 const ARCHIVED_KEY = 'agentSessions.archived';
 
@@ -121,6 +122,8 @@ export function activate(context: vscode.ExtensionContext): void {
         const sessions: Session[] = lists.flat();
         provider.setSessions(sessions);
         updateIndicators(provider.visible());
+        // Git stats are a second pass so the list itself never waits on git.
+        provider.setWorktreeStats(await loadWorktreeStats(provider.visible()));
       } finally {
         refreshing = undefined;
         if (pending) {
@@ -213,6 +216,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const persistArchived = () => context.globalState.update(ARCHIVED_KEY, [...archived]);
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('agentSessions.show', () => vscode.commands.executeCommand('agentSessions.list.focus')),
     vscode.commands.registerCommand('agentSessions.refresh', () => refresh()),
     vscode.commands.registerCommand('agentSessions.refreshUsage', () => refreshUsage()),
     vscode.commands.registerCommand('agentSessions.newClaude', () => newSession('claude')),

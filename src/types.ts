@@ -8,13 +8,26 @@ export type Tool = 'claude' | 'codex';
  */
 export type SessionState = 'running' | 'waiting' | 'replied' | 'stopped';
 
+export interface Worktree {
+  /** Top directory of the worktree. */
+  path: string;
+  /** The worktree's folder name. */
+  name: string;
+  /** Branch checked out there, when the tool recorded it. */
+  branch: string | undefined;
+  /** Main checkout that owns `.git/worktrees/<name>`, when resolvable. */
+  repoRoot: string | undefined;
+}
+
 export interface Session {
   tool: Tool;
   id: string;
   title: string;
-  /** Working directory the session was started in (a worktree path for worktree sessions). */
+  /** Working directory the session was started in: the repository checkout, even when it later entered a worktree. */
   cwd: string | undefined;
   branch: string | undefined;
+  /** The linked git worktree the session is working in, when it is not the main checkout. */
+  worktree: Worktree | undefined;
   /** Epoch milliseconds of the last write to the transcript. */
   updatedAt: number;
   state: SessionState;

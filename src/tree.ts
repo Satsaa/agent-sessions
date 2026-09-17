@@ -1,7 +1,8 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isLive, STATE_ORDER, toolLabel, type Session, type SessionState } from './types.js';
-import { relativeTime, repoRootOf, worktreeName } from './util.js';
+import { relativeTime, repoRootOf } from './util.js';
+import type { WorktreeStats } from './worktree.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
 
@@ -21,13 +22,14 @@ export class SessionItem extends vscode.TreeItem {
     public readonly session: Session,
     public readonly archivedHere: boolean,
     showTool: boolean,
+    stats: WorktreeStats | undefined,
   ) {
     super(session.title, vscode.TreeItemCollapsibleState.None);
     const archived = session.archived || archivedHere;
     this.id = `${session.tool}:${session.id}`;
     this.iconPath = iconFor(session.state, archived);
-    this.description = describe(session, showTool);
-    this.tooltip = tooltipFor(session, archived);
+    this.description = describe(session, showTool, stats);
+    this.tooltip = tooltipFor(session, archived, stats);
     this.contextValue = ['session', session.tool, archived ? 'archived' : '', isLive(session.state) ? 'live' : 'stopped']
       .filter(Boolean)
       .join('-');
@@ -74,23 +76,45 @@ const STATE_LABEL: Record<SessionState, string> = {
   stopped: 'Stopped',
 };
 
-function describe(session: Session, showTool: boolean): string {
+function describe(session: Session, showTool: boolean, stats: WorktreeStats | undefined): string {
   const parts: string[] = [];
   if (showTool) parts.push(toolLabel(session.tool));
-  const wt = worktreeName(session.cwd);
-  if (wt) parts.push(`⎇ ${wt}`);
-  else if (session.branch) parts.push(session.branch);
+  const wt = session.worktree;
+  if (wt) {
+    let text = `⎇ ${wt.name}`;
+    if (stats?.gone) text += ' (gone)';
+    else if (stats) {
+      if (stats.commitsAhead !== undefined) text += ` ↑${stats.commitsAhead}`;
+      if (stats.changedFiles !== undefined) text += ` ✎${stats.changedFiles}`;
+    }
+    parts.push(text);
+  } else if (session.branch) parts.push(session.branch);
   parts.push(relativeTime(session.updatedAt));
   return parts.join(' · ');
 }
 
-function tooltipFor(session: Session, archived: boolean): vscode.MarkdownString {
+function tooltipFor(session: Session, archived: boolean, stats: WorktreeStats | undefined): vscode.MarkdownString {
   const md = new vscode.MarkdownString(undefined, true);
   md.isTrusted = true;
   md.appendMarkdown(`**${escapeMd(session.title)}**\n\n`);
   md.appendMarkdown(`${toolLabel(session.tool)} · ${STATE_LABEL[session.state]}${archived ? ' · archived' : ''}${session.subagent ? ' · subagent' : ''}\n\n`);
-  if (session.cwd) md.appendMarkdown(`$(folder) \`${session.cwd}\`\n\n`);
-  if (session.branch) md.appendMarkdown(`$(git-branch) \`${session.branch}\`\n\n`);
+  const wt = session.worktree;
+  if (wt) {
+    md.appendMarkdown(`$(root-folder) worktree **${escapeMd(wt.name)}** \`${wt.path}\`\n\n`);
+    const branch = stats?.branch ?? wt.branch;
+    if (branch) md.appendMarkdown(`$(git-branch) \`${branch}\`\n\n`);
+    if (stats?.gone) md.appendMarkdown(`$(warning) the worktree directory no longer exists\n\n`);
+    else if (stats) {
+      const bits: string[] = [];
+      if (stats.commitsAhead !== undefined) bits.push(`${stats.commitsAhead} commit${stats.commitsAhead === 1 ? '' : 's'} ahead of ${stats.aheadOf ?? 'base'}`);
+      if (stats.changedFiles !== undefined) bits.push(`${stats.changedFiles} changed file${stats.changedFiles === 1 ? '' : 's'}`);
+      if (bits.length) md.appendMarkdown(`$(git-commit) ${bits.join(', ')}\n\n`);
+    }
+    if (session.cwd) md.appendMarkdown(`$(folder) started in \`${session.cwd}\`\n\n`);
+  } else {
+    if (session.cwd) md.appendMarkdown(`$(folder) \`${session.cwd}\`\n\n`);
+    if (session.branch) md.appendMarkdown(`$(git-branch) \`${session.branch}\`\n\n`);
+  }
   md.appendMarkdown(`$(clock) ${new Date(session.updatedAt).toLocaleString()}\n\n`);
   if (session.pid) md.appendMarkdown(`$(server-process) pid ${session.pid}\n\n`);
   md.appendMarkdown(`\`${session.id}\``);
@@ -114,6 +138,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   readonly onDidChangeTreeData = this.changed.event;
 
   private sessions: Session[] = [];
+  private stats = new Map<string, WorktreeStats>();
   private options: ViewOptions;
   private roots: Node[] = [];
 
@@ -123,6 +148,11 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
 
   setSessions(sessions: Session[]): void {
     this.sessions = sessions;
+    this.rebuild();
+  }
+
+  setWorktreeStats(stats: Map<string, WorktreeStats>): void {
+    this.stats = stats;
     this.rebuild();
   }
 
@@ -167,7 +197,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
       if (s.subagent && !o.showSubagents) return false;
       if (s.empty && !o.showEmpty && !isLive(s.state)) return false;
       if (repoRoots) {
-        const root = repoRootOf(s.cwd) ?? s.cwd;
+        const root = s.worktree?.repoRoot ?? repoRootOf(s.cwd) ?? s.cwd;
         if (!root || !repoRoots.has(path.resolve(root))) return false;
       }
       return true;
@@ -180,7 +210,8 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     const live = all.filter((s) => isLive(s.state)).sort(byStateThenRecency);
     const history = all.filter((s) => !isLive(s.state)).sort(byRecency).slice(0, o.historyLimit);
     const shown = [...live, ...history];
-    const item = (s: Session, showTool = true) => new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), showTool);
+    const item = (s: Session, showTool = true) =>
+      new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), showTool, s.worktree ? this.stats.get(s.worktree.path) : undefined);
 
     switch (o.groupBy) {
       case 'none':
@@ -205,7 +236,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
       case 'repository': {
         const buckets = new Map<string, Session[]>();
         for (const s of shown) {
-          const root = repoRootOf(s.cwd) ?? s.cwd ?? '(unknown)';
+          const root = s.worktree?.repoRoot ?? repoRootOf(s.cwd) ?? s.cwd ?? '(unknown)';
           const list = buckets.get(root) ?? [];
           list.push(s);
           buckets.set(root, list);

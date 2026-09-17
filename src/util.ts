@@ -146,17 +146,18 @@ export function repoRootOf(dir: string | undefined): string | undefined {
   return result;
 }
 
-/** Human name for where a session ran: the worktree folder when it is not the main checkout. */
-export function worktreeName(cwd: string | undefined): string | undefined {
+/** The linked worktree a path lies in: its top directory (the one holding the `.git` file), or undefined for a main checkout. */
+export function worktreeTopOf(cwd: string | undefined): string | undefined {
   if (!cwd) return undefined;
   const root = repoRootOf(cwd);
   if (!root || path.resolve(root) === path.resolve(cwd)) return undefined;
-  // Prefer the worktree's own top directory even when cwd is a subfolder inside it.
   let cur = path.resolve(cwd);
   for (let i = 0; i < 40; i++) {
     const dotGit = path.join(cur, '.git');
     try {
-      if (fs.statSync(dotGit).isFile()) return path.basename(cur);
+      const st = fs.statSync(dotGit);
+      if (st.isFile()) return cur;
+      if (st.isDirectory()) return undefined; // reached a main checkout: cwd was a subfolder of it
     } catch {
       // keep climbing
     }
@@ -164,5 +165,5 @@ export function worktreeName(cwd: string | undefined): string | undefined {
     if (parent === cur) break;
     cur = parent;
   }
-  return path.basename(cwd);
+  return undefined;
 }

@@ -4,7 +4,9 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { createReadStream } from 'node:fs';
 import type { Session, SessionState } from './types.js';
+import type { Worktree } from './types.js';
 import { cleanTitle, expandHome, listDir, processAlive, readJsonFile, statOrUndefined } from './util.js';
+import { worktreeFromCwd, worktreeFromPath } from './worktree.js';
 
 export function claudeHome(configured: string): string {
   if (configured) return expandHome(configured);
@@ -55,6 +57,10 @@ interface TranscriptSummary {
   title: string | undefined;
   cwd: string | undefined;
   branch: string | undefined;
+  /** From the latest `worktree-state` record: set on EnterWorktree, null after ExitWorktree, undefined when never recorded. */
+  worktree: Worktree | null | undefined;
+  /** The most recent cwd recorded on a message: where the session's shell is now. */
+  lastCwd: string | undefined;
   lastRole: 'user' | 'assistant' | undefined;
   hasPrompt: boolean;
 }
@@ -76,6 +82,8 @@ interface TranscriptLine {
   isMeta?: boolean;
   isSidechain?: boolean;
   message?: { role?: string; content?: unknown };
+  /** `worktree-state` records: the session's current worktree binding, null once it has exited. */
+  worktreeSession?: { worktreePath?: string; worktreeName?: string; worktreeBranch?: string; originalCwd?: string } | null;
 }
 
 function textOf(content: unknown): string {
@@ -92,7 +100,7 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number):
   const cached = transcriptCache.get(file);
   if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.summary;
 
-  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, lastRole: undefined, hasPrompt: false };
+  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, lastRole: undefined, hasPrompt: false };
   let customTitle: string | undefined;
   let aiTitle: string | undefined;
   let firstPrompt: string | undefined;
@@ -114,10 +122,22 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number):
         case 'ai-title':
           if (d.aiTitle) aiTitle = d.aiTitle;
           break;
+        case 'worktree-state': {
+          // The record's cwd fields track the shell, hopping into subfolders and other worktrees;
+          // only this record says which worktree the session itself is bound to.
+          const ws = d.worktreeSession;
+          summary.worktree = ws?.worktreePath ? worktreeFromPath(ws.worktreePath, ws.worktreeName, ws.worktreeBranch) : null;
+          if (ws?.originalCwd) summary.cwd = ws.originalCwd;
+          break;
+        }
         case 'user':
         case 'assistant': {
           if (d.isSidechain) break;
-          if (d.cwd && !summary.cwd) summary.cwd = d.cwd;
+          // The first cwd is the directory the session was started in; later ones follow the shell.
+          if (d.cwd) {
+            summary.cwd ??= d.cwd;
+            summary.lastCwd = d.cwd;
+          }
           if (d.gitBranch) summary.branch = d.gitBranch;
           const role = d.message?.role === 'assistant' || d.type === 'assistant' ? 'assistant' : 'user';
           if (role === 'user') {
@@ -179,13 +199,16 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
       if (!st) continue;
       const summary = await summarizeTranscript(file, st.mtimeMs, st.size);
       const liveInfo = live.get(id);
+      const cwd = summary.cwd ?? liveInfo?.cwd;
       seen.add(id);
       sessions.push({
         tool: 'claude',
         id,
         title: liveInfo?.name ?? summary.title ?? '(no prompt yet)',
-        cwd: summary.cwd ?? liveInfo?.cwd,
+        cwd,
         branch: summary.branch,
+        // Without a binding, the shell's current directory tells: started inside a worktree, or `cd`'d into one and stayed.
+        worktree: summary.worktree ?? worktreeFromCwd(summary.lastCwd ?? cwd, summary.branch),
         updatedAt: st.mtimeMs,
         state: stateFor(liveInfo, summary.lastRole),
         archived: false,
@@ -206,6 +229,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
       title: info.name ?? '(new session)',
       cwd: info.cwd,
       branch: undefined,
+      worktree: worktreeFromCwd(info.cwd, undefined),
       updatedAt: Date.now(),
       state: stateFor(info, undefined),
       archived: false,
