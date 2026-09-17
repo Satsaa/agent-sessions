@@ -102,7 +102,9 @@ export async function newSession(tool: Tool): Promise<void> {
     t.sendText('codex', true);
     return;
   }
-  await openCodex(codexRouteUri('/extension/panel/new'));
+  // The Codex extension's own "New Codex Agent" command: it owns the panel route and whatever its landing state is,
+  // so our button cannot drift from the + button in its sidebar.
+  await vscode.commands.executeCommand('chatgpt.newCodexPanel');
 }
 
 /** Labels of every open tab, for matching sessions to the panels that show them (the vendor extensions title panels with the session title). */
