@@ -76,7 +76,9 @@ function describe(session: Session, showTool: boolean, stats: WorktreeStats | un
       if (inline) text += ` ${inline}`;
     }
     parts.push(text);
-  } else if (session.branch) parts.push(session.branch);
+  }
+  // A session in the main checkout names neither: the repository is where you
+  // are anyway, and its branch is the tooltip's business.
   parts.push(relativeTime(session.updatedAt));
   return parts.join(' · ');
 }
@@ -129,6 +131,8 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   private stats = new Map<string, WorktreeStats>();
   private options: ViewOptions;
   private roots: Node[] = [];
+  /** What the view last rendered; a rebuild that changes nothing visible fires no event. */
+  private rendered = '';
 
   constructor(options: ViewOptions) {
     this.options = options;
@@ -244,6 +248,24 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
         break;
       }
     }
+    // VS Code shows the view's progress bar on every data-change event. Refreshes
+    // arrive every few hundred milliseconds while an agent writes its transcript,
+    // so firing unconditionally kept that bar flickering at the top of the view.
+    // Fire only when something the rows display has actually changed.
+    const rendered = JSON.stringify(this.roots.map(renderKey));
+    if (rendered === this.rendered) return;
+    this.rendered = rendered;
     this.changed.fire(undefined);
   }
+}
+
+/** Everything a row shows, so equal keys mean an equal picture. */
+function renderKey(node: Node): unknown {
+  const icon = node.iconPath;
+  const iconKey =
+    icon instanceof vscode.ThemeIcon ? `${icon.id}:${icon.color?.id ?? ''}`
+    : typeof icon === 'object' && icon !== null && 'dark' in icon ? String(icon.dark)
+    : String(icon);
+  const base = [node.id, node.label, node.description, node.contextValue, node.collapsibleState, iconKey];
+  return node instanceof GroupItem ? [...base, node.children.map(renderKey)] : base;
 }

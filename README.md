@@ -13,7 +13,7 @@ A VS Code sidebar that lists your **Claude Code** and **Codex** sessions togethe
 | speech bubbles (blue) | Replied | it finished its turn and its process is alive, waiting for your next message |
 | hollow circle (grey) | Stopped | no process holds the session; it is history |
 
-Each row's description shows the tool, the **worktree** (or branch when it is the main checkout) and how long ago it was touched. A worktree row also carries `↑N ↓N` commits ahead/behind its upstream (or the main checkout when the branch has no upstream) and `+I −D` lines changed across staged, unstaged and untracked files (compacted to `1.5k`, `2m`), each omitted when zero and refreshed with the list. The tooltip has the worktree path, branch, the directory the session was started in, PID and session id.
+Each row's description shows the tool, the **worktree** it runs in (nothing for the main checkout — the tooltip has the branch) and how long ago it was touched. A worktree row also carries `↑N ↓N` commits ahead/behind its upstream (or the main checkout when the branch has no upstream) and `+I −D` lines changed across staged, unstaged and untracked files (compacted to `1.5k`, `2m`), each omitted when zero and refreshed with the list. The tooltip has the worktree path, branch, the directory the session was started in, PID and session id.
 
 Worktrees are detected from what the agent actually did, not from where it was launched — sessions usually start in the repository and move into a worktree later:
 
