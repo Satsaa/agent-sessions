@@ -23,10 +23,11 @@ export class SessionItem extends vscode.TreeItem {
     public readonly archivedHere: boolean,
     showTool: boolean,
     stats: WorktreeStats | undefined,
+    idPrefix = '',
   ) {
     super(session.title, vscode.TreeItemCollapsibleState.None);
     const archived = session.archived || archivedHere;
-    this.id = `${session.tool}:${session.id}`;
+    this.id = `${idPrefix}${session.tool}:${session.id}`;
     this.iconPath = iconFor(session.state, archived);
     this.description = describe(session, showTool, stats);
     this.tooltip = tooltipFor(session, archived, stats);
@@ -106,7 +107,7 @@ function tooltipFor(session: Session, archived: boolean, stats: WorktreeStats | 
     if (stats?.gone) md.appendMarkdown(`$(warning) the worktree directory no longer exists\n\n`);
     else if (stats) {
       const bits: string[] = [];
-      if (stats.commitsAhead !== undefined) bits.push(`${stats.commitsAhead} commit${stats.commitsAhead === 1 ? '' : 's'} ahead of ${stats.aheadOf ?? 'base'}`);
+      if (stats.commitsAhead !== undefined) bits.push(`${stats.commitsAhead} ahead${stats.commitsBehind !== undefined ? `, ${stats.commitsBehind} behind` : ''} ${stats.base ?? 'base'}`);
       if (stats.changedFiles !== undefined) bits.push(`${stats.changedFiles} changed file${stats.changedFiles === 1 ? '' : 's'}`);
       if (bits.length) md.appendMarkdown(`$(git-commit) ${bits.join(', ')}\n\n`);
     }

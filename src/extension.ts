@@ -7,7 +7,10 @@ import { SessionItem, SessionsProvider, type GroupBy, type ViewOptions } from '.
 import { isLive, type Session, type Tool } from './types.js';
 import { fetchClaudeUsage, readCodexUsage, type ToolUsage } from './usage.js';
 import { UsageProvider, usageStatusText, usageStatusTooltip } from './usage-tree.js';
-import { loadWorktreeStats } from './worktree.js';
+import { listRepoWorktrees, loadWorktreeStats, sessionWorktrees, type RepoWorktree } from './worktree.js';
+import { WorktreeItem, WorktreesProvider } from './worktrees-tree.js';
+import { repoRootOf } from './util.js';
+import * as path from 'node:path';
 
 const ARCHIVED_KEY = 'agentSessions.archived';
 
@@ -57,7 +60,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const usageView = vscode.window.createTreeView('agentSessions.usage', { treeDataProvider: usageProvider });
   const usageBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   usageBar.command = 'agentSessions.usage.focus';
-  context.subscriptions.push(output, view, statusBar, usageView, usageBar);
+  const worktreesProvider = new WorktreesProvider();
+  const worktreesView = vscode.window.createTreeView('agentSessions.worktrees', { treeDataProvider: worktreesProvider, showCollapseAll: true });
+  context.subscriptions.push(output, view, statusBar, usageView, usageBar, worktreesView);
 
   // ---- Usage ----
 
@@ -122,8 +127,14 @@ export function activate(context: vscode.ExtensionContext): void {
         const sessions: Session[] = lists.flat();
         provider.setSessions(sessions);
         updateIndicators(provider.visible());
-        // Git stats are a second pass so the list itself never waits on git.
-        provider.setWorktreeStats(await loadWorktreeStats(provider.visible()));
+        // Git is a second pass so the list itself never waits on it.
+        const worktrees = await collectWorktrees(sessions);
+        const mains = new Set(worktrees.filter((w) => w.isMain).map((w) => w.path));
+        const stats = await loadWorktreeStats([...sessionWorktrees(provider.visible()), ...worktrees], mains);
+        provider.setWorktreeStats(stats);
+        worktreesProvider.set(worktrees, stats, sessions, archived);
+        const linked = worktrees.filter((w) => !w.isMain).length;
+        worktreesView.description = linked ? `${linked}` : '';
       } finally {
         refreshing = undefined;
         if (pending) {
@@ -133,6 +144,22 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     })();
     return refreshing;
+  };
+  /** Every worktree of every repository in play: the workspace's repos plus any repo a recent or live session ran in. */
+  const collectWorktrees = async (sessions: Session[]): Promise<RepoWorktree[]> => {
+    const roots = new Set<string>();
+    for (const f of vscode.workspace.workspaceFolders ?? []) {
+      const r = repoRootOf(f.uri.fsPath);
+      if (r) roots.add(path.resolve(r));
+    }
+    const recent = Date.now() - 30 * 24 * 3600 * 1000;
+    for (const s of sessions) {
+      if (!isLive(s.state) && s.updatedAt < recent) continue;
+      const r = s.worktree?.repoRoot ?? repoRootOf(s.cwd);
+      if (r) roots.add(path.resolve(r));
+    }
+    const lists = await Promise.all([...roots].sort().map((r) => listRepoWorktrees(r)));
+    return lists.flat();
   };
   const fail = (tool: Tool, e: unknown): Session[] => {
     output.appendLine(`[${new Date().toISOString()}] ${tool}: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
@@ -210,6 +237,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // ---- Commands ----
 
   const sessionOf = (arg: unknown): Session | undefined => (arg instanceof SessionItem ? arg.session : undefined);
+  const worktreePathOf = (arg: unknown): string | undefined => (typeof arg === 'string' ? arg : arg instanceof WorktreeItem ? arg.worktree.path : undefined);
   const setting = async (key: string, value: unknown) => {
     await vscode.workspace.getConfiguration('agentSessions').update(key, value, vscode.ConfigurationTarget.Global);
   };
@@ -217,6 +245,36 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('agentSessions.show', () => vscode.commands.executeCommand('agentSessions.list.focus')),
+    vscode.commands.registerCommand('agentSessions.showWorktrees', () => vscode.commands.executeCommand('agentSessions.worktrees.focus')),
+    vscode.commands.registerCommand('agentSessions.worktree.openFolder', async (arg: unknown) => {
+      const p = worktreePathOf(arg);
+      if (p) await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(p), { forceNewWindow: true });
+    }),
+    vscode.commands.registerCommand('agentSessions.worktree.openTerminal', (arg: unknown) => {
+      const p = worktreePathOf(arg);
+      if (!p) return;
+      vscode.window.createTerminal({ name: path.basename(p), cwd: p }).show();
+    }),
+    vscode.commands.registerCommand('agentSessions.worktree.copyPath', async (arg: unknown) => {
+      const p = worktreePathOf(arg);
+      if (!p) return;
+      await vscode.env.clipboard.writeText(p);
+      vscode.window.setStatusBarMessage(`Copied: ${p}`, 3000);
+    }),
+    vscode.commands.registerCommand('agentSessions.worktree.newClaude', (arg: unknown) => {
+      const p = worktreePathOf(arg);
+      if (!p) return;
+      const t = vscode.window.createTerminal({ name: `Claude: ${path.basename(p)}`, cwd: p });
+      t.show();
+      t.sendText('claude', true);
+    }),
+    vscode.commands.registerCommand('agentSessions.worktree.newCodex', (arg: unknown) => {
+      const p = worktreePathOf(arg);
+      if (!p) return;
+      const t = vscode.window.createTerminal({ name: `Codex: ${path.basename(p)}`, cwd: p });
+      t.show();
+      t.sendText('codex', true);
+    }),
     vscode.commands.registerCommand('agentSessions.refresh', () => refresh()),
     vscode.commands.registerCommand('agentSessions.refreshUsage', () => refreshUsage()),
     vscode.commands.registerCommand('agentSessions.newClaude', () => newSession('claude')),

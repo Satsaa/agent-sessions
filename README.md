@@ -20,6 +20,8 @@ Worktrees are detected from what the agent actually did, not from where it was l
 - Claude Code writes a `worktree-state` record into the transcript when a session enters or leaves a worktree (`EnterWorktree` / `ExitWorktree`, `claude -w`); the latest one wins. Without one, the shell's most recent recorded cwd decides.
 - Codex records a thread's cwd once and never moves it, so the rollout's tool calls are scanned for the last `workdir`, `cd` or `git -C` directory; a directory inside a linked worktree names it.
 
+**Worktrees view** (collapsed by default) — every git worktree of the repositories in play: the workspace's repos plus any repo a live or recent session ran in, the main checkout included. Each row shows the branch, `↑ahead ↓behind` its base and `✎` changed files; expanding it shows the breakdown (staged, unstaged, untracked) and the agents bound to that worktree — live ones first, then the last few stopped sessions — as ordinary session rows that open on click. A worktree with a live agent takes that agent's state icon. The base is the branch's upstream when it has one, else the remote's default branch, else the main checkout's HEAD (detached promotion checkouts land there, so their counts are large by nature). Right-click a worktree to open it in a new window, open a terminal there, copy its path, or start a Claude / Codex session in it.
+
 **Usage view** — subscription limits for both accounts:
 
 - **Claude**: session (5h) and weekly windows, plus any model-specific or extra-usage limits your plan reports, with reset times. Fetched from Anthropic's OAuth usage endpoint with the credential Claude Code already stores locally (the same call the CLI makes for `/usage`). Can be turned off with `agentSessions.usage.claudeNetwork`.
@@ -29,7 +31,7 @@ Two status bar items mirror this: working / waiting / replied counts on the left
 
 ## Actions
 
-- **Agent Sessions: Show Sessions** (or **View: Show Agent Sessions**) opens the sidebar from the command palette.
+- **View: Show Agent Sessions** opens the sidebar from the command palette (VS Code files it under *View*, not *Agent Sessions*); **Agent Sessions: Show Sessions** and **Agent Sessions: Show Worktrees** focus one view.
 - **Click a session** to open it. Claude sessions open in a Claude Code tab in the *active* editor group (not a new locked group). Codex threads open in the Codex conversation editor. If a session is already open, its tab is revealed.
 - **New Claude / New Codex** buttons in the view title start a fresh session, again as a tab.
 - Right-click: Resume in Terminal (`claude --resume` / `codex resume` in the session's cwd), Copy Resume Command, Open Transcript File, Open Working Directory in New Window, Archive / Unarchive.
