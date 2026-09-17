@@ -26,7 +26,7 @@ interface Config {
   claudeHome: string;
   codexHome: string;
   pollInterval: number;
-  usage: { enabled: boolean; claudeNetwork: boolean; refreshInterval: number };
+  usage: { enabled: boolean; claudeNetwork: boolean; codexNetwork: boolean; refreshInterval: number };
   view: Omit<ViewOptions, 'locallyArchived' | 'pinned'>;
 }
 
@@ -40,6 +40,7 @@ function readConfig(): Config {
     usage: {
       enabled: c.get<boolean>('usage.enabled', true),
       claudeNetwork: c.get<boolean>('usage.claudeNetwork', true),
+      codexNetwork: c.get<boolean>('usage.codexNetwork', true),
       refreshInterval: Math.max(30, c.get<number>('usage.refreshInterval', 120)),
     },
     view: {
@@ -105,7 +106,7 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       const results = await Promise.all<ToolUsage | undefined>([
         config.tools.includes('claude') ? fetchClaudeUsage(config.claudeHome, config.usage.claudeNetwork, path.join(context.globalStorageUri.fsPath, 'claude-usage'), config.usage.refreshInterval * 1000) : undefined,
-        config.tools.includes('codex') ? readCodexUsage(config.codexHome) : undefined,
+        config.tools.includes('codex') ? readCodexUsage(config.codexHome, config.usage.codexNetwork) : undefined,
       ]);
       const usages = results.filter((u): u is ToolUsage => u !== undefined);
       for (const u of usages) if (u.error) output.appendLine(`[${new Date().toISOString()}] usage ${u.tool}: ${u.error}`);

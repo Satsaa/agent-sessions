@@ -255,9 +255,80 @@ function codexPlanLabel(planType: string | undefined, until: string | undefined)
   return Number.isFinite(t) ? `${name} · renews ${new Date(t).toLocaleDateString()}` : name;
 }
 
-export async function readCodexUsage(home: string): Promise<ToolUsage> {
+const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
+
+interface CodexLiveWindow {
+  used_percent?: number;
+  limit_window_seconds?: number;
+  reset_at?: number;
+}
+
+interface CodexLiveRateLimit {
+  allowed?: boolean;
+  limit_reached?: boolean;
+  primary_window?: CodexLiveWindow | null;
+  secondary_window?: CodexLiveWindow | null;
+}
+
+/** The response of the endpoint the Codex CLI and IDE plugin poll for their own usage display (unofficial, read-only). */
+interface CodexLiveUsage {
+  plan_type?: string | null;
+  email?: string | null;
+  rate_limit?: CodexLiveRateLimit | null;
+  additional_rate_limits?: { limit_name?: string; normal_model_slug?: string; rate_limit?: CodexLiveRateLimit | null }[] | null;
+  credits?: { has_credits?: boolean; unlimited?: boolean; balance?: string } | null;
+  rate_limit_reached_type?: string | null;
+}
+
+function liveWindows(rl: CodexLiveRateLimit | null | undefined, suffix: string, reached: boolean): UsageWindow[] {
+  const both = [rl?.primary_window, rl?.secondary_window].filter((w): w is CodexLiveWindow => !!w && w.used_percent != null);
+  both.sort((a, b) => (a.limit_window_seconds ?? 0) - (b.limit_window_seconds ?? 0));
+  return both.map((w) => ({
+    label: codexWindowLabel(w.limit_window_seconds ? w.limit_window_seconds / 60 : undefined) + suffix,
+    percent: clamp(w.used_percent ?? 0),
+    resetsAt: w.reset_at ? w.reset_at * 1000 : undefined,
+    severity: reached ? 'locked' : undefined,
+    detail: undefined,
+  }));
+}
+
+/**
+ * Live Codex usage from the same endpoint the Codex CLI's `/status` and the IDE plugin read, authenticated with the
+ * access token in `auth.json`. Codex keeps that token fresh while it runs; a 401 here means it has not run for a
+ * while, and the caller falls back to the rollout snapshot rather than refreshing the token itself.
+ */
+async function fetchCodexUsage(home: string): Promise<CodexLiveUsage> {
+  const auth = await readJsonFile<{ tokens?: { access_token?: string; account_id?: string } }>(path.join(home, 'auth.json'));
+  const token = auth?.tokens?.access_token;
+  if (!token) throw new Error('not logged in to ChatGPT');
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+  const { accountId } = decodeCodexAuth(auth);
+  if (accountId) headers['chatgpt-account-id'] = accountId;
+  const res = await fetch(CODEX_USAGE_URL, { headers, signal: AbortSignal.timeout(15_000) });
+  if (!res.ok) throw new Error(res.status === 401 ? 'login token expired (run a Codex turn to refresh it)' : `HTTP ${res.status}`);
+  return (await res.json()) as CodexLiveUsage;
+}
+
+export async function readCodexUsage(home: string, allowNetwork: boolean): Promise<ToolUsage> {
   const account = await readCodexPlan(home);
   const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), account: account.email, windows: [], asOf: 0, source: 'rate_limits recorded in the latest rollout', error: undefined };
+  if (allowNetwork) {
+    try {
+      const live = await fetchCodexUsage(home);
+      const reached = !!live.rate_limit_reached_type || !!live.rate_limit?.limit_reached;
+      const windows = liveWindows(live.rate_limit, '', reached);
+      for (const extra of live.additional_rate_limits ?? []) {
+        const model = extra.normal_model_slug ?? extra.limit_name;
+        windows.push(...liveWindows(extra.rate_limit, model ? ` · ${model}` : '', !!extra.rate_limit?.limit_reached));
+      }
+      if (live.credits?.has_credits) {
+        windows.push({ label: 'Credits', percent: 0, resetsAt: undefined, severity: undefined, detail: live.credits.unlimited ? 'unlimited' : `balance ${live.credits.balance ?? '?'}` });
+      }
+      return { ...base, plan: codexPlanLabel(live.plan_type ?? account.plan, account.until), account: live.email ?? account.email, windows, asOf: Date.now(), source: 'chatgpt.com usage endpoint (the one the Codex CLI and plugin use)' };
+    } catch (err) {
+      base.error = `live usage unavailable: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
   const files = await walkFiles(path.join(home, 'sessions'), (n) => n.startsWith('rollout-') && n.endsWith('.jsonl'));
   const withTimes = await Promise.all(files.map(async (f) => ({ f, mtime: (await statOrUndefined(f))?.mtimeMs ?? 0 })));
   withTimes.sort((a, b) => b.mtime - a.mtime);
@@ -304,5 +375,5 @@ export async function readCodexUsage(home: string): Promise<ToolUsage> {
       };
     }
   }
-  return { ...base, error: 'No rate-limit snapshot found in recent rollouts (run a Codex turn)' };
+  return { ...base, error: [base.error, 'No rate-limit snapshot found in recent rollouts (run a Codex turn)'].filter(Boolean).join('; ') };
 }

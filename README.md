@@ -11,7 +11,7 @@ A VS Code sidebar that lists your **Claude Code** and **Codex** sessions togethe
 | spinning sync (green) | Working | the agent is doing things right now |
 | bell (orange) | Needs your input | it stopped on a permission prompt or a question |
 | speech bubbles (blue) | Replied | it finished its turn and its process is alive, waiting for your next message |
-| hollow circle (grey) | Stopped | no process holds the session; it is history |
+| grey Claude / Codex mark | Stopped | no process holds the session; it is history |
 
 Each row's description shows the tool, the **worktree** it runs in (nothing for the main checkout — the tooltip has the branch) and how long ago it was touched. A worktree row also carries `↑N ↓N` commits ahead/behind its upstream (or the main checkout when the branch has no upstream) and `+I −D` lines changed across staged, unstaged and untracked files (compacted to `1.5k`, `2m`), each omitted when zero and refreshed with the list. The tooltip has the worktree path, branch, the directory the session was started in, PID and session id.
 
@@ -25,7 +25,7 @@ Worktrees are detected from what the agent actually did, not from where it was l
 **Usage view** — subscription limits for both accounts (Claude shows its plan and Max tier, Codex its plan and renewal date read from the login token; ChatGPT plans have no multiplier tiers), each window shown as **percent left** (100% is a fresh window, 0% exhausted) with the original ten-segment inline bar: only the bar is tinted green, orange under 20% left, or red under 10%; labels, percentages and reset times stay neutral. The status bar item takes the colour of the tightest window.
 
 - **Claude**: session (5h) and weekly windows, plus any model-specific or extra-usage limits your plan reports, with reset times. Fetched from Anthropic's OAuth usage endpoint with the credential Claude Code already stores locally (the same call the CLI makes for `/usage`). Windows on the same host share a cache and request lock. A 429 honors `Retry-After` and backs off from five minutes to an hour, keeping the last successful counts and plan visible in both the Usage view and status bar. A warning icon appears once the reading is more than ten minutes old; retry errors stay in the tooltip. Refresh clicks also respect the cooldown. Can be turned off with `agentSessions.usage.claudeNetwork`.
-- **Codex**: the rate-limit snapshot Codex writes into every rollout's `token_count` event, so it is as fresh as your last Codex turn and involves no network call.
+- **Codex**: fetched live from the chatgpt.com usage endpoint the Codex CLI's `/status` and the IDE plugin read, with the login stored in `~/.codex/auth.json` — weekly window, any model reserve limits, credits. Codex keeps that token fresh while it runs; if it has gone stale, or `agentSessions.usage.codexNetwork` is off, the numbers come from the rate-limit snapshot Codex writes into every rollout's `token_count` event, as fresh as your last Codex turn. Switching account refetches immediately.
 
 Two status bar items mirror this: working / waiting / replied counts on the left, usage percentages on the right. The Sessions view carries a badge with the number of sessions waiting for input.
 
@@ -91,6 +91,7 @@ pnpm package      # agent-sessions-<version>.vsix
 | `agentSessions.pollInterval` | `5` | seconds, while any session is live |
 | `agentSessions.usage.enabled` | `true` | |
 | `agentSessions.usage.claudeNetwork` | `true` | allow the Anthropic usage request |
+| `agentSessions.usage.codexNetwork` | `true` | allow the chatgpt.com usage request |
 | `agentSessions.usage.refreshInterval` | `120` | seconds |
 | `agentSessions.claudeHome` | `""` | overrides `$CLAUDE_CONFIG_DIR` / `~/.claude` |
 | `agentSessions.codexHome` | `""` | overrides `$CODEX_HOME` / `~/.codex` |

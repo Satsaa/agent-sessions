@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -611,7 +611,12 @@
         "agentSessions.usage.claudeNetwork": {
           "type": "boolean",
           "default": true,
-          "description": "Fetch Claude usage from Anthropic's OAuth usage endpoint with the credential Claude Code stores locally (the same call as /usage in the CLI). Codex usage is read from local files only."
+          "description": "Fetch Claude usage from Anthropic's OAuth usage endpoint with the credential Claude Code stores locally (the same call as /usage in the CLI)."
+        },
+        "agentSessions.usage.codexNetwork": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fetch Codex usage live from chatgpt.com with the login stored in ~/.codex/auth.json (the same request the Codex CLI and plugin make). Off, or when the token is stale, the numbers come from the latest rollout file."
         },
         "agentSessions.usage.refreshInterval": {
           "type": "number",

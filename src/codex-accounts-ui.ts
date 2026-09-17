@@ -58,7 +58,9 @@ export async function switchCodexAccount(home: string): Promise<boolean> {
   await activateCodexAccount(home, chosen.account);
 
   const label = chosen.account.email ?? chosen.account.accountId ?? 'the selected account';
-  const reload = await vscode.window.showInformationMessage(`Codex now uses ${label}. The Codex extension reads the login when the window starts, so reload to apply it there.`, 'Reload Window', 'Later');
-  if (reload === 'Reload Window') await vscode.commands.executeCommand('workbench.action.reloadWindow');
+  // Not awaited: the caller refetches usage for the new login while the prompt is up.
+  void vscode.window.showInformationMessage(`Codex now uses ${label}. The Codex extension reads the login when the window starts, so reload to apply it there.`, 'Reload Window', 'Later').then((reload) => {
+    if (reload === 'Reload Window') return vscode.commands.executeCommand('workbench.action.reloadWindow');
+  });
   return true;
 }
