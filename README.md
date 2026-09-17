@@ -31,7 +31,7 @@ Two status bar items mirror this: working / waiting / replied counts on the left
 
 ## Actions
 
-- **View: Show Agent Sessions** opens the sidebar from the command palette (VS Code files it under *View*, not *Agent Sessions*); **Agent Sessions: Show Sessions** and **Agent Sessions: Show Worktrees** focus one view.
+- **View: Show Agent Sessions** opens the sidebar from the command palette (VS Code files it under *View*, not *Agent Sessions*; the built-in view of the same name is a different entry); **Agent Sessions: Show Sessions** and **Agent Sessions: Show Worktrees** focus one view.
 - **Click a session** to open it. Claude sessions open in a Claude Code tab in the *active* editor group (not a new locked group). Codex threads open in the Codex conversation editor. If a session is already open, its tab is revealed.
 - **New Claude / New Codex** buttons in the view title start a fresh session, again as a tab.
 - Right-click: Resume in Terminal (`claude --resume` / `codex resume` in the session's cwd), Copy Resume Command, Open Transcript File, Open Working Directory in New Window, Archive / Unarchive.
@@ -92,6 +92,8 @@ pnpm package      # agent-sessions-<version>.vsix
 | `agentSessions.codexHome` | `""` | overrides `$CODEX_HOME` / `~/.codex` |
 
 ## Caveats
+
+- The view container id is `agentSessionsHub`, not `agentSessions`: VS Code reserves the `agentSessions` views key for its built-in Agent Sessions view and silently drops extension views contributed under it.
 
 - Opening sessions relies on two undocumented surfaces: the Claude Code extension's `claude-vscode.editor.open` command arguments and the Codex extension's `openai-codex:` custom editor URI. Either vendor can change them; the terminal fallback still works when they do.
 - Sessions archived inside the Claude Code extension itself are not detected, because that list lives in the extension's private storage.
