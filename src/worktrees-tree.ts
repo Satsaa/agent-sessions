@@ -64,7 +64,6 @@ function describe(wt: RepoWorktree, stats: WorktreeStats | undefined, sessions: 
   }
   const live = sessions.filter((s) => isLive(s.state)).length;
   if (live) parts.push(`${live} agent${live === 1 ? '' : 's'}`);
-  else if (!sessions.length) parts.push('no agent');
   return parts.join(' · ');
 }
 
