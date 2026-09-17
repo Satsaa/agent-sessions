@@ -4,6 +4,7 @@ import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
 import { newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab } from './open.js';
 import { markThisWindow } from './window.js';
+import { formatTranscript, readTranscript } from './transcript.js';
 import { closeCodexSession } from './close.js';
 import { deleteWorktree } from './delete-worktree.js';
 import { SessionItem, SessionsProvider, type GroupBy, type ViewOptions } from './tree.js';
@@ -359,6 +360,17 @@ export function activate(context: vscode.ExtensionContext): void {
       } finally {
         await refresh();
       }
+    }),
+    vscode.commands.registerCommand('agentSessions.copyTranscript', async (arg: unknown) => {
+      const s = sessionOf(arg);
+      if (!s) return;
+      const messages = await readTranscript(s);
+      if (!messages.length) {
+        void vscode.window.showInformationMessage('This session has no messages to copy.');
+        return;
+      }
+      await vscode.env.clipboard.writeText(formatTranscript(s, messages));
+      vscode.window.setStatusBarMessage(`$(copy) Copied ${messages.length} message${messages.length === 1 ? '' : 's'} from "${s.title}"`, 3000);
     }),
     vscode.commands.registerCommand('agentSessions.copyResumeCommand', async (arg: unknown) => {
       const s = sessionOf(arg);

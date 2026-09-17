@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -145,7 +145,7 @@
       },
       {
         "command": "agentSessions.groupBy",
-        "title": "Group Sessions By\u2026",
+        "title": "Group Sessions By…",
         "category": "Agent Sessions",
         "icon": "$(list-tree)"
       },
@@ -224,7 +224,7 @@
       },
       {
         "command": "agentSessions.closeCodex",
-        "title": "Close Codex Session\u2026",
+        "title": "Close Codex Session…",
         "category": "Agent Sessions",
         "icon": "$(close)"
       },
@@ -246,6 +246,12 @@
         "category": "Agent Sessions",
         "icon": "$(trash)",
         "enablement": "!operationInProgress"
+      },
+      {
+        "command": "agentSessions.copyTranscript",
+        "title": "Copy Transcript",
+        "category": "Agent Sessions",
+        "icon": "$(copy)"
       }
     ],
     "menus": {
@@ -431,6 +437,16 @@
           "command": "agentSessions.worktree.delete",
           "when": "view == agentSessions.worktrees && viewItem == worktree",
           "group": "3_delete@1"
+        },
+        {
+          "command": "agentSessions.copyTranscript",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/",
+          "group": "2_copy@2"
+        },
+        {
+          "command": "agentSessions.copyTranscript",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/",
+          "group": "inline@1"
         }
       ],
       "commandPalette": [

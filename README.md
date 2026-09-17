@@ -105,3 +105,5 @@ pnpm package      # agent-sessions-<version>.vsix
 - The Claude spark and Codex blossom are their owners' marks, copied from the installed extensions for recognisability; they are not part of this project's MIT licence.
 
 MIT.
+
+**Copy Transcript** (row button and context menu) puts the conversation on the clipboard as Markdown: the person's prompts and the agent's replies only — tool calls, tool results, reasoning, system and developer instructions, IDE context blocks and interruption markers are left out. Consecutive assistant records merge into one reply.
