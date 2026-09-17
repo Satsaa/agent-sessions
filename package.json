@@ -81,8 +81,8 @@
         "title": "New Claude Session",
         "category": "Agent Sessions",
         "icon": {
-          "light": "resources/claude.svg",
-          "dark": "resources/claude.svg"
+          "light": "resources/toolbar/claude-light.svg",
+          "dark": "resources/toolbar/claude-dark.svg"
         }
       },
       {
@@ -90,8 +90,8 @@
         "title": "New Codex Session",
         "category": "Agent Sessions",
         "icon": {
-          "light": "resources/codex-light.svg",
-          "dark": "resources/codex-dark.svg"
+          "light": "resources/toolbar/codex-light.svg",
+          "dark": "resources/toolbar/codex-dark.svg"
         }
       },
       {
