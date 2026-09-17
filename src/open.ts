@@ -111,3 +111,20 @@ export function openTabLabels(): Set<string> {
   for (const group of vscode.window.tabGroups.all) for (const tab of group.tabs) out.add(tab.label);
   return out;
 }
+
+/**
+ * The session shown by the active editor tab, if it is a Claude or Codex panel. A Codex tab opened by id carries
+ * the id in its URI; a Claude panel (a webview) and a Codex panel started fresh are known only by their title.
+ */
+export function sessionOfActiveTab(sessions: readonly Session[]): Session | undefined {
+  const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+  if (!tab) return undefined;
+  const input = tab.input;
+  if (input instanceof vscode.TabInputCustom && input.uri.scheme === 'openai-codex') {
+    return sessions.find((s) => s.tool === 'codex' && input.uri.path.includes(s.id)) ?? sessions.find((s) => s.tool === 'codex' && s.title === tab.label);
+  }
+  if (input instanceof vscode.TabInputWebview && /claude/i.test(input.viewType)) {
+    return sessions.find((s) => s.tool === 'claude' && s.title === tab.label);
+  }
+  return undefined;
+}

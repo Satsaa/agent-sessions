@@ -171,7 +171,20 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     return element instanceof GroupItem ? element.children : [];
   }
 
-  getParent(): undefined {
+  getParent(element: Node): Node | undefined {
+    if (element instanceof SessionItem) return this.roots.find((r) => r instanceof GroupItem && r.children.includes(element));
+    return undefined;
+  }
+
+  /** The row showing a session, for `TreeView.reveal`. */
+  itemFor(tool: Session['tool'], id: string): SessionItem | undefined {
+    for (const root of this.roots) {
+      if (root instanceof SessionItem && root.session.tool === tool && root.session.id === id) return root;
+      if (root instanceof GroupItem) {
+        const hit = root.children.find((c) => c.session.tool === tool && c.session.id === id);
+        if (hit) return hit;
+      }
+    }
     return undefined;
   }
 

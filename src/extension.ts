@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
-import { newSession, openInTerminal, openSession, openTabLabels, resumeCommand } from './open.js';
+import { newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab } from './open.js';
 import { markThisWindow } from './window.js';
 import { closeCodexSession } from './close.js';
 import { deleteWorktree } from './delete-worktree.js';
@@ -71,6 +71,22 @@ export function activate(context: vscode.ExtensionContext): void {
   const worktreesView = vscode.window.createTreeView('agentSessions.worktrees', { treeDataProvider: worktreesProvider, showCollapseAll: true });
   context.subscriptions.push(output, view, statusBar, usageView, usageBar, worktreesView);
 
+  // The row of the chat in the active editor tab is kept selected, the way the Explorer follows the active file.
+  let latestSessions: Session[] = [];
+  const selectActiveTabSession = (): void => {
+    if (!view.visible) return;
+    const s = sessionOfActiveTab(latestSessions);
+    const item = s && provider.itemFor(s.tool, s.id);
+    if (!item) return;
+    if (view.selection.some((sel) => sel === item)) return;
+    void view.reveal(item, { select: true, focus: false, expand: false }).then(undefined, () => undefined);
+  };
+  context.subscriptions.push(
+    vscode.window.tabGroups.onDidChangeTabs(() => selectActiveTabSession()),
+    vscode.window.tabGroups.onDidChangeTabGroups(() => selectActiveTabSession()),
+    view.onDidChangeVisibility((e) => e.visible && selectActiveTabSession()),
+  );
+
   // ---- Usage ----
 
   let usageTimer: NodeJS.Timeout | undefined;
@@ -131,9 +147,11 @@ export function activate(context: vscode.ExtensionContext): void {
           config.tools.includes('codex') ? listCodexSessions(config.codexHome).catch((e) => fail('codex', e)) : [],
         ]);
         const sessions: Session[] = lists.flat();
+        latestSessions = sessions;
         await markThisWindow(sessions, openTabLabels());
         provider.setSessions(sessions);
         updateIndicators(provider.visible());
+        selectActiveTabSession();
         // Git is a second pass so the list itself never waits on it.
         const worktrees = await collectWorktrees(sessions);
         const mains = new Set(worktrees.filter((w) => w.isMain).map((w) => w.path));
