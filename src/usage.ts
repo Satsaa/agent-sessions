@@ -221,8 +221,40 @@ async function tailText(file: string, bytes = 96 * 1024): Promise<string> {
  * Codex writes the account's rate-limit snapshot into every `token_count` event of a rollout,
  * so the newest such event across all rollouts is the current usage as of the last turn.
  */
+/** What the ChatGPT login token says about the account: `~/.codex/auth.json` holds the id_token, whose claims name the plan and its period. */
+interface CodexAuthClaims {
+  chatgpt_plan_type?: string;
+  chatgpt_subscription_active_until?: string;
+}
+
+async function readCodexPlan(home: string): Promise<{ plan: string | undefined; until: string | undefined }> {
+  const auth = await readJsonFile<{ tokens?: { id_token?: string } }>(path.join(home, 'auth.json'));
+  const token = auth?.tokens?.id_token;
+  const payload = token?.split('.')[1];
+  if (!payload) return { plan: undefined, until: undefined };
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>;
+    const openai = claims['https://api.openai.com/auth'] as CodexAuthClaims | undefined;
+    return { plan: openai?.chatgpt_plan_type, until: openai?.chatgpt_subscription_active_until };
+  } catch {
+    return { plan: undefined, until: undefined };
+  }
+}
+
+/**
+ * ChatGPT plans carry no multiplier (there is no "Pro 20x" — the tiers are Free, Plus, Pro, Business, Enterprise),
+ * so the label is the plan name; the token's subscription period is appended when known.
+ */
+function codexPlanLabel(planType: string | undefined, until: string | undefined): string | undefined {
+  if (!planType) return undefined;
+  const name = `ChatGPT ${planType.charAt(0).toUpperCase() + planType.slice(1)}`;
+  const t = until ? Date.parse(until) : NaN;
+  return Number.isFinite(t) ? `${name} · renews ${new Date(t).toLocaleDateString()}` : name;
+}
+
 export async function readCodexUsage(home: string): Promise<ToolUsage> {
-  const base: ToolUsage = { tool: 'codex', plan: undefined, windows: [], asOf: 0, source: 'rate_limits recorded in the latest rollout', error: undefined };
+  const account = await readCodexPlan(home);
+  const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), windows: [], asOf: 0, source: 'rate_limits recorded in the latest rollout', error: undefined };
   const files = await walkFiles(path.join(home, 'sessions'), (n) => n.startsWith('rollout-') && n.endsWith('.jsonl'));
   const withTimes = await Promise.all(files.map(async (f) => ({ f, mtime: (await statOrUndefined(f))?.mtimeMs ?? 0 })));
   withTimes.sort((a, b) => b.mtime - a.mtime);
@@ -262,7 +294,8 @@ export async function readCodexUsage(home: string): Promise<ToolUsage> {
       }
       return {
         ...base,
-        plan: rl.plan_type ? rl.plan_type.charAt(0).toUpperCase() + rl.plan_type.slice(1) : undefined,
+        // The rollout's plan_type is the fresher of the two when the token is stale.
+        plan: codexPlanLabel(rl.plan_type ?? account.plan, account.until),
         windows,
         asOf: parseIso(d.timestamp) ?? (await statOrUndefined(f))?.mtimeMs ?? Date.now(),
       };
