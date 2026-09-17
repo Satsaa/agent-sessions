@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -25,7 +25,7 @@
   "extensionKind": [
     "workspace"
   ],
-  "main": "./dist/extension.js",
+  "main": "./dist/extension.cjs",
   "type": "module",
   "activationEvents": [
     "onStartupFinished"

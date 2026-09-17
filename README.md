@@ -68,7 +68,7 @@ Over Remote-SSH, install it on the remote (the extension is `workspace`-kind, si
 
 ```
 pnpm install
-pnpm build        # dist/extension.js
+pnpm build        # dist/extension.cjs
 pnpm typecheck
 pnpm package      # agent-sessions-<version>.vsix
 ```

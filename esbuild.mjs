@@ -6,7 +6,7 @@ const watch = process.argv.includes('--watch');
 const options = {
   entryPoints: ['src/extension.ts'],
   bundle: true,
-  outfile: 'dist/extension.js',
+  outfile: 'dist/extension.cjs',
   platform: 'node',
   // VS Code 1.105 ships Node 22+; node:sqlite is loaded lazily and guarded at runtime.
   target: 'node22',
