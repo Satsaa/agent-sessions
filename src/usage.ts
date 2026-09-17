@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import type { Tool } from './types.js';
 import { readJsonFile, walkFiles, statOrUndefined } from './util.js';
 import { cachedClaudeUsage } from './claude-usage-cache.js';
+import { decodeCodexAuth } from './codex-accounts.js';
 
 export interface UsageWindow {
   /** Short label: "Session (5h)", "Weekly", "Weekly · Opus", "Extra usage". */
@@ -18,6 +19,8 @@ export interface UsageWindow {
 export interface ToolUsage {
   tool: Tool;
   plan: string | undefined;
+  /** Which login the numbers belong to (the ChatGPT email for Codex), when known. */
+  account: string | undefined;
   windows: UsageWindow[];
   /** When the numbers were true. */
   asOf: number;
@@ -122,7 +125,7 @@ async function claudeAccountKey(home: string): Promise<string | undefined> {
 }
 
 export async function fetchClaudeUsage(home: string, allowNetwork: boolean, cacheDirectory: string, interval: number): Promise<ToolUsage> {
-  const base: ToolUsage = { tool: 'claude', plan: undefined, windows: [], asOf: Date.now(), source: 'api.anthropic.com/api/oauth/usage', error: undefined };
+  const base: ToolUsage = { tool: 'claude', plan: undefined, account: undefined, windows: [], asOf: Date.now(), source: 'api.anthropic.com/api/oauth/usage', error: undefined };
   const creds = await readJsonFile<ClaudeCredentials>(path.join(home, '.credentials.json'));
   const oauth = creds?.claudeAiOauth;
   base.plan = planLabel(oauth?.subscriptionType, oauth?.rateLimitTier);
@@ -236,24 +239,9 @@ async function tailText(file: string, bytes = 96 * 1024): Promise<string> {
  * Codex writes the account's rate-limit snapshot into every `token_count` event of a rollout,
  * so the newest such event across all rollouts is the current usage as of the last turn.
  */
-/** What the ChatGPT login token says about the account: `~/.codex/auth.json` holds the id_token, whose claims name the plan and its period. */
-interface CodexAuthClaims {
-  chatgpt_plan_type?: string;
-  chatgpt_subscription_active_until?: string;
-}
-
-async function readCodexPlan(home: string): Promise<{ plan: string | undefined; until: string | undefined }> {
-  const auth = await readJsonFile<{ tokens?: { id_token?: string } }>(path.join(home, 'auth.json'));
-  const token = auth?.tokens?.id_token;
-  const payload = token?.split('.')[1];
-  if (!payload) return { plan: undefined, until: undefined };
-  try {
-    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>;
-    const openai = claims['https://api.openai.com/auth'] as CodexAuthClaims | undefined;
-    return { plan: openai?.chatgpt_plan_type, until: openai?.chatgpt_subscription_active_until };
-  } catch {
-    return { plan: undefined, until: undefined };
-  }
+async function readCodexPlan(home: string): Promise<{ plan: string | undefined; until: string | undefined; email: string | undefined }> {
+  const { plan, until, email } = decodeCodexAuth(await readJsonFile(path.join(home, 'auth.json')));
+  return { plan, until, email };
 }
 
 /**
@@ -269,7 +257,7 @@ function codexPlanLabel(planType: string | undefined, until: string | undefined)
 
 export async function readCodexUsage(home: string): Promise<ToolUsage> {
   const account = await readCodexPlan(home);
-  const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), windows: [], asOf: 0, source: 'rate_limits recorded in the latest rollout', error: undefined };
+  const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), account: account.email, windows: [], asOf: 0, source: 'rate_limits recorded in the latest rollout', error: undefined };
   const files = await walkFiles(path.join(home, 'sessions'), (n) => n.startsWith('rollout-') && n.endsWith('.jsonl'));
   const withTimes = await Promise.all(files.map(async (f) => ({ f, mtime: (await statOrUndefined(f))?.mtimeMs ?? 0 })));
   withTimes.sort((a, b) => b.mtime - a.mtime);

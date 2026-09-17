@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -252,6 +252,12 @@
         "title": "Copy Transcript",
         "category": "Agent Sessions",
         "icon": "$(copy)"
+      },
+      {
+        "command": "agentSessions.switchCodexAccount",
+        "title": "Switch Codex Account",
+        "category": "Agent Sessions",
+        "icon": "$(account)"
       }
     ],
     "menus": {
@@ -315,6 +321,16 @@
           "command": "agentSessions.refresh",
           "when": "view == agentSessions.worktrees",
           "group": "navigation"
+        },
+        {
+          "command": "agentSessions.switchCodexAccount",
+          "when": "view == agentSessions.usage",
+          "group": "navigation@2"
+        },
+        {
+          "command": "agentSessions.switchCodexAccount",
+          "when": "view == agentSessions.list",
+          "group": "3_accounts@1"
         }
       ],
       "view/item/context": [

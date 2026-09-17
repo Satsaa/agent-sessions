@@ -9,6 +9,7 @@ import { closeCodexSession } from './close.js';
 import { deleteWorktree } from './delete-worktree.js';
 import { SessionItem, SessionsProvider, type GroupBy, type ViewOptions } from './tree.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
+import { switchCodexAccount } from './codex-accounts-ui.js';
 import { fetchClaudeUsage, readCodexUsage, type ToolUsage } from './usage.js';
 import { UsageProvider, usageStatusColor, usageStatusText, usageStatusTooltip } from './usage-view.js';
 import { initIcons } from './icons.js';
@@ -315,6 +316,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('agentSessions.refresh', () => refresh()),
     vscode.commands.registerCommand('agentSessions.refreshUsage', () => refreshUsage()),
+    vscode.commands.registerCommand('agentSessions.switchCodexAccount', async () => {
+      try {
+        if (await switchCodexAccount(config.codexHome)) {
+          await refresh();
+          await refreshUsage();
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        output.appendLine(`switch codex account failed: ${message}`);
+        void vscode.window.showErrorMessage(`Could not switch Codex account: ${message}`);
+      }
+    }),
     vscode.commands.registerCommand('agentSessions.newClaude', () => newSession('claude')),
     vscode.commands.registerCommand('agentSessions.newCodex', () => newSession('codex')),
     vscode.commands.registerCommand('agentSessions.showArchived', () => setting('showArchived', true)),

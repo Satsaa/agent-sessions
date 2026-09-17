@@ -36,6 +36,7 @@ Two status bar items mirror this: working / waiting / replied counts on the left
 - **Pin / Unpin Session** keeps a session at the top of Active even after it stops. Pins persist across reloads, appear in both session lists, and keep the real status icon. Repository, archive and subagent filters still apply.
 - **New Claude / New Codex** buttons in the view title start a fresh session, again as a tab.
 - **Close Codex Session…** (× on each Codex row, also in the right-click menu) releases a stuck local session on Linux, including Remote-SSH and WSL. It asks before stopping the Codex process and lists **all sessions that process holds**, since one app-server can own several. Active work in those sessions is interrupted; saved conversations remain available to reopen. The original window may need a reload to reconnect Codex.
+- **Switch Codex Account…** (account icon in the Usage view title, also in the Sessions view menu) moves Codex between several ChatGPT logins on one machine. It lists every login found under the Codex home — the active `auth.json`, profiles it saved under `auth-profiles/` and any `auth-backup.*` copy — one entry per account with email and plan. Switching first saves the current login as a profile (so its refreshed tokens are kept), then, on Linux, asks to stop every running Codex process, because each one keeps the login it started with and holds its sessions locked until it exits, and finally offers **Reload Window**, since the Codex extension reads the login when the window starts. *Add another account…* saves the current login and runs `codex logout; codex login` in a terminal; the new login shows up in the list once it exists. The Usage tooltip names the active account.
 - Right-click: Resume in Terminal (`claude --resume` / `codex resume` in the session's cwd), Copy Resume Command, Open Transcript File, Open Working Directory in New Window, Archive / Unarchive.
 - View menu: show/hide archived sessions, show/hide subagent threads, only this repository (worktrees of the workspace's repo included), group by Activity / Repository / Tool / None.
 
@@ -50,7 +51,7 @@ If the Claude Code or Codex extension is not installed, opening falls back to a 
 
 ## How it reads state
 
-Session discovery is read-only. The explicit Close action sends SIGTERM to the verified Codex lock owner; it does not delete lock files, transcripts or database rows:
+Session discovery is read-only. The explicit Close and Switch Account actions send SIGTERM to verified Codex lock owners, and Switch Account rewrites `~/.codex/auth.json` from a saved copy (mode 600, written via rename); nothing deletes lock files, transcripts or database rows:
 
 - Claude live status comes from `~/.claude/sessions/<pid>.json` (busy / waiting / idle) after checking the PID is alive; titles from the transcript's `custom-title` / `ai-title` records or the first prompt; cwd and branch from the transcript.
 - Codex threads come from `state_*.sqlite` via `node:sqlite` (read-only), turn status from `thread_history_*.sqlite`, liveness from `thread-writer-locks/` (on Linux, only locks actually held by a Codex process count; leftover unlocked files are ignored). On a host without `node:sqlite` it falls back to scanning the rollout files.

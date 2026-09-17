@@ -108,7 +108,7 @@ vscode.postMessage('ready');
   private groupsHtml(webview: vscode.Webview): string {
     return this.usages.map((u) => {
       const icons = toolIcon(u.tool);
-      const title = [toolLabel(u.tool), u.plan, u.error, u.asOf ? `As of ${relativeTime(u.asOf)} (${new Date(u.asOf).toLocaleString()})` : '', `Source: ${u.source}`].filter(Boolean).join('\n');
+      const title = [toolLabel(u.tool), u.account, u.plan, u.error, u.asOf ? `As of ${relativeTime(u.asOf)} (${new Date(u.asOf).toLocaleString()})` : '', `Source: ${u.source}`].filter(Boolean).join('\n');
       const message = !u.windows.length ? u.error ?? 'No limits reported' : '';
       const rows = u.windows.map(windowHtml).join('') + (message ? `<li class="message">${escapeHtml(message)}</li>` : '');
       const warning = isUsageStale(u) ? '<span class="stale" role="img" aria-label="Usage is more than 10 minutes old" title="Usage is more than 10 minutes old">⚠</span>' : '';
@@ -172,7 +172,7 @@ export function usageStatusColor(usages: ToolUsage[]): vscode.ThemeColor | undef
 export function usageStatusTooltip(usages: ToolUsage[]): vscode.MarkdownString {
   const md = new vscode.MarkdownString(undefined, true);
   for (const u of usages) {
-    md.appendMarkdown(`**${toolLabel(u.tool)}**${u.plan ? ` · ${u.plan}` : ''}\n\n`);
+    md.appendMarkdown(`**${toolLabel(u.tool)}**${u.account ? ` · ${u.account}` : ''}${u.plan ? ` · ${u.plan}` : ''}\n\n`);
     if (u.error) {
       md.appendMarkdown(`${u.error}\n\n`);
     }
