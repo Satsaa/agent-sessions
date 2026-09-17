@@ -41,6 +41,8 @@ export interface Session {
   transcriptPath: string;
   /** PID of the process holding the session, when known. */
   pid: number | undefined;
+  /** The process was started from the VS Code window this extension runs in (see window.ts). */
+  inThisWindow: boolean;
 }
 
 export const STATE_ORDER: Record<SessionState, number> = {

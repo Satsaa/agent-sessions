@@ -6,6 +6,7 @@ import * as fsp from 'node:fs/promises';
 import type { Session, SessionState } from './types.js';
 import { cleanTitle, expandHome, listDir, statOrUndefined, walkFiles } from './util.js';
 import { worktreeFromCwd } from './worktree.js';
+import { holdersOfFilesIn } from './window.js';
 import type { Worktree } from './types.js';
 
 export function codexHome(configured: string): string {
@@ -86,11 +87,13 @@ async function readThreadNames(home: string): Promise<Map<string, string>> {
   return out;
 }
 
-/** Thread ids currently held open by a codex process (CLI or the VS Code extension's app-server). */
-async function readLocks(home: string): Promise<Set<string>> {
-  const out = new Set<string>();
-  for (const e of await listDir(path.join(home, 'thread-writer-locks'))) {
-    if (e.isFile() && e.name.endsWith('.lock')) out.add(e.name.slice(0, -'.lock'.length));
+/** Live thread ids → the pid of the codex process holding the writer lock (CLI or the VS Code extension's app-server), when /proc can tell. */
+async function readLocks(home: string): Promise<Map<string, number | undefined>> {
+  const dir = path.join(home, 'thread-writer-locks');
+  const out = new Map<string, number | undefined>();
+  const holders = process.platform === 'linux' ? await holdersOfFilesIn(dir, 'codex') : new Map<string, number>();
+  for (const e of await listDir(dir)) {
+    if (e.isFile() && e.name.endsWith('.lock')) out.set(e.name.slice(0, -'.lock'.length), holders.get(e.name));
   }
   return out;
 }
@@ -187,7 +190,7 @@ async function worktreeForThread(cwd: string | undefined, branch: string | undef
   return worktreeFromCwd(dir, undefined);
 }
 
-async function listFromSqlite(home: string, names: Map<string, string>, locks: Set<string>): Promise<Session[] | undefined> {
+async function listFromSqlite(home: string, names: Map<string, string>, locks: Map<string, number | undefined>): Promise<Session[] | undefined> {
   const mod = loadSqlite();
   if (!mod) return undefined;
   const stateFile = await newestDb(home, 'state');
@@ -253,7 +256,8 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: S
       subagent: isSubagentSource(r.source),
       empty: !r.first_user_message,
       transcriptPath: r.rollout_path,
-      pid: undefined,
+      pid: locks.get(r.id),
+      inThisWindow: false,
     });
   }
   return sessions;
@@ -327,7 +331,7 @@ async function summarizeRollout(file: string, mtimeMs: number, size: number): Pr
   return summary;
 }
 
-async function listFromRollouts(home: string, names: Map<string, string>, locks: Set<string>): Promise<Session[]> {
+async function listFromRollouts(home: string, names: Map<string, string>, locks: Map<string, number | undefined>): Promise<Session[]> {
   const sessions: Session[] = [];
   const dirs: { dir: string; archived: boolean }[] = [
     { dir: path.join(home, 'sessions'), archived: false },
@@ -353,7 +357,8 @@ async function listFromRollouts(home: string, names: Map<string, string>, locks:
         subagent: s.subagent,
         empty: !s.firstPrompt,
         transcriptPath: file,
-        pid: undefined,
+        pid: locks.get(s.id),
+        inThisWindow: false,
       });
     }
   }

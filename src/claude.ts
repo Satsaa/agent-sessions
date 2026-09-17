@@ -223,6 +223,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
         empty: !summary.hasPrompt,
         transcriptPath: file,
         pid: liveInfo?.pid,
+        inThisWindow: false,
       });
     }
   }
@@ -244,6 +245,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
       empty: true,
       transcriptPath: '',
       pid: info.pid,
+      inThisWindow: false,
     });
   }
 
