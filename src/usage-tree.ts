@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { toolLabel } from './types.js';
+import { toolIcon } from './icons.js';
 import { relativeTime } from './util.js';
 import type { ToolUsage, UsageWindow } from './usage.js';
 
@@ -8,9 +9,7 @@ class ToolUsageItem extends vscode.TreeItem {
     super(toolLabel(usage.tool), vscode.TreeItemCollapsibleState.Expanded);
     this.id = `usage:${usage.tool}`;
     this.description = usage.error ? 'unavailable' : usage.plan ?? '';
-    this.iconPath = usage.error
-      ? new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.orange'))
-      : new vscode.ThemeIcon(usage.tool === 'claude' ? 'sparkle' : 'hubot');
+    this.iconPath = usage.error ? new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.orange')) : toolIcon(usage.tool);
     const md = new vscode.MarkdownString(undefined, true);
     md.appendMarkdown(`**${toolLabel(usage.tool)}**${usage.plan ? ` · ${usage.plan}` : ''}\n\n`);
     if (usage.error) md.appendMarkdown(`$(warning) ${usage.error}\n\n`);
@@ -25,12 +24,12 @@ class WindowItem extends vscode.TreeItem {
   constructor(tool: string, w: UsageWindow) {
     super(w.label, vscode.TreeItemCollapsibleState.None);
     this.id = `usage:${tool}:${w.label}`;
-    const bar = progressBar(w.percent);
+    const left = remaining(w);
     const reset = w.resetsAt ? `resets ${resetText(w.resetsAt)}` : '';
-    this.description = [w.detail ? `${w.detail}` : `${bar} ${w.percent}%`, reset].filter(Boolean).join(' · ');
+    this.description = [w.detail ? `${w.detail}` : `${progressBar(left)} ${left}%`, reset].filter(Boolean).join(' · ');
     this.iconPath = iconFor(w);
     const md = new vscode.MarkdownString(undefined, true);
-    md.appendMarkdown(`**${w.label}** — ${w.percent}% used\n\n`);
+    md.appendMarkdown(`**${w.label}** — ${left}% left (${w.percent}% used)\n\n`);
     if (w.resetsAt) md.appendMarkdown(`Resets ${new Date(w.resetsAt).toLocaleString()} (${resetText(w.resetsAt)})\n\n`);
     if (w.detail) md.appendMarkdown(`${w.detail}\n\n`);
     if (w.severity && w.severity !== 'normal') md.appendMarkdown(`Severity: ${w.severity}`);
@@ -49,6 +48,11 @@ class MessageItem extends vscode.TreeItem {
 
 type Node = ToolUsageItem | WindowItem | MessageItem;
 
+/** Windows count down: 100% is a fresh window, 0% is exhausted. */
+export function remaining(w: UsageWindow): number {
+  return Math.max(0, Math.min(100, 100 - w.percent));
+}
+
 function progressBar(percent: number, cells = 10): string {
   const filled = Math.round((percent / 100) * cells);
   return '▰'.repeat(filled) + '▱'.repeat(cells - filled);
@@ -65,11 +69,20 @@ function resetText(at: number): string {
   return `in ${d}d ${h % 24}h`;
 }
 
+/** Colour of a window: red under 10% left, orange under 20%, green otherwise; the provider's own "locked" is red regardless. */
+export function usageColor(w: UsageWindow): vscode.ThemeColor {
+  const left = remaining(w);
+  if (w.severity === 'locked' || left < 10) return new vscode.ThemeColor('charts.red');
+  if (left < 20) return new vscode.ThemeColor('charts.orange');
+  return new vscode.ThemeColor('charts.green');
+}
+
 function iconFor(w: UsageWindow): vscode.ThemeIcon {
-  if (w.severity === 'locked' || w.percent >= 100) return new vscode.ThemeIcon('lock', new vscode.ThemeColor('charts.red'));
-  if (w.severity === 'critical' || w.percent >= 90) return new vscode.ThemeIcon('flame', new vscode.ThemeColor('charts.red'));
-  if (w.severity === 'warning' || w.percent >= 70) return new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.orange'));
-  return new vscode.ThemeIcon('pie-chart', new vscode.ThemeColor('charts.green'));
+  const left = remaining(w);
+  if (w.severity === 'locked' || left <= 0) return new vscode.ThemeIcon('lock', usageColor(w));
+  if (left < 10) return new vscode.ThemeIcon('flame', usageColor(w));
+  if (left < 20) return new vscode.ThemeIcon('warning', usageColor(w));
+  return new vscode.ThemeIcon('pie-chart', usageColor(w));
 }
 
 export class UsageProvider implements vscode.TreeDataProvider<Node> {
@@ -98,12 +111,23 @@ export class UsageProvider implements vscode.TreeDataProvider<Node> {
   }
 }
 
-/** Compact status-bar text like `Claude 49% · 13%  Codex 88%`. */
+/** Compact status-bar text like `Claude 51%/87%  Codex 12%` — percent LEFT in each window. */
 export function usageStatusText(usages: ToolUsage[]): string {
   return usages
     .filter((u) => !u.error && u.windows.length)
-    .map((u) => `${toolLabel(u.tool)} ${u.windows.filter((w) => !w.detail || w.percent > 0).map((w) => `${w.percent}%`).join('/')}`)
+    .map((u) => `${toolLabel(u.tool)} ${u.windows.filter((w) => !w.detail || w.percent > 0).map((w) => `${remaining(w)}%`).join('/')}`)
     .join('  ');
+}
+
+/** The tightest window across both tools decides the status bar colour. */
+export function usageStatusColor(usages: ToolUsage[]): vscode.ThemeColor | undefined {
+  let worst: UsageWindow | undefined;
+  for (const u of usages) for (const w of u.windows) if (!w.detail && (!worst || remaining(w) < remaining(worst))) worst = w;
+  if (!worst) return undefined;
+  const left = remaining(worst);
+  if (worst.severity === 'locked' || left < 10) return new vscode.ThemeColor('statusBarItem.errorForeground');
+  if (left < 20) return new vscode.ThemeColor('statusBarItem.warningForeground');
+  return undefined;
 }
 
 export function usageStatusTooltip(usages: ToolUsage[]): vscode.MarkdownString {
@@ -115,7 +139,7 @@ export function usageStatusTooltip(usages: ToolUsage[]): vscode.MarkdownString {
       continue;
     }
     for (const w of u.windows) {
-      md.appendMarkdown(`${progressBar(w.percent)} ${w.percent}% ${w.label}${w.resetsAt ? ` · resets ${resetText(w.resetsAt)}` : ''}\n\n`);
+      md.appendMarkdown(`${progressBar(remaining(w))} ${remaining(w)}% left · ${w.label}${w.resetsAt ? ` · resets ${resetText(w.resetsAt)}` : ''}\n\n`);
     }
     md.appendMarkdown(`_as of ${relativeTime(u.asOf)}_\n\n`);
   }

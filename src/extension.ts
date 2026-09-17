@@ -6,7 +6,8 @@ import { newSession, openInTerminal, openSession, resumeCommand } from './open.j
 import { SessionItem, SessionsProvider, type GroupBy, type ViewOptions } from './tree.js';
 import { isLive, type Session, type Tool } from './types.js';
 import { fetchClaudeUsage, readCodexUsage, type ToolUsage } from './usage.js';
-import { UsageProvider, usageStatusText, usageStatusTooltip } from './usage-tree.js';
+import { UsageProvider, usageStatusColor, usageStatusText, usageStatusTooltip } from './usage-tree.js';
+import { initIcons } from './icons.js';
 import { listRepoWorktrees, loadWorktreeStats, sessionWorktrees, type RepoWorktree } from './worktree.js';
 import { WorktreeItem, WorktreesProvider } from './worktrees-tree.js';
 import { repoRootOf } from './util.js';
@@ -47,6 +48,7 @@ function readConfig(): Config {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  initIcons(context);
   const output = vscode.window.createOutputChannel('Agent Sessions');
   let config = readConfig();
   const archived = new Set<string>(context.globalState.get<string[]>(ARCHIVED_KEY, []));
@@ -91,6 +93,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (text) {
         usageBar.text = `$(pie-chart) ${text}`;
         usageBar.tooltip = usageStatusTooltip(usages);
+        usageBar.color = usageStatusColor(usages);
         usageBar.show();
       } else {
         usageBar.hide();

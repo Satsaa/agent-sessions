@@ -22,7 +22,7 @@ Worktrees are detected from what the agent actually did, not from where it was l
 
 **Worktrees view** (collapsed by default) — every git worktree of the repositories in play: the workspace's repos plus any repo a live or recent session ran in, the main checkout included. Each row shows the branch, `↑ahead ↓behind` its base and `✎` changed files; expanding it shows the breakdown (staged, unstaged, untracked) and the agents bound to that worktree — live ones first, then the last few stopped sessions — as ordinary session rows that open on click. A worktree with a live agent takes that agent's state icon. The base is the branch's upstream when it has one, else the remote's default branch, else the main checkout's HEAD (detached promotion checkouts land there, so their counts are large by nature). Right-click a worktree to open it in a new window, open a terminal there, copy its path, or start a Claude / Codex session in it.
 
-**Usage view** — subscription limits for both accounts:
+**Usage view** — subscription limits for both accounts, each window shown as **percent left** (100% is a fresh window, 0% exhausted): green, orange under 20% left, red under 10%. The status bar item takes the colour of the tightest window.
 
 - **Claude**: session (5h) and weekly windows, plus any model-specific or extra-usage limits your plan reports, with reset times. Fetched from Anthropic's OAuth usage endpoint with the credential Claude Code already stores locally (the same call the CLI makes for `/usage`). Can be turned off with `agentSessions.usage.claudeNetwork`.
 - **Codex**: the rate-limit snapshot Codex writes into every rollout's `token_count` event, so it is as fresh as your last Codex turn and involves no network call.
@@ -98,5 +98,7 @@ pnpm package      # agent-sessions-<version>.vsix
 - Opening sessions relies on two undocumented surfaces: the Claude Code extension's `claude-vscode.editor.open` command arguments and the Codex extension's `openai-codex:` custom editor URI. Either vendor can change them; the terminal fallback still works when they do.
 - Sessions archived inside the Claude Code extension itself are not detected, because that list lives in the extension's private storage.
 - "Replied" cannot know whether you have read the reply; it means the agent's turn ended and the process is still up.
+- History is ordered by the last message's timestamp (Claude transcripts, Codex's `updated_at_ms`), not file mtime, which both tools rewrite on resume and maintenance.
+- The Claude spark and Codex blossom are their owners' marks, copied from the installed extensions for recognisability; they are not part of this project's MIT licence.
 
 MIT.

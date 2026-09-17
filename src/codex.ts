@@ -58,6 +58,7 @@ interface ThreadRow {
   cwd: string;
   git_branch: string | null;
   updated_at: number;
+  updated_at_ms: number | null;
   created_at: number;
   archived: number;
   source: string;
@@ -199,7 +200,7 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: S
     try {
       rows = db
         .prepare(
-          'SELECT id, title, first_user_message, cwd, git_branch, updated_at, created_at, archived, source, rollout_path FROM threads',
+          'SELECT id, title, first_user_message, cwd, git_branch, updated_at, updated_at_ms, created_at, archived, source, rollout_path FROM threads',
         )
         .all() as unknown as ThreadRow[];
     } finally {
@@ -233,7 +234,8 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: S
   const sessions: Session[] = [];
   for (const r of rows) {
     const st = await statOrUndefined(r.rollout_path);
-    const updatedAt = st?.mtimeMs ?? r.updated_at * 1000;
+    // Codex's own clock for the thread; the rollout's mtime also moves on maintenance rewrites.
+    const updatedAt = r.updated_at_ms ?? (r.updated_at ? r.updated_at * 1000 : undefined) ?? st?.mtimeMs ?? 0;
     const locked = locks.has(r.id);
     const worktree = st ? await worktreeForThread(r.cwd || undefined, r.git_branch ?? undefined, r.rollout_path, locked, st.mtimeMs, st.size) : undefined;
     const prompt = r.first_user_message ? cleanTitle(r.first_user_message) : '';
@@ -274,6 +276,7 @@ interface RolloutSummary {
   subagent: boolean;
   firstPrompt: string | undefined;
   lastTurnInProgress: boolean;
+  lastAt: number | undefined;
 }
 
 const rolloutCache = new Map<string, { mtimeMs: number; size: number; summary: RolloutSummary }>();
@@ -281,18 +284,22 @@ const rolloutCache = new Map<string, { mtimeMs: number; size: number; summary: R
 async function summarizeRollout(file: string, mtimeMs: number, size: number): Promise<RolloutSummary> {
   const cached = rolloutCache.get(file);
   if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.summary;
-  const summary: RolloutSummary = { id: undefined, cwd: undefined, branch: undefined, subagent: false, firstPrompt: undefined, lastTurnInProgress: false };
+  const summary: RolloutSummary = { id: undefined, cwd: undefined, branch: undefined, subagent: false, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined };
   const rl = readline.createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
   try {
     for await (const line of rl) {
       if (!line) continue;
-      let d: { type?: string; payload?: Record<string, unknown> };
+      let d: { type?: string; timestamp?: string; payload?: Record<string, unknown> };
       try {
         d = JSON.parse(line) as typeof d;
       } catch {
         continue;
       }
       const p = d.payload ?? {};
+      if (d.timestamp) {
+        const t = Date.parse(d.timestamp);
+        if (Number.isFinite(t)) summary.lastAt = t;
+      }
       if (d.type === 'session_meta') {
         const meta = p as RolloutMeta;
         summary.id ??= meta.id;
@@ -340,7 +347,7 @@ async function listFromRollouts(home: string, names: Map<string, string>, locks:
         cwd: s.cwd,
         branch: s.branch,
         worktree: await worktreeForThread(s.cwd, s.branch, file, locked, st.mtimeMs, st.size),
-        updatedAt: st.mtimeMs,
+        updatedAt: s.lastAt ?? st.mtimeMs,
         state: stateFor(locked, s.lastTurnInProgress ? 'inProgress' : undefined),
         archived,
         subagent: s.subagent,

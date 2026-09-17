@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { isLive, STATE_ORDER, toolLabel, type Session, type SessionState } from './types.js';
 import { relativeTime, repoRootOf } from './util.js';
 import type { WorktreeStats } from './worktree.js';
+import { toolIcon } from './icons.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
 
@@ -43,7 +44,7 @@ export class GroupItem extends vscode.TreeItem {
     public readonly key: string,
     label: string,
     public readonly children: SessionItem[],
-    icon: vscode.ThemeIcon | undefined,
+    icon: vscode.ThemeIcon | { light: vscode.Uri; dark: vscode.Uri } | undefined,
     expanded: boolean,
   ) {
     super(label, expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
@@ -229,7 +230,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
         const groups: Node[] = [];
         for (const tool of ['claude', 'codex'] as const) {
           const mine = shown.filter((s) => s.tool === tool).sort(byStateThenRecency);
-          if (mine.length) groups.push(new GroupItem(tool, toolLabel(tool), mine.map((s) => item(s, false)), undefined, true));
+          if (mine.length) groups.push(new GroupItem(tool, toolLabel(tool), mine.map((s) => item(s, false)), toolIcon(tool), true));
         }
         this.roots = groups;
         break;

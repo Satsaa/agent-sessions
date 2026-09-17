@@ -61,6 +61,8 @@ interface TranscriptSummary {
   worktree: Worktree | null | undefined;
   /** The most recent cwd recorded on a message: where the session's shell is now. */
   lastCwd: string | undefined;
+  /** Timestamp of the last message; the file's mtime drifts (Claude rewrites transcripts on resume and title updates). */
+  lastAt: number | undefined;
   lastRole: 'user' | 'assistant' | undefined;
   hasPrompt: boolean;
 }
@@ -81,6 +83,7 @@ interface TranscriptLine {
   gitBranch?: string;
   isMeta?: boolean;
   isSidechain?: boolean;
+  timestamp?: string;
   message?: { role?: string; content?: unknown };
   /** `worktree-state` records: the session's current worktree binding, null once it has exited. */
   worktreeSession?: { worktreePath?: string; worktreeName?: string; worktreeBranch?: string; originalCwd?: string } | null;
@@ -100,7 +103,7 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number):
   const cached = transcriptCache.get(file);
   if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.summary;
 
-  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, lastRole: undefined, hasPrompt: false };
+  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, lastAt: undefined, lastRole: undefined, hasPrompt: false };
   let customTitle: string | undefined;
   let aiTitle: string | undefined;
   let firstPrompt: string | undefined;
@@ -139,6 +142,10 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number):
             summary.lastCwd = d.cwd;
           }
           if (d.gitBranch) summary.branch = d.gitBranch;
+          if (d.timestamp) {
+            const t = Date.parse(d.timestamp);
+            if (Number.isFinite(t)) summary.lastAt = t;
+          }
           const role = d.message?.role === 'assistant' || d.type === 'assistant' ? 'assistant' : 'user';
           if (role === 'user') {
             if (d.isMeta) break;
@@ -209,7 +216,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
         branch: summary.branch,
         // Without a binding, the shell's current directory tells: started inside a worktree, or `cd`'d into one and stayed.
         worktree: summary.worktree ?? worktreeFromCwd(summary.lastCwd ?? cwd, summary.branch),
-        updatedAt: st.mtimeMs,
+        updatedAt: summary.lastAt ?? st.mtimeMs,
         state: stateFor(liveInfo, summary.lastRole),
         archived: false,
         subagent: false,
