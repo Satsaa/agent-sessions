@@ -1,0 +1,428 @@
+{
+  "name": "agent-sessions",
+  "displayName": "Agent Sessions",
+  "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
+  "version": "0.1.0",
+  "publisher": "satsaa",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Satsaa/agent-sessions"
+  },
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "codex",
+    "sessions",
+    "agent"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.js",
+  "type": "module",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentSessions",
+          "title": "Agent Sessions",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentSessions": [
+        {
+          "id": "agentSessions.list",
+          "name": "Sessions",
+          "icon": "resources/icon.svg",
+          "contextualTitle": "Agent Sessions"
+        },
+        {
+          "id": "agentSessions.usage",
+          "name": "Usage",
+          "icon": "resources/icon.svg",
+          "contextualTitle": "Subscription usage",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "agentSessions.list",
+        "contents": "No sessions found under ~/.claude or ~/.codex.\n[New Claude session](command:agentSessions.newClaude)\n[New Codex session](command:agentSessions.newCodex)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "agentSessions.newClaude",
+        "title": "New Claude Session",
+        "category": "Agent Sessions",
+        "icon": "$(add)"
+      },
+      {
+        "command": "agentSessions.newCodex",
+        "title": "New Codex Session",
+        "category": "Agent Sessions",
+        "icon": "$(add)"
+      },
+      {
+        "command": "agentSessions.refresh",
+        "title": "Refresh",
+        "category": "Agent Sessions",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentSessions.refreshUsage",
+        "title": "Refresh Usage",
+        "category": "Agent Sessions",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentSessions.showArchived",
+        "title": "Show Archived Sessions",
+        "category": "Agent Sessions",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "agentSessions.hideArchived",
+        "title": "Hide Archived Sessions",
+        "category": "Agent Sessions",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "agentSessions.showSubagents",
+        "title": "Show Subagent Threads",
+        "category": "Agent Sessions",
+        "icon": "$(type-hierarchy-sub)"
+      },
+      {
+        "command": "agentSessions.hideSubagents",
+        "title": "Hide Subagent Threads",
+        "category": "Agent Sessions",
+        "icon": "$(type-hierarchy-sub)"
+      },
+      {
+        "command": "agentSessions.scopeWorkspace",
+        "title": "Show Only This Repository",
+        "category": "Agent Sessions",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "agentSessions.scopeAll",
+        "title": "Show All Repositories",
+        "category": "Agent Sessions",
+        "icon": "$(filter-filled)"
+      },
+      {
+        "command": "agentSessions.groupBy",
+        "title": "Group Sessions By\u2026",
+        "category": "Agent Sessions",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "agentSessions.open",
+        "title": "Open Session",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.openInTerminal",
+        "title": "Resume in Terminal",
+        "category": "Agent Sessions",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "agentSessions.copyResumeCommand",
+        "title": "Copy Resume Command",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.revealTranscript",
+        "title": "Open Transcript File",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.openFolder",
+        "title": "Open Working Directory in New Window",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.archive",
+        "title": "Archive",
+        "category": "Agent Sessions",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "agentSessions.unarchive",
+        "title": "Unarchive",
+        "category": "Agent Sessions",
+        "icon": "$(inbox)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "agentSessions.newClaude",
+          "when": "view == agentSessions.list",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agentSessions.newCodex",
+          "when": "view == agentSessions.list",
+          "group": "navigation@2"
+        },
+        {
+          "command": "agentSessions.refresh",
+          "when": "view == agentSessions.list",
+          "group": "navigation@9"
+        },
+        {
+          "command": "agentSessions.showArchived",
+          "when": "view == agentSessions.list && !agentSessions.showArchived",
+          "group": "1_filters@1"
+        },
+        {
+          "command": "agentSessions.hideArchived",
+          "when": "view == agentSessions.list && agentSessions.showArchived",
+          "group": "1_filters@1"
+        },
+        {
+          "command": "agentSessions.showSubagents",
+          "when": "view == agentSessions.list && !agentSessions.showSubagents",
+          "group": "1_filters@2"
+        },
+        {
+          "command": "agentSessions.hideSubagents",
+          "when": "view == agentSessions.list && agentSessions.showSubagents",
+          "group": "1_filters@2"
+        },
+        {
+          "command": "agentSessions.scopeWorkspace",
+          "when": "view == agentSessions.list && agentSessions.scope == all",
+          "group": "1_filters@3"
+        },
+        {
+          "command": "agentSessions.scopeAll",
+          "when": "view == agentSessions.list && agentSessions.scope == workspace",
+          "group": "1_filters@3"
+        },
+        {
+          "command": "agentSessions.groupBy",
+          "when": "view == agentSessions.list",
+          "group": "2_layout@1"
+        },
+        {
+          "command": "agentSessions.refreshUsage",
+          "when": "view == agentSessions.usage",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "agentSessions.openInTerminal",
+          "when": "view == agentSessions.list && viewItem =~ /^session/",
+          "group": "inline@1"
+        },
+        {
+          "command": "agentSessions.archive",
+          "when": "view == agentSessions.list && viewItem =~ /^session/ && viewItem =~ /-stopped$/ && viewItem =~ /archived/ == false",
+          "group": "inline@2"
+        },
+        {
+          "command": "agentSessions.unarchive",
+          "when": "view == agentSessions.list && viewItem =~ /archived/",
+          "group": "inline@2"
+        },
+        {
+          "command": "agentSessions.open",
+          "when": "view == agentSessions.list && viewItem =~ /^session/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "agentSessions.openInTerminal",
+          "when": "view == agentSessions.list && viewItem =~ /^session/",
+          "group": "1_open@2"
+        },
+        {
+          "command": "agentSessions.openFolder",
+          "when": "view == agentSessions.list && viewItem =~ /^session/",
+          "group": "1_open@3"
+        },
+        {
+          "command": "agentSessions.copyResumeCommand",
+          "when": "view == agentSessions.list && viewItem =~ /^session/",
+          "group": "2_copy@1"
+        },
+        {
+          "command": "agentSessions.revealTranscript",
+          "when": "view == agentSessions.list && viewItem =~ /^session/",
+          "group": "2_copy@2"
+        },
+        {
+          "command": "agentSessions.archive",
+          "when": "view == agentSessions.list && viewItem =~ /^session/ && viewItem =~ /archived/ == false",
+          "group": "3_archive@1"
+        },
+        {
+          "command": "agentSessions.unarchive",
+          "when": "view == agentSessions.list && viewItem =~ /archived/",
+          "group": "3_archive@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "agentSessions.open",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.openInTerminal",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.copyResumeCommand",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.revealTranscript",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.openFolder",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.archive",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.unarchive",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Agent Sessions",
+      "properties": {
+        "agentSessions.tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "claude",
+              "codex"
+            ]
+          },
+          "default": [
+            "claude",
+            "codex"
+          ],
+          "description": "Which tools' sessions to list."
+        },
+        "agentSessions.groupBy": {
+          "type": "string",
+          "enum": [
+            "activity",
+            "repository",
+            "tool",
+            "none"
+          ],
+          "enumDescriptions": [
+            "Live sessions first, then history",
+            "One group per repository, worktrees inside",
+            "Claude and Codex as separate groups",
+            "One flat list, newest first"
+          ],
+          "default": "activity",
+          "description": "How the session list is grouped."
+        },
+        "agentSessions.scope": {
+          "type": "string",
+          "enum": [
+            "all",
+            "workspace"
+          ],
+          "default": "all",
+          "description": "Show sessions from every repository, or only those whose working directory belongs to the current workspace's repository (worktrees included)."
+        },
+        "agentSessions.showArchived": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show sessions archived in Codex or archived from this view."
+        },
+        "agentSessions.showSubagents": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show subagent threads spawned by another session."
+        },
+        "agentSessions.showEmpty": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show stopped sessions where no prompt was ever sent."
+        },
+        "agentSessions.historyLimit": {
+          "type": "number",
+          "default": 200,
+          "minimum": 10,
+          "description": "Maximum number of stopped sessions to list."
+        },
+        "agentSessions.pollInterval": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "Seconds between status polls while a session is live. File changes refresh the list immediately regardless."
+        },
+        "agentSessions.usage.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show subscription usage for Claude and Codex."
+        },
+        "agentSessions.usage.claudeNetwork": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fetch Claude usage from Anthropic's OAuth usage endpoint with the credential Claude Code stores locally (the same call as /usage in the CLI). Codex usage is read from local files only."
+        },
+        "agentSessions.usage.refreshInterval": {
+          "type": "number",
+          "default": 120,
+          "minimum": 30,
+          "description": "Seconds between usage refreshes."
+        },
+        "agentSessions.claudeHome": {
+          "type": "string",
+          "default": "",
+          "description": "Claude Code config directory. Empty means $CLAUDE_CONFIG_DIR or ~/.claude."
+        },
+        "agentSessions.codexHome": {
+          "type": "string",
+          "default": "",
+          "description": "Codex home directory. Empty means $CODEX_HOME or ~/.codex."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "pnpm build && vsce package --no-dependencies",
+    "install-local": "pnpm package && code --install-extension agent-sessions-$npm_package_version.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.5",
+    "@types/vscode": "1.105.0",
+    "@vscode/vsce": "4.0.0",
+    "esbuild": "0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "packageManager": "pnpm@11.18.0"
+}
