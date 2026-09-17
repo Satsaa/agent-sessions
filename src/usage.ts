@@ -334,11 +334,8 @@ export async function readCodexUsage(home: string, allowNetwork: boolean): Promi
       const reached = !!live.rate_limit_reached_type || !!live.rate_limit?.limit_reached;
       const windows = liveWindows(live.rate_limit, '', reached);
       for (const extra of live.additional_rate_limits ?? []) {
-        // `gpt-reserve` is what OpenAI calls Luna Reserve: a separate allowance for one model once the plan's own runs out.
-        const reserve = extra.limit_name === 'gpt-reserve';
         const model = extra.normal_model_slug ?? extra.limit_name;
-        const suffix = reserve ? ` · ${model ?? 'model'} reserve` : model ? ` · ${model}` : '';
-        windows.push(...liveWindows(extra.rate_limit, suffix, !!extra.rate_limit?.limit_reached));
+        windows.push(...liveWindows(extra.rate_limit, model ? ` · ${model}` : '', !!extra.rate_limit?.limit_reached));
       }
       if (live.credits?.has_credits) {
         windows.push({ label: 'Credits', percent: 0, resetsAt: undefined, severity: undefined, detail: live.credits.unlimited ? 'unlimited' : `balance ${live.credits.balance ?? '?'}` });
