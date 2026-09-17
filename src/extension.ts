@@ -4,7 +4,7 @@ import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
 import { newSession, openInTerminal, openSession, resumeCommand } from './open.js';
 import { SessionItem, SessionsProvider, type GroupBy, type ViewOptions } from './tree.js';
-import { isLive, type Session, type Tool } from './types.js';
+import { isLive, toolLabel, type Session, type Tool } from './types.js';
 import { fetchClaudeUsage, readCodexUsage, type ToolUsage } from './usage.js';
 import { UsageProvider, usageStatusColor, usageStatusText, usageStatusTooltip } from './usage-tree.js';
 import { initIcons } from './icons.js';
@@ -300,7 +300,14 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('agentSessions.open', async (arg: unknown) => {
       const s = sessionOf(arg);
-      if (s) await openSession(s);
+      if (!s) return;
+      try {
+        await openSession(s);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        output.appendLine(`open ${s.tool} ${s.id} failed: ${msg}`);
+        void vscode.window.showErrorMessage(`Could not open ${toolLabel(s.tool)} session: ${msg}`);
+      }
     }),
     vscode.commands.registerCommand('agentSessions.openInTerminal', (arg: unknown) => {
       const s = sessionOf(arg);

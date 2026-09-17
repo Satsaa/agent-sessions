@@ -30,6 +30,8 @@ export interface Session {
   worktree: Worktree | undefined;
   /** Epoch milliseconds of the last write to the transcript. */
   updatedAt: number;
+  /** When the session began (first message); stable, unlike updatedAt, so a live list sorted on it does not reshuffle as agents talk. */
+  startedAt: number;
   state: SessionState;
   /** Archived by the tool itself (Codex) — this view's own archive list is applied separately. */
   archived: boolean;
@@ -45,12 +47,6 @@ export interface Session {
   inThisWindow: boolean;
 }
 
-export const STATE_ORDER: Record<SessionState, number> = {
-  waiting: 0,
-  running: 1,
-  replied: 2,
-  stopped: 3,
-};
 
 export function isLive(state: SessionState): boolean {
   return state !== 'stopped';

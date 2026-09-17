@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { Session, Tool } from './types.js';
+import { isLive, type Session, type Tool } from './types.js';
 
 const CLAUDE_EXTENSION = 'anthropic.claude-code';
 const CODEX_EXTENSION = 'openai.chatgpt';
@@ -19,24 +19,51 @@ function codexRouteUri(routePath: string): vscode.Uri {
  * `programmatic: true` makes it honour the given column as a tab instead of the user's sidebar preference,
  * and an explicit column keeps it from opening a new locked editor group.
  */
+/**
+ * Claude Code's `editor.open` signature (session id, initial prompt, view column, group, full editor, options),
+ * called the way its own session list calls it. The extension reveals the existing panel when the session
+ * already has one in this window and otherwise creates a panel resuming the session.
+ */
 async function openClaude(sessionId: string | undefined): Promise<void> {
-  await vscode.commands.executeCommand(
-    'claude-vscode.editor.open',
-    sessionId,
-    undefined,
-    vscode.ViewColumn.Active,
-    undefined,
-    false,
-    { programmatic: true },
-  );
+  await vscode.commands.executeCommand('claude-vscode.editor.open', sessionId, undefined, undefined, undefined, true, {
+    programmatic: 'honor-preferred-location',
+  });
 }
 
-async function openCodex(routePath: string): Promise<void> {
-  await vscode.commands.executeCommand('vscode.openWith', codexRouteUri(routePath), CODEX_EDITOR_VIEW_TYPE, {
+/**
+ * The Codex tab for a thread: VS Code dedupes custom editors by URI, so opening the tab's own URI reveals it.
+ * A thread opened by id sits at `/local/<id>`; one started fresh in a panel keeps `/extension/panel/new` and is
+ * only recognisable by its title, which the extension sets to the thread's preview.
+ */
+function existingCodexTab(threadId: string, title: string): vscode.Uri | undefined {
+  let byTitle: vscode.Uri | undefined;
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (!(tab.input instanceof vscode.TabInputCustom) || tab.input.uri.scheme !== 'openai-codex') continue;
+      if (tab.input.uri.path.includes(threadId)) return tab.input.uri;
+      if (tab.label === title) byTitle ??= tab.input.uri;
+    }
+  }
+  return byTitle;
+}
+
+async function openCodex(uri: vscode.Uri): Promise<void> {
+  await vscode.commands.executeCommand('vscode.openWith', uri, CODEX_EDITOR_VIEW_TYPE, {
     viewColumn: vscode.ViewColumn.Active,
     preserveFocus: false,
     preview: false,
   });
+}
+
+/** A live session's tab lives in the window that started it; a second window opening it would run the session twice. */
+async function confirmForeignLive(session: Session): Promise<boolean> {
+  if (!isLive(session.state) || session.inThisWindow || session.pid === undefined) return true;
+  const pick = await vscode.window.showWarningMessage(
+    `"${session.title}" is running in another VS Code window. Open it here as well?`,
+    { modal: false },
+    'Open here',
+  );
+  return pick === 'Open here';
 }
 
 export function resumeCommand(session: Session): string {
@@ -52,6 +79,7 @@ export function openInTerminal(session: Session): void {
 }
 
 export async function openSession(session: Session): Promise<void> {
+  if (!(await confirmForeignLive(session))) return;
   if (session.tool === 'claude') {
     if (!extensionInstalled(CLAUDE_EXTENSION)) {
       openInTerminal(session);
@@ -64,7 +92,7 @@ export async function openSession(session: Session): Promise<void> {
     openInTerminal(session);
     return;
   }
-  await openCodex(`/local/${session.id}`);
+  await openCodex(existingCodexTab(session.id, session.title) ?? codexRouteUri(`/local/${session.id}`));
 }
 
 export async function newSession(tool: Tool): Promise<void> {
@@ -84,5 +112,5 @@ export async function newSession(tool: Tool): Promise<void> {
     t.sendText('codex', true);
     return;
   }
-  await openCodex('/extension/panel/new');
+  await openCodex(codexRouteUri('/extension/panel/new'));
 }

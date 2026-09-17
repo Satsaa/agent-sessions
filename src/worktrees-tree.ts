@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { SessionItem } from './tree.js';
-import { isLive, STATE_ORDER, type Session } from './types.js';
+import { isLive, type Session } from './types.js';
 import { statsInline, type RepoWorktree, type WorktreeStats } from './worktree.js';
 
 const RECENT_STOPPED = 3;
@@ -94,8 +94,12 @@ function tooltip(wt: RepoWorktree, stats: WorktreeStats | undefined, sessions: S
   return md;
 }
 
-function byStateThenRecency(a: Session, b: Session): number {
-  return STATE_ORDER[a.state] - STATE_ORDER[b.state] || b.updatedAt - a.updatedAt;
+/** Live sessions first (by start time, which holds still), then stopped ones by recency. */
+function byLiveThenTime(a: Session, b: Session): number {
+  const la = isLive(a.state) ? 0 : 1;
+  const lb = isLive(b.state) ? 0 : 1;
+  if (la !== lb) return la - lb;
+  return la === 0 ? b.startedAt - a.startedAt : b.updatedAt - a.updatedAt;
 }
 
 export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
@@ -114,7 +118,7 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
       byPath.set(key, list);
     }
     const assigned = (wt: RepoWorktree): Session[] => {
-      const all = (byPath.get(wt.path) ?? []).filter((s) => !s.archived && !locallyArchived.has(`${s.tool}:${s.id}`) && !s.subagent).sort(byStateThenRecency);
+      const all = (byPath.get(wt.path) ?? []).filter((s) => !s.archived && !locallyArchived.has(`${s.tool}:${s.id}`) && !s.subagent).sort(byLiveThenTime);
       const live = all.filter((s) => isLive(s.state));
       const stopped = all.filter((s) => !isLive(s.state) && !s.empty).slice(0, RECENT_STOPPED);
       return [...live, ...stopped];

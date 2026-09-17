@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { isLive, STATE_ORDER, toolLabel, type Session, type SessionState } from './types.js';
+import { isLive, toolLabel, type Session, type SessionState } from './types.js';
 import { relativeTime, repoRootOf } from './util.js';
 import { statsInline, type WorktreeStats } from './worktree.js';
 import { stateIcon, toolIcon } from './icons.js';
@@ -119,8 +119,9 @@ function byRecency(a: Session, b: Session): number {
   return b.updatedAt - a.updatedAt;
 }
 
-function byStateThenRecency(a: Session, b: Session): number {
-  return STATE_ORDER[a.state] - STATE_ORDER[b.state] || byRecency(a, b);
+/** Live rows: newest session first, by start time, so the order holds still while agents work and reply. */
+function byStart(a: Session, b: Session): number {
+  return b.startedAt - a.startedAt || byRecency(a, b);
 }
 
 export class SessionsProvider implements vscode.TreeDataProvider<Node> {
@@ -199,7 +200,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   private rebuild(): void {
     const o = this.options;
     const all = this.filtered();
-    const live = all.filter((s) => isLive(s.state)).sort(byStateThenRecency);
+    const live = all.filter((s) => isLive(s.state)).sort(byStart);
     const history = all.filter((s) => !isLive(s.state)).sort(byRecency).slice(0, o.historyLimit);
     const shown = [...live, ...history];
     const item = (s: Session, showTool = true) =>
@@ -207,7 +208,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
 
     switch (o.groupBy) {
       case 'none':
-        this.roots = shown.sort(byStateThenRecency).map((s) => item(s));
+        this.roots = shown.map((s) => item(s));
         break;
       case 'activity': {
         const groups: Node[] = [];
@@ -219,7 +220,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
       case 'tool': {
         const groups: Node[] = [];
         for (const tool of ['claude', 'codex'] as const) {
-          const mine = shown.filter((s) => s.tool === tool).sort(byStateThenRecency);
+          const mine = shown.filter((s) => s.tool === tool);
           if (mine.length) groups.push(new GroupItem(tool, toolLabel(tool), mine.map((s) => item(s, false)), toolIcon(tool), true));
         }
         this.roots = groups;
@@ -243,7 +244,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
           .map(([root, list]) => {
             const label = path.basename(root) || root;
             const expanded = workspaceRoots.has(path.resolve(root)) || list.some((s) => isLive(s.state));
-            return new GroupItem(root, label, list.sort(byStateThenRecency).map((s) => item(s)), new vscode.ThemeIcon('repo'), expanded);
+            return new GroupItem(root, label, list.map((s) => item(s)), new vscode.ThemeIcon('repo'), expanded);
           });
         break;
       }

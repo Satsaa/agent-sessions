@@ -7,6 +7,10 @@ export function initIcons(context: vscode.ExtensionContext): void {
   root = context.extensionPath;
 }
 
+export function iconRoot(): string {
+  return root;
+}
+
 /** Theme-aware monochrome vendor marks, shared with the native view toolbar. */
 export function toolIcon(tool: Tool): { light: vscode.Uri; dark: vscode.Uri } {
   const file = (theme: 'light' | 'dark') => vscode.Uri.file(path.join(root, 'resources', 'toolbar', `${tool}-${theme}.svg`));

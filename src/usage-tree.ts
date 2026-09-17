@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { toolLabel } from './types.js';
-import { toolIcon } from './icons.js';
+import * as path from 'node:path';
+import { iconRoot, toolIcon } from './icons.js';
 import { relativeTime } from './util.js';
 import type { ToolUsage, UsageWindow } from './usage.js';
 
@@ -26,8 +27,9 @@ class WindowItem extends vscode.TreeItem {
     this.id = `usage:${tool}:${w.label}`;
     const left = remaining(w);
     const reset = w.resetsAt ? `resets ${resetText(w.resetsAt)}` : '';
-    this.description = [w.detail ? `${w.detail}` : `${progressBar(left)} ${left}%`, reset].filter(Boolean).join(' · ');
-    this.iconPath = iconFor(w);
+    this.description = [w.detail ? `${w.detail}` : `${left}%`, reset].filter(Boolean).join(' · ');
+    // The row's icon IS the bar: a description cannot be coloured, an SVG file can.
+    this.iconPath = w.detail ? iconFor(w) : barIcon(left, w);
     const md = new vscode.MarkdownString(undefined, true);
     md.appendMarkdown(`**${w.label}** — ${left}% left (${w.percent}% used)\n\n`);
     if (w.resetsAt) md.appendMarkdown(`Resets ${new Date(w.resetsAt).toLocaleString()} (${resetText(w.resetsAt)})\n\n`);
@@ -75,6 +77,14 @@ export function usageColor(w: UsageWindow): vscode.ThemeColor {
   if (w.severity === 'locked' || left < 10) return new vscode.ThemeColor('charts.red');
   if (left < 20) return new vscode.ThemeColor('charts.orange');
   return new vscode.ThemeColor('charts.green');
+}
+
+/** A bar filled to the percent left, in the window's colour (green, orange under 20%, red under 10%), from `resources/bars`. */
+function barIcon(left: number, w: UsageWindow): { light: vscode.Uri; dark: vscode.Uri } {
+  const colour = w.severity === 'locked' || left < 10 ? 'red' : left < 20 ? 'orange' : 'green';
+  const step = Math.round(left / 5) * 5;
+  const uri = vscode.Uri.file(path.join(iconRoot(), 'resources', 'bars', `${colour}-${step}.svg`));
+  return { light: uri, dark: uri };
 }
 
 function iconFor(w: UsageWindow): vscode.ThemeIcon {

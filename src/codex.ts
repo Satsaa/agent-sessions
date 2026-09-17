@@ -251,6 +251,7 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
       branch: r.git_branch ?? undefined,
       worktree,
       updatedAt,
+      startedAt: r.created_at ? r.created_at * 1000 : updatedAt,
       state: stateFor(locked, lastTurn.get(r.id)),
       archived: r.archived === 1,
       subagent: isSubagentSource(r.source),
@@ -281,6 +282,7 @@ interface RolloutSummary {
   firstPrompt: string | undefined;
   lastTurnInProgress: boolean;
   lastAt: number | undefined;
+  firstAt: number | undefined;
 }
 
 const rolloutCache = new Map<string, { mtimeMs: number; size: number; summary: RolloutSummary }>();
@@ -288,7 +290,7 @@ const rolloutCache = new Map<string, { mtimeMs: number; size: number; summary: R
 async function summarizeRollout(file: string, mtimeMs: number, size: number): Promise<RolloutSummary> {
   const cached = rolloutCache.get(file);
   if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.summary;
-  const summary: RolloutSummary = { id: undefined, cwd: undefined, branch: undefined, subagent: false, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined };
+  const summary: RolloutSummary = { id: undefined, cwd: undefined, branch: undefined, subagent: false, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined, firstAt: undefined };
   const rl = readline.createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
   try {
     for await (const line of rl) {
@@ -302,7 +304,10 @@ async function summarizeRollout(file: string, mtimeMs: number, size: number): Pr
       const p = d.payload ?? {};
       if (d.timestamp) {
         const t = Date.parse(d.timestamp);
-        if (Number.isFinite(t)) summary.lastAt = t;
+        if (Number.isFinite(t)) {
+          summary.firstAt ??= t;
+          summary.lastAt = t;
+        }
       }
       if (d.type === 'session_meta') {
         const meta = p as RolloutMeta;
@@ -352,6 +357,7 @@ async function listFromRollouts(home: string, names: Map<string, string>, locks:
         branch: s.branch,
         worktree: await worktreeForThread(s.cwd, s.branch, file, locked, st.mtimeMs, st.size),
         updatedAt: s.lastAt ?? st.mtimeMs,
+        startedAt: s.firstAt ?? st.birthtimeMs,
         state: stateFor(locked, s.lastTurnInProgress ? 'inProgress' : undefined),
         archived,
         subagent: s.subagent,

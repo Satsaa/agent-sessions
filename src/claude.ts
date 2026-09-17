@@ -63,6 +63,7 @@ interface TranscriptSummary {
   lastCwd: string | undefined;
   /** Timestamp of the last message; the file's mtime drifts (Claude rewrites transcripts on resume and title updates). */
   lastAt: number | undefined;
+  firstAt: number | undefined;
   lastRole: 'user' | 'assistant' | undefined;
   hasPrompt: boolean;
 }
@@ -103,7 +104,7 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number):
   const cached = transcriptCache.get(file);
   if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.summary;
 
-  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, lastAt: undefined, lastRole: undefined, hasPrompt: false };
+  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, lastAt: undefined, firstAt: undefined, lastRole: undefined, hasPrompt: false };
   let customTitle: string | undefined;
   let aiTitle: string | undefined;
   let firstPrompt: string | undefined;
@@ -144,7 +145,10 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number):
           if (d.gitBranch) summary.branch = d.gitBranch;
           if (d.timestamp) {
             const t = Date.parse(d.timestamp);
-            if (Number.isFinite(t)) summary.lastAt = t;
+            if (Number.isFinite(t)) {
+              summary.firstAt ??= t;
+              summary.lastAt = t;
+            }
           }
           const role = d.message?.role === 'assistant' || d.type === 'assistant' ? 'assistant' : 'user';
           if (role === 'user') {
@@ -217,6 +221,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
         // Without a binding, the shell's current directory tells: started inside a worktree, or `cd`'d into one and stayed.
         worktree: summary.worktree ?? worktreeFromCwd(summary.lastCwd ?? cwd, summary.branch),
         updatedAt: summary.lastAt ?? st.mtimeMs,
+        startedAt: summary.firstAt ?? st.birthtimeMs,
         state: stateFor(liveInfo, summary.lastRole),
         archived: false,
         subagent: false,
@@ -239,6 +244,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
       branch: undefined,
       worktree: worktreeFromCwd(info.cwd, undefined),
       updatedAt: Date.now(),
+      startedAt: Date.now(),
       state: stateFor(info, undefined),
       archived: false,
       subagent: false,
