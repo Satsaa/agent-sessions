@@ -20,12 +20,30 @@ async function read(file: string): Promise<string | undefined> {
   }
 }
 
-async function startTimeOf(pid: number): Promise<string | undefined> {
+export async function statFields(pid: number): Promise<string[] | undefined> {
   const stat = await read(`/proc/${pid}/stat`);
   if (!stat) return undefined;
   // The command name is in parentheses and may contain spaces; fields are counted after it.
-  const rest = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-  return rest[19]; // starttime is field 22 of the whole line
+  return stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+}
+
+export async function startTimeOf(pid: number): Promise<string | undefined> {
+  return (await statFields(pid))?.[19]; // starttime is field 22 of the whole line
+}
+
+async function parentOf(pid: number): Promise<number | undefined> {
+  const ppid = Number((await statFields(pid))?.[1]); // ppid is field 4
+  return Number.isInteger(ppid) && ppid > 1 ? ppid : undefined;
+}
+
+/** Whether `pid` runs under this extension host — what the Claude and Codex extensions' own processes do. */
+async function descendsFromThisHost(pid: number): Promise<boolean> {
+  let cur: number | undefined = pid;
+  for (let i = 0; i < 30 && cur !== undefined; i++) {
+    if (cur === process.pid) return true;
+    cur = await parentOf(cur);
+  }
+  return false;
 }
 
 /** The window socket of a process, cached until the pid is reused by a different process. */
@@ -44,9 +62,8 @@ export async function windowKeyOfPid(pid: number): Promise<string | undefined> {
 }
 
 /**
- * Pids of processes whose command line mentions `needle` and that hold files under `dir` open,
- * keyed by the file's basename. Codex keeps each live thread's writer lock open, which is the
- * only thing that ties a thread to a process.
+ * Pids of the named executable holding a writer flock under `dir`, keyed by basename.
+ * An open descriptor alone is not ownership (see codex-close.test.mjs).
  */
 export async function holdersOfFilesIn(dir: string, needle: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
@@ -59,8 +76,12 @@ export async function holdersOfFilesIn(dir: string, needle: string): Promise<Map
   }
   await Promise.all(
     pids.map(async (p) => {
-      const cmd = await read(`/proc/${p}/cmdline`);
-      if (!cmd?.includes(needle)) return;
+      try {
+        const executable = await fsp.readlink(`/proc/${p}/exe`);
+        if (path.basename(executable).replace(/ \(deleted\)$/, '') !== needle) return;
+      } catch {
+        return;
+      }
       let fds: string[];
       try {
         fds = await fsp.readdir(`/proc/${p}/fd`);
@@ -70,7 +91,9 @@ export async function holdersOfFilesIn(dir: string, needle: string): Promise<Map
       for (const fd of fds) {
         try {
           const target = await fsp.readlink(`/proc/${p}/fd/${fd}`);
-          if (target.startsWith(prefix)) out.set(path.basename(target), Number(p));
+          if (!target.startsWith(prefix) || path.dirname(target) !== path.resolve(dir)) continue;
+          const info = await read(`/proc/${p}/fdinfo/${fd}`);
+          if (info && /^lock:\s+\d+: FLOCK\s+ADVISORY\s+WRITE\s/m.test(info)) out.set(path.basename(target), Number(p));
         } catch {
           // fd closed meanwhile
         }
@@ -80,13 +103,22 @@ export async function holdersOfFilesIn(dir: string, needle: string): Promise<Map
   return out;
 }
 
-/** Set `inThisWindow` on every live session whose process was started from this VS Code window. */
-export async function markThisWindow(sessions: Session[]): Promise<void> {
-  if (!THIS_WINDOW || process.platform !== 'linux') return;
+/**
+ * Set `inThisWindow` on every live session that belongs to this VS Code window. Three signs, any one suffices:
+ * the process runs under this extension host (the vendor extensions spawn their agents there); its environment
+ * carries this window's CLI socket (integrated terminals — though a reload or reconnect gives the window a new
+ * socket while old processes keep the old one, so this alone under-reports); or a tab in this window carries the
+ * session's title (the vendor extensions title their panels with it).
+ */
+export async function markThisWindow(sessions: Session[], tabLabels: ReadonlySet<string>): Promise<void> {
+  if (process.platform !== 'linux') return;
   await Promise.all(
     sessions.map(async (s) => {
       if (s.pid === undefined) return;
-      s.inThisWindow = (await windowKeyOfPid(s.pid)) === THIS_WINDOW;
+      s.inThisWindow =
+        (await descendsFromThisHost(s.pid)) ||
+        (THIS_WINDOW !== undefined && (await windowKeyOfPid(s.pid)) === THIS_WINDOW) ||
+        tabLabels.has(s.title);
     }),
   );
 }

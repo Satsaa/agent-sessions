@@ -2,6 +2,7 @@ import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Tool } from './types.js';
 import { readJsonFile, walkFiles, statOrUndefined } from './util.js';
+import { cachedClaudeUsage } from './claude-usage-cache.js';
 
 export interface UsageWindow {
   /** Short label: "Session (5h)", "Weekly", "Weekly · Opus", "Extra usage". */
@@ -108,7 +109,19 @@ function planLabel(subscription: string | undefined, tier: string | undefined): 
   return parts.length ? parts.join(' · ') : undefined;
 }
 
-export async function fetchClaudeUsage(home: string, allowNetwork: boolean): Promise<ToolUsage> {
+async function claudeAccountKey(home: string): Promise<string | undefined> {
+  for (const file of [path.join(home, '.claude.json'), `${home}.json`]) {
+    const config = await readJsonFile<unknown>(file);
+    if (!config || typeof config !== 'object' || !('oauthAccount' in config)) continue;
+    const account = config.oauthAccount;
+    if (!account || typeof account !== 'object' || !('accountUuid' in account) || typeof account.accountUuid !== 'string'
+      || !('organizationUuid' in account) || typeof account.organizationUuid !== 'string') continue;
+    return JSON.stringify([account.accountUuid, account.organizationUuid]);
+  }
+  return undefined;
+}
+
+export async function fetchClaudeUsage(home: string, allowNetwork: boolean, cacheDirectory: string, interval: number): Promise<ToolUsage> {
   const base: ToolUsage = { tool: 'claude', plan: undefined, windows: [], asOf: Date.now(), source: 'api.anthropic.com/api/oauth/usage', error: undefined };
   const creds = await readJsonFile<ClaudeCredentials>(path.join(home, '.credentials.json'));
   const oauth = creds?.claudeAiOauth;
@@ -117,21 +130,23 @@ export async function fetchClaudeUsage(home: string, allowNetwork: boolean): Pro
   if (!oauth?.accessToken) return { ...base, error: 'No Claude Code OAuth credential found (log in with `claude`)' };
   if (oauth.expiresAt && oauth.expiresAt < Date.now()) return { ...base, error: 'Claude credential expired; run any `claude` command to refresh it' };
 
-  let res: Response;
+  let data: ClaudeUsageResponse;
   try {
-    res = await fetch(CLAUDE_USAGE_URL, {
+    const result = await cachedClaudeUsage(cacheDirectory, oauth.accessToken, interval, () => fetch(CLAUDE_USAGE_URL, {
       headers: {
         Authorization: `Bearer ${oauth.accessToken}`,
         'anthropic-beta': 'oauth-2025-04-20',
         Accept: 'application/json',
       },
       signal: AbortSignal.timeout(10_000),
-    });
+    }), await claudeAccountKey(home));
+    base.asOf = result.asOf;
+    base.error = result.error;
+    if (!result.data) return base;
+    data = result.data as ClaudeUsageResponse;
   } catch (e) {
     return { ...base, error: `Usage request failed: ${e instanceof Error ? e.message : String(e)}` };
   }
-  if (!res.ok) return { ...base, error: `Usage endpoint answered ${res.status}` };
-  const data = (await res.json()) as ClaudeUsageResponse;
 
   const windows: UsageWindow[] = [];
   if (data.limits?.length) {

@@ -93,7 +93,9 @@ async function readLocks(home: string): Promise<Map<string, number | undefined>>
   const out = new Map<string, number | undefined>();
   const holders = process.platform === 'linux' ? await holdersOfFilesIn(dir, 'codex') : new Map<string, number>();
   for (const e of await listDir(dir)) {
-    if (e.isFile() && e.name.endsWith('.lock')) out.set(e.name.slice(0, -'.lock'.length), holders.get(e.name));
+    if (e.isFile() && e.name.endsWith('.lock') && (process.platform !== 'linux' || holders.has(e.name))) {
+      out.set(e.name.slice(0, -'.lock'.length), holders.get(e.name));
+    }
   }
   return out;
 }

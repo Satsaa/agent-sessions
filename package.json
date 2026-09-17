@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.5.0",
+  "version": "0.5.2",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -57,6 +57,7 @@
         },
         {
           "id": "agentSessions.usage",
+          "type": "webview",
           "name": "Usage",
           "icon": "resources/icon.svg",
           "contextualTitle": "Subscription usage",
@@ -144,7 +145,7 @@
       },
       {
         "command": "agentSessions.groupBy",
-        "title": "Group Sessions By…",
+        "title": "Group Sessions By\u2026",
         "category": "Agent Sessions",
         "icon": "$(list-tree)"
       },
@@ -220,6 +221,31 @@
         "title": "New Codex Session Here (Terminal)",
         "category": "Agent Sessions",
         "icon": "$(add)"
+      },
+      {
+        "command": "agentSessions.closeCodex",
+        "title": "Close Codex Session\u2026",
+        "category": "Agent Sessions",
+        "icon": "$(close)"
+      },
+      {
+        "command": "agentSessions.pin",
+        "title": "Pin Session",
+        "category": "Agent Sessions",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "agentSessions.unpin",
+        "title": "Unpin Session",
+        "category": "Agent Sessions",
+        "icon": "$(unpin)"
+      },
+      {
+        "command": "agentSessions.worktree.delete",
+        "title": "Delete Worktree",
+        "category": "Agent Sessions",
+        "icon": "$(trash)",
+        "enablement": "!operationInProgress"
       }
     ],
     "menus": {
@@ -365,6 +391,46 @@
           "command": "agentSessions.worktree.newCodex",
           "when": "view == agentSessions.worktrees && viewItem =~ /^worktree(-main)?$/",
           "group": "2_new@2"
+        },
+        {
+          "command": "agentSessions.closeCodex",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/",
+          "group": "inline@3"
+        },
+        {
+          "command": "agentSessions.closeCodex",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/",
+          "group": "1_open@4"
+        },
+        {
+          "command": "agentSessions.pin",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem !~ /-pinned-/",
+          "group": "inline@4"
+        },
+        {
+          "command": "agentSessions.pin",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem !~ /-pinned-/",
+          "group": "2_pin@1"
+        },
+        {
+          "command": "agentSessions.unpin",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-pinned-/",
+          "group": "inline@4"
+        },
+        {
+          "command": "agentSessions.unpin",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-pinned-/",
+          "group": "2_pin@1"
+        },
+        {
+          "command": "agentSessions.worktree.delete",
+          "when": "view == agentSessions.worktrees && viewItem == worktree",
+          "group": "inline@2"
+        },
+        {
+          "command": "agentSessions.worktree.delete",
+          "when": "view == agentSessions.worktrees && viewItem == worktree",
+          "group": "3_delete@1"
         }
       ],
       "commandPalette": [
@@ -415,6 +481,22 @@
         {
           "command": "agentSessions.worktree.newCodex",
           "when": "false"
+        },
+        {
+          "command": "agentSessions.closeCodex",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.pin",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.unpin",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.worktree.delete",
+          "when": "false"
         }
       ]
     },
@@ -445,7 +527,7 @@
             "none"
           ],
           "enumDescriptions": [
-            "Live sessions first, then history",
+            "Active and pinned sessions first, then history",
             "One group per repository, worktrees inside",
             "Claude and Codex as separate groups",
             "One flat list, newest first"
@@ -519,6 +601,7 @@
     }
   },
   "scripts": {
+    "test": "node --test test/*.test.mjs",
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit",
@@ -527,10 +610,14 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.5",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/vscode": "1.105.0",
     "@vscode/vsce": "4.0.0",
     "esbuild": "0.28.2",
     "typescript": "^7.0.2"
   },
-  "packageManager": "pnpm@11.18.0"
+  "packageManager": "pnpm@11.18.0",
+  "dependencies": {
+    "proper-lockfile": "^4.1.2"
+  }
 }

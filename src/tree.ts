@@ -16,6 +16,7 @@ export interface ViewOptions {
   historyLimit: number;
   /** Sessions archived from this view (kept in this extension's own state). */
   locallyArchived: ReadonlySet<string>;
+  pinned: ReadonlySet<string>;
 }
 
 export class SessionItem extends vscode.TreeItem {
@@ -25,14 +26,16 @@ export class SessionItem extends vscode.TreeItem {
     showTool: boolean,
     stats: WorktreeStats | undefined,
     idPrefix = '',
+    pinned = false,
   ) {
     super(session.title, vscode.TreeItemCollapsibleState.None);
     const archived = session.archived || archivedHere;
     this.id = `${idPrefix}${session.tool}:${session.id}`;
     this.iconPath = stateIcon(session.tool, session.state, archived);
-    this.description = describe(session, showTool, stats);
+    this.description = `${pinned ? '📌 ' : ''}${describe(session, showTool, stats)}`;
     this.tooltip = tooltipFor(session, archived, stats);
-    this.contextValue = ['session', session.tool, archived ? 'archived' : '', isLive(session.state) ? 'live' : 'stopped']
+    if (pinned) this.tooltip.appendMarkdown('\n\n$(pin) Pinned to Active');
+    this.contextValue = ['session', session.tool, archived ? 'archived' : '', pinned ? 'pinned' : '', isLive(session.state) ? 'live' : 'stopped']
       .filter(Boolean)
       .join('-');
     this.command = { command: 'agentSessions.open', title: 'Open Session', arguments: [this] };
@@ -87,7 +90,7 @@ function tooltipFor(session: Session, archived: boolean, stats: WorktreeStats | 
   const md = new vscode.MarkdownString(undefined, true);
   md.isTrusted = true;
   md.appendMarkdown(`**${escapeMd(session.title)}**\n\n`);
-  md.appendMarkdown(`${toolLabel(session.tool)} · ${STATE_LABEL[session.state]}${archived ? ' · archived' : ''}${session.subagent ? ' · subagent' : ''}\n\n`);
+  md.appendMarkdown(`${toolLabel(session.tool)} · ${STATE_LABEL[session.state]}${session.inThisWindow ? ' · **this window**' : ''}${archived ? ' · archived' : ''}${session.subagent ? ' · subagent' : ''}\n\n`);
   const wt = session.worktree;
   if (wt) {
     md.appendMarkdown(`$(root-folder) worktree **${escapeMd(wt.name)}** \`${wt.path}\`\n\n`);
@@ -188,7 +191,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
       const archived = s.archived || o.locallyArchived.has(`${s.tool}:${s.id}`);
       if (archived && !o.showArchived) return false;
       if (s.subagent && !o.showSubagents) return false;
-      if (s.empty && !o.showEmpty && !isLive(s.state)) return false;
+      if (s.empty && !o.showEmpty && !isLive(s.state) && !o.pinned.has(`${s.tool}:${s.id}`)) return false;
       if (repoRoots) {
         const root = s.worktree?.repoRoot ?? repoRootOf(s.cwd) ?? s.cwd;
         if (!root || !repoRoots.has(path.resolve(root))) return false;
@@ -200,11 +203,12 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   private rebuild(): void {
     const o = this.options;
     const all = this.filtered();
-    const live = all.filter((s) => isLive(s.state)).sort(byStart);
-    const history = all.filter((s) => !isLive(s.state)).sort(byRecency).slice(0, o.historyLimit);
-    const shown = [...live, ...history];
+    const isPinned = (s: Session) => o.pinned.has(`${s.tool}:${s.id}`);
+    const active = all.filter((s) => isLive(s.state) || isPinned(s)).sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || byStart(a, b));
+    const history = all.filter((s) => !isLive(s.state) && !isPinned(s)).sort(byRecency).slice(0, o.historyLimit);
+    const shown = [...active, ...history];
     const item = (s: Session, showTool = true) =>
-      new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), showTool, s.worktree ? this.stats.get(s.worktree.path) : undefined);
+      new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), showTool, s.worktree ? this.stats.get(s.worktree.path) : undefined, '', isPinned(s));
 
     switch (o.groupBy) {
       case 'none':
@@ -212,7 +216,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
         break;
       case 'activity': {
         const groups: Node[] = [];
-        if (live.length) groups.push(new GroupItem('live', 'Live', live.map((s) => item(s)), new vscode.ThemeIcon('pulse'), true));
+        if (active.length) groups.push(new GroupItem('active', 'Active', active.map((s) => item(s)), new vscode.ThemeIcon('pulse'), true));
         if (history.length) groups.push(new GroupItem('history', 'History', history.map((s) => item(s)), new vscode.ThemeIcon('history'), true));
         this.roots = groups;
         break;
@@ -243,7 +247,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
           })
           .map(([root, list]) => {
             const label = path.basename(root) || root;
-            const expanded = workspaceRoots.has(path.resolve(root)) || list.some((s) => isLive(s.state));
+            const expanded = workspaceRoots.has(path.resolve(root)) || list.some((s) => isLive(s.state) || isPinned(s));
             return new GroupItem(root, label, list.map((s) => item(s)), new vscode.ThemeIcon('repo'), expanded);
           });
         break;

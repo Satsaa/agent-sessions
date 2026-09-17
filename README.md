@@ -4,7 +4,7 @@ A VS Code sidebar that lists your **Claude Code** and **Codex** sessions togethe
 
 ## What it shows
 
-**Sessions view** — every session from `~/.claude` and `~/.codex`, newest first, grouped by activity (Live / History) by default.
+**Sessions view** — every session from `~/.claude` and `~/.codex`, newest first, grouped by activity (Active / History) by default.
 
 | Icon | State | Meaning |
 | --- | --- | --- |
@@ -20,11 +20,11 @@ Worktrees are detected from what the agent actually did, not from where it was l
 - Claude Code writes a `worktree-state` record into the transcript when a session enters or leaves a worktree (`EnterWorktree` / `ExitWorktree`, `claude -w`); the latest one wins. Without one, the shell's most recent recorded cwd decides.
 - Codex records a thread's cwd once and never moves it, so the rollout's tool calls are scanned for the last `workdir`, `cd` or `git -C` directory; a directory inside a linked worktree names it.
 
-**Worktrees view** (collapsed by default) — every git worktree of the repositories in play: the workspace's repos plus any repo a live or recent session ran in, the main checkout included. Each row shows the branch, `↑ahead ↓behind` its base and `+I −D` lines changed (zeros omitted; the tooltip has the staged/unstaged/untracked breakdown); expanding it shows the agents bound to that worktree — live ones first, then the last few stopped sessions — as ordinary session rows that open on click. A worktree with a live agent takes that agent's state icon. The base is the branch's upstream when it has one, else the remote's default branch, else the main checkout's HEAD (detached promotion checkouts land there, so their counts are large by nature). Right-click a worktree to open it in a new window, open a terminal there, copy its path, or start a Claude / Codex session in it.
+**Worktrees view** (collapsed by default) — every git worktree of the repositories in play: the workspace's repos plus any repo a live or recent session ran in, the main checkout included. Each row shows the branch, `↑ahead ↓behind` its base and `+I −D` lines changed (zeros omitted; the tooltip has the staged/unstaged/untracked breakdown); expanding it shows the agents bound to that worktree — live ones first, then the last few stopped sessions — as ordinary session rows that open on click. A worktree with a live agent takes that agent's state icon. The base is the branch's upstream when it has one, else the remote's default branch, else the main checkout's HEAD (detached promotion checkouts land there, so their counts are large by nature). Right-click a worktree to open it in a new window, open a terminal there, copy its path, or start a Claude / Codex session in it. **Delete Worktree** (trash button or right-click) calls the same built-in Git command as Source Control’s Repositories → worktree → Delete action, including its modified/untracked-file confirmation. The main checkout has no delete action.
 
-**Usage view** — subscription limits for both accounts (Claude shows its plan and Max tier, Codex its plan and renewal date read from the login token; ChatGPT plans have no multiplier tiers), each window shown as **percent left** (100% is a fresh window, 0% exhausted) with the row's icon as a bar filled to that amount: green, orange under 20% left, red under 10%. The status bar item takes the colour of the tightest window.
+**Usage view** — subscription limits for both accounts (Claude shows its plan and Max tier, Codex its plan and renewal date read from the login token; ChatGPT plans have no multiplier tiers), each window shown as **percent left** (100% is a fresh window, 0% exhausted) with the original ten-segment inline bar: only the bar is tinted green, orange under 20% left, or red under 10%; labels, percentages and reset times stay neutral. The status bar item takes the colour of the tightest window.
 
-- **Claude**: session (5h) and weekly windows, plus any model-specific or extra-usage limits your plan reports, with reset times. Fetched from Anthropic's OAuth usage endpoint with the credential Claude Code already stores locally (the same call the CLI makes for `/usage`). Can be turned off with `agentSessions.usage.claudeNetwork`.
+- **Claude**: session (5h) and weekly windows, plus any model-specific or extra-usage limits your plan reports, with reset times. Fetched from Anthropic's OAuth usage endpoint with the credential Claude Code already stores locally (the same call the CLI makes for `/usage`). Windows on the same host share a cache and request lock. A 429 honors `Retry-After` and backs off from five minutes to an hour, keeping the last successful counts and plan visible in both the Usage view and status bar. A warning icon appears once the reading is more than ten minutes old; retry errors stay in the tooltip. Refresh clicks also respect the cooldown. Can be turned off with `agentSessions.usage.claudeNetwork`.
 - **Codex**: the rate-limit snapshot Codex writes into every rollout's `token_count` event, so it is as fresh as your last Codex turn and involves no network call.
 
 Two status bar items mirror this: working / waiting / replied counts on the left, usage percentages on the right. The Sessions view carries a badge with the number of sessions waiting for input.
@@ -33,7 +33,9 @@ Two status bar items mirror this: working / waiting / replied counts on the left
 
 - **View: Show Agent Sessions** opens the sidebar from the command palette (VS Code files it under *View*, not *Agent Sessions*; the built-in view of the same name is a different entry); **Agent Sessions: Show Sessions** and **Agent Sessions: Show Worktrees** focus one view.
 - **Click a session** to open it. Claude sessions open in a Claude Code tab in the *active* editor group (not a new locked group). Codex threads open in the Codex conversation editor. If a session is already open, its tab is revealed.
+- **Pin / Unpin Session** keeps a session at the top of Active even after it stops. Pins persist across reloads, appear in both session lists, and keep the real status icon. Repository, archive and subagent filters still apply.
 - **New Claude / New Codex** buttons in the view title start a fresh session, again as a tab.
+- **Close Codex Session…** (× on each Codex row, also in the right-click menu) releases a stuck local session on Linux, including Remote-SSH and WSL. It asks before stopping the Codex process and lists **all sessions that process holds**, since one app-server can own several. Active work in those sessions is interrupted; saved conversations remain available to reopen. The original window may need a reload to reconnect Codex.
 - Right-click: Resume in Terminal (`claude --resume` / `codex resume` in the session's cwd), Copy Resume Command, Open Transcript File, Open Working Directory in New Window, Archive / Unarchive.
 - View menu: show/hide archived sessions, show/hide subagent threads, only this repository (worktrees of the workspace's repo included), group by Activity / Repository / Tool / None.
 
@@ -48,10 +50,10 @@ If the Claude Code or Codex extension is not installed, opening falls back to a 
 
 ## How it reads state
 
-Nothing is written to either tool's directories. Everything is read-only:
+Session discovery is read-only. The explicit Close action sends SIGTERM to the verified Codex lock owner; it does not delete lock files, transcripts or database rows:
 
 - Claude live status comes from `~/.claude/sessions/<pid>.json` (busy / waiting / idle) after checking the PID is alive; titles from the transcript's `custom-title` / `ai-title` records or the first prompt; cwd and branch from the transcript.
-- Codex threads come from `state_*.sqlite` via `node:sqlite` (read-only), turn status from `thread_history_*.sqlite`, liveness from `thread-writer-locks/`. On a host without `node:sqlite` it falls back to scanning the rollout files.
+- Codex threads come from `state_*.sqlite` via `node:sqlite` (read-only), turn status from `thread_history_*.sqlite`, liveness from `thread-writer-locks/` (on Linux, only locks actually held by a Codex process count; leftover unlocked files are ignored). On a host without `node:sqlite` it falls back to scanning the rollout files.
 - Directories are watched with `fs.watch` and the list refreshes on change; while any session is live it also polls every few seconds, because a process can die without touching a file.
 
 ## Install
@@ -70,6 +72,7 @@ Over Remote-SSH, install it on the remote (the extension is `workspace`-kind, si
 pnpm install
 pnpm build        # dist/extension.cjs
 pnpm typecheck
+pnpm test
 pnpm package      # agent-sessions-<version>.vsix
 ```
 

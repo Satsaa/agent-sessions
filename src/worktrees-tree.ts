@@ -12,6 +12,7 @@ export class WorktreeItem extends vscode.TreeItem {
     public readonly stats: WorktreeStats | undefined,
     public readonly sessions: Session[],
     locallyArchived: ReadonlySet<string>,
+    pinned: ReadonlySet<string>,
   ) {
     super(worktree.isMain ? `${worktree.name} (main checkout)` : worktree.name, sessions.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
     this.id = `worktree:${worktree.path}`;
@@ -20,7 +21,7 @@ export class WorktreeItem extends vscode.TreeItem {
     this.description = describe(worktree, stats, sessions);
     this.tooltip = tooltip(worktree, stats, sessions);
     this.resourceUri = vscode.Uri.file(worktree.path);
-    this.children = sessions.map((s) => new SessionItem(s, locallyArchived.has(`${s.tool}:${s.id}`), true, undefined, `wt:${worktree.path}:`));
+    this.children = sessions.map((s) => new SessionItem(s, locallyArchived.has(`${s.tool}:${s.id}`), true, undefined, `wt:${worktree.path}:`, pinned.has(`${s.tool}:${s.id}`)));
   }
 
   readonly children: vscode.TreeItem[];
@@ -108,7 +109,7 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
   private roots: Node[] = [];
 
   /** Every worktree found, with stats and the sessions bound to it. */
-  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>): void {
+  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>): void {
     const byPath = new Map<string, Session[]>();
     for (const s of sessions) {
       const key = s.worktree?.path ?? (s.cwd ? path.resolve(s.cwd) : undefined);
@@ -118,15 +119,17 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
       byPath.set(key, list);
     }
     const assigned = (wt: RepoWorktree): Session[] => {
-      const all = (byPath.get(wt.path) ?? []).filter((s) => !s.archived && !locallyArchived.has(`${s.tool}:${s.id}`) && !s.subagent).sort(byLiveThenTime);
-      const live = all.filter((s) => isLive(s.state));
-      const stopped = all.filter((s) => !isLive(s.state) && !s.empty).slice(0, RECENT_STOPPED);
-      return [...live, ...stopped];
+      const isPinned = (s: Session) => pinned.has(`${s.tool}:${s.id}`);
+      const all = (byPath.get(wt.path) ?? []).filter((s) => !s.archived && !locallyArchived.has(`${s.tool}:${s.id}`) && !s.subagent)
+        .sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || byLiveThenTime(a, b));
+      const active = all.filter((s) => isLive(s.state) || isPinned(s));
+      const stopped = all.filter((s) => !isLive(s.state) && !isPinned(s) && !s.empty).slice(0, RECENT_STOPPED);
+      return [...active, ...stopped];
     };
     const byRepo = new Map<string, WorktreeItem[]>();
     for (const wt of worktrees) {
       const list = byRepo.get(wt.repoRoot) ?? [];
-      list.push(new WorktreeItem(wt, stats.get(wt.path), assigned(wt), locallyArchived));
+      list.push(new WorktreeItem(wt, stats.get(wt.path), assigned(wt), locallyArchived, pinned));
       byRepo.set(wt.repoRoot, list);
     }
     const repos = [...byRepo.entries()];

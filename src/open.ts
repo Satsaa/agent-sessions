@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { isLive, type Session, type Tool } from './types.js';
+import type { Session, Tool } from './types.js';
 
 const CLAUDE_EXTENSION = 'anthropic.claude-code';
 const CODEX_EXTENSION = 'openai.chatgpt';
@@ -20,12 +20,14 @@ function codexRouteUri(routePath: string): vscode.Uri {
  * and an explicit column keeps it from opening a new locked editor group.
  */
 /**
- * Claude Code's `editor.open` signature (session id, initial prompt, view column, group, full editor, options),
- * called the way its own session list calls it. The extension reveals the existing panel when the session
- * already has one in this window and otherwise creates a panel resuming the session.
+ * Claude Code's `editor.open` signature (session id, initial prompt, view column, group, full editor, options).
+ * The extension reveals the existing panel when the session already has one in this window. Otherwise it creates
+ * a panel — and without an explicit column it picks a Claude-only column and locks that group, so the active
+ * group's concrete column is passed to land the tab beside the ordinary editors.
  */
 async function openClaude(sessionId: string | undefined): Promise<void> {
-  await vscode.commands.executeCommand('claude-vscode.editor.open', sessionId, undefined, undefined, undefined, true, {
+  const column = vscode.window.tabGroups.activeTabGroup.viewColumn;
+  await vscode.commands.executeCommand('claude-vscode.editor.open', sessionId, undefined, column, undefined, true, {
     programmatic: 'honor-preferred-location',
   });
 }
@@ -55,17 +57,6 @@ async function openCodex(uri: vscode.Uri): Promise<void> {
   });
 }
 
-/** A live session's tab lives in the window that started it; a second window opening it would run the session twice. */
-async function confirmForeignLive(session: Session): Promise<boolean> {
-  if (!isLive(session.state) || session.inThisWindow || session.pid === undefined) return true;
-  const pick = await vscode.window.showWarningMessage(
-    `"${session.title}" is running in another VS Code window. Open it here as well?`,
-    { modal: false },
-    'Open here',
-  );
-  return pick === 'Open here';
-}
-
 export function resumeCommand(session: Session): string {
   return session.tool === 'claude' ? `claude --resume ${session.id}` : `codex resume ${session.id}`;
 }
@@ -79,7 +70,6 @@ export function openInTerminal(session: Session): void {
 }
 
 export async function openSession(session: Session): Promise<void> {
-  if (!(await confirmForeignLive(session))) return;
   if (session.tool === 'claude') {
     if (!extensionInstalled(CLAUDE_EXTENSION)) {
       openInTerminal(session);
@@ -113,4 +103,11 @@ export async function newSession(tool: Tool): Promise<void> {
     return;
   }
   await openCodex(codexRouteUri('/extension/panel/new'));
+}
+
+/** Labels of every open tab, for matching sessions to the panels that show them (the vendor extensions title panels with the session title). */
+export function openTabLabels(): Set<string> {
+  const out = new Set<string>();
+  for (const group of vscode.window.tabGroups.all) for (const tab of group.tabs) out.add(tab.label);
+  return out;
 }

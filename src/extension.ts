@@ -2,11 +2,14 @@ import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
-import { newSession, openInTerminal, openSession, resumeCommand } from './open.js';
+import { newSession, openInTerminal, openSession, openTabLabels, resumeCommand } from './open.js';
+import { markThisWindow } from './window.js';
+import { closeCodexSession } from './close.js';
+import { deleteWorktree } from './delete-worktree.js';
 import { SessionItem, SessionsProvider, type GroupBy, type ViewOptions } from './tree.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
 import { fetchClaudeUsage, readCodexUsage, type ToolUsage } from './usage.js';
-import { UsageProvider, usageStatusColor, usageStatusText, usageStatusTooltip } from './usage-tree.js';
+import { UsageProvider, usageStatusColor, usageStatusText, usageStatusTooltip } from './usage-view.js';
 import { initIcons } from './icons.js';
 import { listRepoWorktrees, loadWorktreeStats, sessionWorktrees, type RepoWorktree } from './worktree.js';
 import { WorktreeItem, WorktreesProvider } from './worktrees-tree.js';
@@ -14,6 +17,7 @@ import { repoRootOf } from './util.js';
 import * as path from 'node:path';
 
 const ARCHIVED_KEY = 'agentSessions.archived';
+const PINNED_KEY = 'agentSessions.pinned';
 
 interface Config {
   tools: Tool[];
@@ -21,7 +25,7 @@ interface Config {
   codexHome: string;
   pollInterval: number;
   usage: { enabled: boolean; claudeNetwork: boolean; refreshInterval: number };
-  view: Omit<ViewOptions, 'locallyArchived'>;
+  view: Omit<ViewOptions, 'locallyArchived' | 'pinned'>;
 }
 
 function readConfig(): Config {
@@ -52,14 +56,15 @@ export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel('Agent Sessions');
   let config = readConfig();
   const archived = new Set<string>(context.globalState.get<string[]>(ARCHIVED_KEY, []));
-  const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived });
+  const pinned = new Set<string>(context.globalState.get<string[]>(PINNED_KEY, []));
+  const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned });
 
   const provider = new SessionsProvider(options());
   const view = vscode.window.createTreeView('agentSessions.list', { treeDataProvider: provider, showCollapseAll: true });
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   statusBar.command = 'agentSessions.list.focus';
-  const usageProvider = new UsageProvider();
-  const usageView = vscode.window.createTreeView('agentSessions.usage', { treeDataProvider: usageProvider });
+  const usageProvider = new UsageProvider(context.extensionUri);
+  const usageView = vscode.window.registerWebviewViewProvider('agentSessions.usage', usageProvider);
   const usageBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   usageBar.command = 'agentSessions.usage.focus';
   const worktreesProvider = new WorktreesProvider();
@@ -73,22 +78,20 @@ export function activate(context: vscode.ExtensionContext): void {
   const refreshUsage = async (): Promise<void> => {
     if (usageTimer) clearTimeout(usageTimer);
     if (!config.usage.enabled) {
-      usageProvider.set([]);
+      usageProvider.set([], 'disabled in settings');
       usageBar.hide();
-      usageView.description = 'disabled in settings';
       return;
     }
     if (usageRunning) return;
     usageRunning = true;
     try {
       const results = await Promise.all<ToolUsage | undefined>([
-        config.tools.includes('claude') ? fetchClaudeUsage(config.claudeHome, config.usage.claudeNetwork) : undefined,
+        config.tools.includes('claude') ? fetchClaudeUsage(config.claudeHome, config.usage.claudeNetwork, path.join(context.globalStorageUri.fsPath, 'claude-usage'), config.usage.refreshInterval * 1000) : undefined,
         config.tools.includes('codex') ? readCodexUsage(config.codexHome) : undefined,
       ]);
       const usages = results.filter((u): u is ToolUsage => u !== undefined);
       for (const u of usages) if (u.error) output.appendLine(`[${new Date().toISOString()}] usage ${u.tool}: ${u.error}`);
       usageProvider.set(usages);
-      usageView.description = '';
       const text = usageStatusText(usages);
       if (text) {
         usageBar.text = `$(pie-chart) ${text}`;
@@ -128,6 +131,7 @@ export function activate(context: vscode.ExtensionContext): void {
           config.tools.includes('codex') ? listCodexSessions(config.codexHome).catch((e) => fail('codex', e)) : [],
         ]);
         const sessions: Session[] = lists.flat();
+        await markThisWindow(sessions, openTabLabels());
         provider.setSessions(sessions);
         updateIndicators(provider.visible());
         // Git is a second pass so the list itself never waits on it.
@@ -135,7 +139,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const mains = new Set(worktrees.filter((w) => w.isMain).map((w) => w.path));
         const stats = await loadWorktreeStats([...sessionWorktrees(provider.visible()), ...worktrees], mains);
         provider.setWorktreeStats(stats);
-        worktreesProvider.set(worktrees, stats, sessions, archived);
+        worktreesProvider.set(worktrees, stats, sessions, archived, pinned);
         const linked = worktrees.filter((w) => !w.isMain).length;
         worktreesView.description = linked ? `${linked}` : '';
       } finally {
@@ -258,6 +262,18 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!p) return;
       vscode.window.createTerminal({ name: path.basename(p), cwd: p }).show();
     }),
+    vscode.commands.registerCommand('agentSessions.worktree.delete', async (arg: unknown) => {
+      if (!(arg instanceof WorktreeItem) || arg.worktree.isMain) return;
+      try {
+        await deleteWorktree(arg.worktree);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        output.appendLine(`delete worktree ${arg.worktree.path} failed: ${message}`);
+        void vscode.window.showErrorMessage(`Could not delete worktree: ${message}`);
+      } finally {
+        await refresh();
+      }
+    }),
     vscode.commands.registerCommand('agentSessions.worktree.copyPath', async (arg: unknown) => {
       const p = worktreePathOf(arg);
       if (!p) return;
@@ -290,7 +306,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('agentSessions.scopeAll', () => setting('scope', 'all')),
     vscode.commands.registerCommand('agentSessions.groupBy', async () => {
       const picks: { label: string; description: string; value: GroupBy }[] = [
-        { label: 'Activity', description: 'Live sessions first, then history', value: 'activity' },
+        { label: 'Activity', description: 'Active and pinned sessions first, then history', value: 'activity' },
         { label: 'Repository', description: 'One group per repository, worktrees inside', value: 'repository' },
         { label: 'Tool', description: 'Claude and Codex as separate groups', value: 'tool' },
         { label: 'None', description: 'One flat list', value: 'none' },
@@ -312,6 +328,19 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('agentSessions.openInTerminal', (arg: unknown) => {
       const s = sessionOf(arg);
       if (s) openInTerminal(s);
+    }),
+    vscode.commands.registerCommand('agentSessions.closeCodex', async (arg: unknown) => {
+      const s = sessionOf(arg);
+      if (!s || s.tool !== 'codex') return;
+      try {
+        await closeCodexSession(s, config.codexHome);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        output.appendLine(`close codex ${s.id} failed: ${message}`);
+        void vscode.window.showErrorMessage(`Could not close Codex session: ${message}`);
+      } finally {
+        await refresh();
+      }
     }),
     vscode.commands.registerCommand('agentSessions.copyResumeCommand', async (arg: unknown) => {
       const s = sessionOf(arg);
@@ -337,6 +366,16 @@ export function activate(context: vscode.ExtensionContext): void {
       provider.setOptions(options());
       updateIndicators(provider.visible());
     }),
+    ...(['pin', 'unpin'] as const).map((action) => vscode.commands.registerCommand(`agentSessions.${action}`, async (arg: unknown) => {
+      const s = sessionOf(arg);
+      if (!s) return;
+      const key = `${s.tool}:${s.id}`;
+      if (action === 'pin') pinned.add(key);
+      else pinned.delete(key);
+      await context.globalState.update(PINNED_KEY, [...pinned]);
+      provider.setOptions(options());
+      await refresh();
+    })),
     vscode.commands.registerCommand('agentSessions.unarchive', async (arg: unknown) => {
       const s = sessionOf(arg);
       if (!s) return;
