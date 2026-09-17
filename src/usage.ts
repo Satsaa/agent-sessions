@@ -245,12 +245,28 @@ async function readCodexPlan(home: string): Promise<{ plan: string | undefined; 
 }
 
 /**
- * ChatGPT plans carry no multiplier (there is no "Pro 20x" — the tiers are Free, Plus, Pro, Business, Enterprise),
- * so the label is the plan name; the token's subscription period is appended when known.
+ * Display names for Codex's `plan_type`. ChatGPT Pro is sold in two tiers and the token tells them apart:
+ * `pro` is the $200 "Pro 20x" plan and `prolite` (also seen as `pro_lite`) the $100 "Pro 5x" one, which
+ * Codex's own UI calls "Pro Lite". Anything unlisted is shown capitalised as sent.
  */
+const CODEX_PLAN_NAMES: Record<string, string> = {
+  free: 'Free',
+  go: 'Go',
+  plus: 'Plus',
+  pro: 'Pro 20x',
+  prolite: 'Pro 5x (Pro Lite)',
+  pro_lite: 'Pro 5x (Pro Lite)',
+  self_serve_business: 'Business',
+  business: 'Business',
+  enterprise: 'Enterprise',
+  edu: 'Edu',
+  edu_plus: 'Edu Plus',
+  edu_pro: 'Edu Pro',
+};
+
 function codexPlanLabel(planType: string | undefined, until: string | undefined): string | undefined {
   if (!planType) return undefined;
-  const name = planType.charAt(0).toUpperCase() + planType.slice(1);
+  const name = CODEX_PLAN_NAMES[planType.toLowerCase()] ?? planType.charAt(0).toUpperCase() + planType.slice(1);
   const t = until ? Date.parse(until) : NaN;
   return Number.isFinite(t) ? `${name} · renews ${new Date(t).toLocaleDateString()}` : name;
 }
@@ -318,8 +334,11 @@ export async function readCodexUsage(home: string, allowNetwork: boolean): Promi
       const reached = !!live.rate_limit_reached_type || !!live.rate_limit?.limit_reached;
       const windows = liveWindows(live.rate_limit, '', reached);
       for (const extra of live.additional_rate_limits ?? []) {
+        // `gpt-reserve` is what OpenAI calls Luna Reserve: a separate allowance for one model once the plan's own runs out.
+        const reserve = extra.limit_name === 'gpt-reserve';
         const model = extra.normal_model_slug ?? extra.limit_name;
-        windows.push(...liveWindows(extra.rate_limit, model ? ` · ${model}` : '', !!extra.rate_limit?.limit_reached));
+        const suffix = reserve ? ` · ${model ?? 'model'} reserve` : model ? ` · ${model}` : '';
+        windows.push(...liveWindows(extra.rate_limit, suffix, !!extra.rate_limit?.limit_reached));
       }
       if (live.credits?.has_credits) {
         windows.push({ label: 'Credits', percent: 0, resetsAt: undefined, severity: undefined, detail: live.credits.unlimited ? 'unlimited' : `balance ${live.credits.balance ?? '?'}` });
