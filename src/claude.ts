@@ -14,6 +14,11 @@ export function claudeHome(configured: string): string {
   return path.join(os.homedir(), '.claude');
 }
 
+/** The sidecar Claude Code writes on `/rename`, next to the transcript: `<project dir>/<session id>/custom-title.json`. */
+export function customTitleFile(transcriptPath: string, sessionId: string): string {
+  return path.join(path.dirname(transcriptPath), sessionId, 'custom-title.json');
+}
+
 /** Shape of ~/.claude/sessions/<pid>.json, written by every running claude process. */
 interface LiveSessionFile {
   pid?: number;
@@ -209,13 +214,16 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
       const st = await statOrUndefined(file);
       if (!st) continue;
       const summary = await summarizeTranscript(file, st.mtimeMs, st.size);
+      // Claude Code keeps a renamed title beside the transcript too (`<id>/custom-title.json`) and reads that first.
+      const sidecar = await readJsonFile<{ customTitle?: string }>(customTitleFile(file, id));
+      const customTitle = typeof sidecar?.customTitle === 'string' && sidecar.customTitle.trim() ? sidecar.customTitle.trim() : undefined;
       const liveInfo = live.get(id);
       const cwd = summary.cwd ?? liveInfo?.cwd;
       seen.add(id);
       sessions.push({
         tool: 'claude',
         id,
-        title: liveInfo?.name ?? summary.title ?? '(no prompt yet)',
+        title: customTitle ?? liveInfo?.name ?? summary.title ?? '(no prompt yet)',
         cwd,
         branch: summary.branch,
         // Without a binding, the shell's current directory tells: started inside a worktree, or `cd`'d into one and stayed.

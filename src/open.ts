@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { Session, Tool } from './types.js';
+import { titleMatchesLabel } from './util.js';
 
 const CLAUDE_EXTENSION = 'anthropic.claude-code';
 const CODEX_EXTENSION = 'openai.chatgpt';
@@ -37,13 +38,23 @@ async function openClaude(sessionId: string | undefined): Promise<void> {
  * A thread opened by id sits at `/local/<id>`; one started fresh in a panel keeps `/extension/panel/new` and is
  * only recognisable by its title, which the extension sets to the thread's preview.
  */
+/** The open Claude Code tab showing this session, if any: the panel's label is the session title. */
+export function existingClaudeTab(session: Session): vscode.Tab | undefined {
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (tab.input instanceof vscode.TabInputWebview && /claude/i.test(tab.input.viewType) && titleMatchesLabel(session.title, tab.label)) return tab;
+    }
+  }
+  return undefined;
+}
+
 function existingCodexTab(threadId: string, title: string): vscode.Uri | undefined {
   let byTitle: vscode.Uri | undefined;
   for (const group of vscode.window.tabGroups.all) {
     for (const tab of group.tabs) {
       if (!(tab.input instanceof vscode.TabInputCustom) || tab.input.uri.scheme !== 'openai-codex') continue;
       if (tab.input.uri.path.includes(threadId)) return tab.input.uri;
-      if (tab.label === title) byTitle ??= tab.input.uri;
+      if (titleMatchesLabel(title, tab.label)) byTitle ??= tab.input.uri;
     }
   }
   return byTitle;
@@ -123,10 +134,10 @@ export function sessionOfActiveTab(sessions: readonly Session[]): Session | unde
   if (!tab) return undefined;
   const input = tab.input;
   if (input instanceof vscode.TabInputCustom && input.uri.scheme === 'openai-codex') {
-    return sessions.find((s) => s.tool === 'codex' && input.uri.path.includes(s.id)) ?? sessions.find((s) => s.tool === 'codex' && s.title === tab.label);
+    return sessions.find((s) => s.tool === 'codex' && input.uri.path.includes(s.id)) ?? sessions.find((s) => s.tool === 'codex' && titleMatchesLabel(s.title, tab.label));
   }
   if (input instanceof vscode.TabInputWebview && /claude/i.test(input.viewType)) {
-    return sessions.find((s) => s.tool === 'claude' && s.title === tab.label);
+    return sessions.find((s) => s.tool === 'claude' && titleMatchesLabel(s.title, tab.label));
   }
   return undefined;
 }

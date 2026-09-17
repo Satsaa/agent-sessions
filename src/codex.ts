@@ -19,6 +19,7 @@ export function codexHome(configured: string): string {
 
 interface SqliteStatement {
   all(...params: unknown[]): Record<string, unknown>[];
+  run(...params: unknown[]): { changes: number | bigint };
 }
 interface SqliteDatabase {
   prepare(sql: string): SqliteStatement;
@@ -29,7 +30,7 @@ interface SqliteModule {
 }
 
 let sqlite: SqliteModule | null | undefined;
-function loadSqlite(): SqliteModule | null {
+export function loadSqlite(): SqliteModule | null {
   if (sqlite !== undefined) return sqlite;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -41,7 +42,7 @@ function loadSqlite(): SqliteModule | null {
 }
 
 /** Newest `<prefix>_<n>.sqlite` in the Codex home, since the schema version is in the file name. */
-async function newestDb(home: string, prefix: string): Promise<string | undefined> {
+export async function newestDb(home: string, prefix: string): Promise<string | undefined> {
   let best: { n: number; file: string } | undefined;
   for (const e of await listDir(home)) {
     const m = new RegExp(`^${prefix}_(\\d+)\\.sqlite$`).exec(e.name);

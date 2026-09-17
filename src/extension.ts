@@ -2,10 +2,11 @@ import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
-import { newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab } from './open.js';
+import { existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab } from './open.js';
 import { markThisWindow } from './window.js';
 import { formatTranscript, readTranscript } from './transcript.js';
 import { closeCodexSession } from './close.js';
+import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
 import { SessionItem, SessionsProvider, type GroupBy, type ViewOptions } from './tree.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
@@ -374,6 +375,34 @@ export function activate(context: vscode.ExtensionContext): void {
       } finally {
         await refresh();
       }
+    }),
+    vscode.commands.registerCommand('agentSessions.rename', async (arg: unknown) => {
+      // From the keybinding there is no argument: take the selected row of whichever tree has one.
+      const s = sessionOf(arg) ?? sessionOf(view.selection[0]) ?? sessionOf(worktreesView.selection[0]);
+      if (!s) return;
+      // A Claude session open in a tab is renamed by Claude Code itself: it prompts, writes the title and relabels the tab
+      // (which nothing outside the extension can do). Codex's tab keeps its label until the thread is reopened.
+      const claudeTab = s.tool === 'claude' ? existingClaudeTab(s) : undefined;
+      if (claudeTab) {
+        try {
+          await openSession(s);
+          await vscode.commands.executeCommand('claude-vscode.renameSessionTab');
+        } catch (err) {
+          output.appendLine(`rename via Claude Code failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        await refresh();
+        return;
+      }
+      const title = await vscode.window.showInputBox({ prompt: `Rename ${toolLabel(s.tool)} session`, value: s.title, valueSelection: [0, s.title.length], validateInput: (v) => (v.trim() ? undefined : 'A title cannot be empty') });
+      if (title === undefined || title.trim() === s.title) return;
+      try {
+        await renameSession(s, config.codexHome, title);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        output.appendLine(`rename ${s.tool} ${s.id} failed: ${message}`);
+        void vscode.window.showErrorMessage(`Could not rename session: ${message}`);
+      }
+      await refresh();
     }),
     vscode.commands.registerCommand('agentSessions.copyTranscript', async (arg: unknown) => {
       const s = sessionOf(arg);

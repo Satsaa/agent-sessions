@@ -167,3 +167,20 @@ export function worktreeTopOf(cwd: string | undefined): string | undefined {
   }
   return undefined;
 }
+
+/**
+ * Whether a tab label names this session. The vendor extensions truncate (Codex appends "…", Claude cuts at 200) and
+ * trim differently from our own title cleaning, so compare on normalised text and accept either being a prefix of
+ * the other once at least a few characters agree.
+ */
+export function titleMatchesLabel(title: string, label: string): boolean {
+  const norm = (s: string) => s.replace(/\u2026$|\.\.\.$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const a = norm(title);
+  const b = norm(label);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const shorter = a.length < b.length ? a : b;
+  const longer = shorter === a ? b : a;
+  return shorter.length >= 8 && longer.startsWith(shorter);
+}
+
