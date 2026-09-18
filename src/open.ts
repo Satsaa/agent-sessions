@@ -48,16 +48,35 @@ export function existingClaudeTab(session: Session): vscode.Tab | undefined {
   return undefined;
 }
 
-function existingCodexTab(threadId: string, title: string): vscode.Uri | undefined {
-  let byTitle: vscode.Uri | undefined;
+function existingCodexTabEntry(threadId: string, title: string): { uri: vscode.Uri; viewColumn: vscode.ViewColumn } | undefined {
+  let byTitle: { uri: vscode.Uri; viewColumn: vscode.ViewColumn } | undefined;
   for (const group of vscode.window.tabGroups.all) {
     for (const tab of group.tabs) {
       if (!(tab.input instanceof vscode.TabInputCustom) || tab.input.uri.scheme !== 'openai-codex') continue;
-      if (tab.input.uri.path.includes(threadId)) return tab.input.uri;
-      if (titleMatchesLabel(title, tab.label)) byTitle ??= tab.input.uri;
+      const entry = { uri: tab.input.uri, viewColumn: group.viewColumn };
+      if (tab.input.uri.path.includes(threadId)) return entry;
+      if (titleMatchesLabel(title, tab.label)) byTitle ??= entry;
     }
   }
   return byTitle;
+}
+
+function existingCodexTab(threadId: string, title: string): vscode.Uri | undefined {
+  return existingCodexTabEntry(threadId, title)?.uri;
+}
+
+/**
+ * Reload the open Codex tab showing this session, in place. VS Code has no per-webview reload, so the tab's editor is
+ * swapped to the default editor and straight back: `openWith` on an open resource replaces the editor in the same
+ * tab, and Codex's custom editor is recreated with a fresh webview at that route. Returns false when no tab shows it.
+ */
+export async function reloadCodexTab(session: Session): Promise<boolean> {
+  const entry = existingCodexTabEntry(session.id, session.title);
+  if (!entry) return false;
+  const options: vscode.TextDocumentShowOptions = { viewColumn: entry.viewColumn, preserveFocus: false, preview: false };
+  await vscode.commands.executeCommand('vscode.openWith', entry.uri, 'default', options);
+  await vscode.commands.executeCommand('vscode.openWith', entry.uri, CODEX_EDITOR_VIEW_TYPE, options);
+  return true;
 }
 
 async function openCodex(uri: vscode.Uri): Promise<void> {

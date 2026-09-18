@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
-import { existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab } from './open.js';
+import { existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab } from './open.js';
 import { markThisWindow } from './window.js';
 import { formatTranscript, readTranscript } from './transcript.js';
 import { closeCodexSession } from './close.js';
@@ -376,10 +376,16 @@ export function activate(context: vscode.ExtensionContext): void {
         await refresh();
       }
     }),
-    vscode.commands.registerCommand('agentSessions.reloadPanels', async () => {
-      // VS Code's own "Developer: Reload Webviews": every webview editor in the window (Codex and Claude panels alike)
-      // reloads its page in place, tabs and positions untouched. There is no per-panel variant in the API.
-      await vscode.commands.executeCommand('workbench.action.webview.reloadWebviewAction');
+    vscode.commands.registerCommand('agentSessions.reloadCodexPanel', async (arg: unknown) => {
+      const s = sessionOf(arg);
+      if (!s || s.tool !== 'codex') return;
+      try {
+        if (!(await reloadCodexTab(s))) void vscode.window.showInformationMessage('This Codex session is not open in a tab.');
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        output.appendLine(`reload codex panel ${s.id} failed: ${message}`);
+        void vscode.window.showErrorMessage(`Could not reload Codex panel: ${message}`);
+      }
     }),
     vscode.commands.registerCommand('agentSessions.rename', async (arg: unknown) => {
       // From the keybinding there is no argument: take the selected row of whichever tree has one.

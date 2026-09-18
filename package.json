@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.5.14",
+  "version": "0.5.15",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -266,8 +266,8 @@
         "icon": "$(edit)"
       },
       {
-        "command": "agentSessions.reloadPanels",
-        "title": "Reload Agent Panels",
+        "command": "agentSessions.reloadCodexPanel",
+        "title": "Reload Codex Panel",
         "category": "Agent Sessions",
         "icon": "$(debug-restart)"
       }
@@ -283,11 +283,6 @@
           "command": "agentSessions.newCodex",
           "when": "view == agentSessions.list",
           "group": "navigation@2"
-        },
-        {
-          "command": "agentSessions.reloadPanels",
-          "when": "view == agentSessions.list",
-          "group": "navigation@8"
         },
         {
           "command": "agentSessions.refresh",
@@ -492,12 +487,16 @@
           "group": "1_open@4"
         },
         {
-          "command": "agentSessions.reloadPanels",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/",
+          "command": "agentSessions.reloadCodexPanel",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/",
           "group": "1_open@5"
         }
       ],
       "commandPalette": [
+      {
+        "command": "agentSessions.reloadCodexPanel",
+        "when": "false"
+      },
         {
           "command": "agentSessions.open",
           "when": "false"
