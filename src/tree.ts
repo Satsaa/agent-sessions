@@ -7,6 +7,14 @@ import { stateIcon, toolIcon } from './icons.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
 
+/** How long a finished subagent stays under its parent before it is folded away (unless all are shown). */
+export const SUBAGENT_LINGER_MS = 5 * 60_000;
+
+/** A spawned session worth a row by default: still working, or finished within the linger window. */
+export function recentSubagent(s: Session, now = Date.now()): boolean {
+  return isLive(s.state) || now - s.updatedAt < SUBAGENT_LINGER_MS;
+}
+
 export interface ViewOptions {
   groupBy: GroupBy;
   scope: 'all' | 'workspace';
@@ -169,16 +177,19 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   }
 
   /**
-   * Split the filtered sessions into rows and the spawned sessions nested under a shown row. A spawned session whose
-   * parent is not a row stands alone only when subagents are switched on; otherwise it is hidden.
+   * Split the filtered sessions into rows and the spawned sessions nested under a shown row. By default a child is
+   * shown only while active or for a few minutes after; a spawned session whose parent is not a row is hidden.
+   * "Show all subagents" lifts both limits.
    */
   private topLevel(sessions: Session[]): { all: Session[]; childrenOf: Map<string, Session[]> } {
     const rows = new Set(sessions.filter((s) => !s.subagent).map((s) => `${s.tool}:${s.id}`));
     const childrenOf = new Map<string, Session[]>();
     const all: Session[] = [];
+    const now = Date.now();
     for (const s of sessions) {
       const parentKey = s.subagent && s.parentId ? `${s.tool}:${s.parentId}` : undefined;
       if (parentKey && rows.has(parentKey)) {
+        if (!this.options.showSubagents && !recentSubagent(s, now)) continue;
         const list = childrenOf.get(parentKey) ?? [];
         list.push(s);
         childrenOf.set(parentKey, list);

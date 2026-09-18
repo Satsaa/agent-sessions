@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { SessionItem } from './tree.js';
+import { SessionItem, recentSubagent } from './tree.js';
 import { isLive, type Session } from './types.js';
 import { statsInline, type RepoWorktree, type WorktreeStats } from './worktree.js';
 
@@ -112,11 +112,13 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
   private roots: Node[] = [];
 
   /** Every worktree found, with stats and the sessions bound to it. */
-  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>): void {
+  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>, showAllSubagents: boolean): void {
     // Spawned sessions nest under their parent wherever that parent is shown; they are never rows of their own here.
     const childrenOf = new Map<string, Session[]>();
+    const now = Date.now();
     for (const s of sessions) {
       if (!s.subagent || !s.parentId) continue;
+      if (!showAllSubagents && !recentSubagent(s, now)) continue;
       const list = childrenOf.get(`${s.tool}:${s.parentId}`) ?? [];
       list.push(s);
       childrenOf.set(`${s.tool}:${s.parentId}`, list);

@@ -166,7 +166,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const mains = new Set(worktrees.filter((w) => w.isMain).map((w) => w.path));
         const stats = await loadWorktreeStats([...sessionWorktrees(provider.visible()), ...worktrees], mains);
         provider.setWorktreeStats(stats);
-        worktreesProvider.set(worktrees, stats, sessions, archived, pinned);
+        worktreesProvider.set(worktrees, stats, sessions, archived, pinned, config.view.showSubagents);
         const linked = worktrees.filter((w) => !w.isMain).length;
         worktreesView.description = linked ? `${linked}` : '';
       } finally {
