@@ -18,7 +18,7 @@ function windowHtml(w: UsageWindow): string {
     w.detail,
     w.severity && w.severity !== 'normal' ? `Severity: ${w.severity}` : '',
   ].filter(Boolean).join('\n');
-  const value = w.detail ? escapeHtml(w.detail) : `<span class="bar ${usageTone(w)}" role="meter" aria-label="${escapeHtml(w.label)} remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${left}">${meterCells(left)}</span> <span>${left}%</span>`;
+  const value = w.detail ? escapeHtml(w.detail) : `<span class="bar ${usageTone(w)}" role="meter" aria-label="${escapeHtml(w.label)} remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${left}">${progressBar(left)}</span> <span>${left}%</span>`;
   return `<li title="${escapeHtml(title)}"><span class="window-label">${escapeHtml(w.label)}</span><span class="value">${value}${escapeHtml(reset)}</span></li>`;
 }
 
@@ -75,12 +75,10 @@ img { width: 16px; height: 16px; }
 ul { list-style: none; margin: 0; padding: 0; }
 li { display: flex; align-items: baseline; gap: 6px; min-height: 22px; line-height: 22px; padding: 0 8px 0 28px; white-space: nowrap; }
 .value { overflow: hidden; text-overflow: ellipsis; }
-/* The meter is drawn as solid cells, not glyphs: a filled block shows its colour where a thin stroke turns muddy. */
-.bar { display: inline-flex; gap: 2px; vertical-align: middle; }
-.bar i { display: inline-block; width: 7px; height: 8px; border-radius: 1px; background: currentColor; }
-.bar i.empty { opacity: .25; }
+.bar { white-space: pre; }
 .green { color: var(--vscode-charts-green); }
-.orange { color: var(--vscode-editorWarning-foreground); }
+/* Not the theme's charts.orange: the default dark theme defines that as a burnt #d18616 that reads as brown. */
+.orange { color: #f28c28; }
 .red { color: var(--vscode-charts-red); }
 .stale { color: var(--vscode-editorWarning-foreground); }
 .message { white-space: normal; opacity: .7; }
@@ -130,12 +128,6 @@ export function remaining(w: UsageWindow): number {
   return Math.max(0, Math.min(100, 100 - w.percent));
 }
 
-function meterCells(percent: number, cells = 10): string {
-  const filled = Math.round((percent / 100) * cells);
-  return Array.from({ length: cells }, (_, i) => `<i${i < filled ? '' : ' class="empty"'}></i>`).join('');
-}
-
-/** Text form of the meter for tooltips, where only characters are available. */
 function progressBar(percent: number, cells = 10): string {
   const filled = Math.round((percent / 100) * cells);
   return '▰'.repeat(filled) + '▱'.repeat(cells - filled);
@@ -152,7 +144,7 @@ function resetText(at: number): string {
   return `in ${d}d ${h % 24}h`;
 }
 
-/** Tone of a window: red under 10% left, the theme's warning colour under 20%, green otherwise; the provider's own "locked" is red regardless. */
+/** Colour of a window: red under 10% left, orange under 20%, green otherwise; the provider's own "locked" is red regardless. */
 function usageTone(w: UsageWindow): 'red' | 'orange' | 'green' {
   const left = remaining(w);
   if (w.severity === 'locked' || left < 10) return 'red';
