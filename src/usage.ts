@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import type { Tool } from './types.js';
 import { readJsonFile, walkFiles, statOrUndefined } from './util.js';
 import { cachedClaudeUsage } from './claude-usage-cache.js';
-import { decodeCodexAuth } from './codex-accounts.js';
+import { decodeCodexAuth, type CodexAccount } from './codex-accounts.js';
 
 export interface UsageWindow {
   /** Short label: "Session (5h)", "Weekly", "Weekly · Opus", "Extra usage". */
@@ -27,6 +27,8 @@ export interface ToolUsage {
   /** How the numbers were obtained, for the tooltip. */
   source: string;
   error: string | undefined;
+  /** A saved login that is not the one the tool currently runs under; listed last and kept out of the status bar. */
+  inactive: boolean;
 }
 
 // ---------------------------------------------------------------- Claude
@@ -125,7 +127,7 @@ async function claudeAccountKey(home: string): Promise<string | undefined> {
 }
 
 export async function fetchClaudeUsage(home: string, allowNetwork: boolean, cacheDirectory: string, interval: number): Promise<ToolUsage> {
-  const base: ToolUsage = { tool: 'claude', plan: undefined, account: undefined, windows: [], asOf: Date.now(), source: 'api.anthropic.com/api/oauth/usage', error: undefined };
+  const base: ToolUsage = { tool: 'claude', plan: undefined, account: undefined, windows: [], asOf: Date.now(), source: 'api.anthropic.com/api/oauth/usage', error: undefined, inactive: false };
   const creds = await readJsonFile<ClaudeCredentials>(path.join(home, '.credentials.json'));
   const oauth = creds?.claudeAiOauth;
   base.plan = planLabel(oauth?.subscriptionType, oauth?.rateLimitTier);
@@ -313,8 +315,8 @@ function liveWindows(rl: CodexLiveRateLimit | null | undefined, suffix: string, 
  * access token in `auth.json`. Codex keeps that token fresh while it runs; a 401 here means it has not run for a
  * while, and the caller falls back to the rollout snapshot rather than refreshing the token itself.
  */
-async function fetchCodexUsage(home: string): Promise<CodexLiveUsage> {
-  const auth = await readJsonFile<{ tokens?: { access_token?: string; account_id?: string } }>(path.join(home, 'auth.json'));
+async function fetchCodexUsage(authFile: string): Promise<CodexLiveUsage> {
+  const auth = await readJsonFile<{ tokens?: { access_token?: string; account_id?: string } }>(authFile);
   const token = auth?.tokens?.access_token;
   if (!token) throw new Error('not logged in to ChatGPT');
   const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
@@ -325,22 +327,40 @@ async function fetchCodexUsage(home: string): Promise<CodexLiveUsage> {
   return (await res.json()) as CodexLiveUsage;
 }
 
+/** Live usage from chatgpt.com for the login in `authFile`, merged over what the auth file itself says about the account. */
+async function liveCodexUsage(authFile: string, base: ToolUsage, account: { plan: string | undefined; until: string | undefined; email: string | undefined }): Promise<ToolUsage> {
+  const live = await fetchCodexUsage(authFile);
+  const reached = !!live.rate_limit_reached_type || !!live.rate_limit?.limit_reached;
+  const windows = liveWindows(live.rate_limit, '', reached);
+  for (const extra of live.additional_rate_limits ?? []) {
+    const model = extra.normal_model_slug ?? extra.limit_name;
+    windows.push(...liveWindows(extra.rate_limit, model ? ` · ${model}` : '', !!extra.rate_limit?.limit_reached));
+  }
+  if (live.credits?.has_credits) {
+    windows.push({ label: 'Credits', percent: 0, resetsAt: undefined, severity: undefined, detail: live.credits.unlimited ? 'unlimited' : `balance ${live.credits.balance ?? '?'}` });
+  }
+  return { ...base, plan: codexPlanLabel(live.plan_type ?? account.plan, account.until), account: live.email ?? account.email, windows, asOf: Date.now(), source: 'chatgpt.com usage endpoint (the one the Codex CLI and plugin use)' };
+}
+
+/**
+ * Usage of a saved Codex login other than the active one. Only the network knows it: rollouts belong to the active
+ * login, and Codex refreshes only the active token, so a stale saved token reports itself as such.
+ */
+export async function readInactiveCodexUsage(account: CodexAccount): Promise<ToolUsage> {
+  const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), account: account.email, windows: [], asOf: 0, source: 'chatgpt.com usage endpoint, saved login', error: undefined, inactive: true };
+  try {
+    return await liveCodexUsage(account.file, base, account);
+  } catch (err) {
+    return { ...base, error: `live usage unavailable: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 export async function readCodexUsage(home: string, allowNetwork: boolean): Promise<ToolUsage> {
   const account = await readCodexPlan(home);
-  const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), account: account.email, windows: [], asOf: 0, source: 'rate_limits recorded in the latest rollout', error: undefined };
+  const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), account: account.email, windows: [], asOf: 0, source: 'rate_limits recorded in the latest rollout', error: undefined, inactive: false };
   if (allowNetwork) {
     try {
-      const live = await fetchCodexUsage(home);
-      const reached = !!live.rate_limit_reached_type || !!live.rate_limit?.limit_reached;
-      const windows = liveWindows(live.rate_limit, '', reached);
-      for (const extra of live.additional_rate_limits ?? []) {
-        const model = extra.normal_model_slug ?? extra.limit_name;
-        windows.push(...liveWindows(extra.rate_limit, model ? ` · ${model}` : '', !!extra.rate_limit?.limit_reached));
-      }
-      if (live.credits?.has_credits) {
-        windows.push({ label: 'Credits', percent: 0, resetsAt: undefined, severity: undefined, detail: live.credits.unlimited ? 'unlimited' : `balance ${live.credits.balance ?? '?'}` });
-      }
-      return { ...base, plan: codexPlanLabel(live.plan_type ?? account.plan, account.until), account: live.email ?? account.email, windows, asOf: Date.now(), source: 'chatgpt.com usage endpoint (the one the Codex CLI and plugin use)' };
+      return await liveCodexUsage(path.join(home, 'auth.json'), base, account);
     } catch (err) {
       base.error = `live usage unavailable: ${err instanceof Error ? err.message : String(err)}`;
     }

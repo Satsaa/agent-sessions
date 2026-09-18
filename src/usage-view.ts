@@ -78,7 +78,7 @@ li { display: flex; align-items: baseline; gap: 6px; min-height: 22px; line-heig
 .bar { white-space: pre; }
 .green { color: var(--vscode-charts-green); }
 /* Not the theme's charts.orange: the default dark theme defines that as a burnt #d18616 that reads as brown. */
-.orange { color: #f28c28; }
+.orange { color: #e07b1a; }
 .red { color: var(--vscode-charts-red); }
 .stale { color: var(--vscode-editorWarning-foreground); }
 .message { white-space: normal; opacity: .7; }
@@ -110,11 +110,16 @@ vscode.postMessage('ready');
   private groupsHtml(webview: vscode.Webview): string {
     return this.usages.map((u) => {
       const icons = toolIcon(u.tool);
-      const title = [toolLabel(u.tool), u.account, u.plan, u.error, u.asOf ? `As of ${relativeTime(u.asOf)} (${new Date(u.asOf).toLocaleString()})` : '', `Source: ${u.source}`].filter(Boolean).join('\n');
+      const title = [toolLabel(u.tool), u.account, u.plan, u.inactive ? 'Saved login, not the one Codex runs under' : '', u.error, u.asOf ? `As of ${relativeTime(u.asOf)} (${new Date(u.asOf).toLocaleString()})` : '', `Source: ${u.source}`].filter(Boolean).join('\n');
       const message = !u.windows.length ? u.error ?? 'No limits reported' : '';
       const rows = u.windows.map(windowHtml).join('') + (message ? `<li class="message">${escapeHtml(message)}</li>` : '');
       const warning = isUsageStale(u) ? '<span class="stale" role="img" aria-label="Usage is more than 10 minutes old" title="Usage is more than 10 minutes old">⚠</span>' : '';
-      return `<details data-tool="${u.tool}" open><summary title="${escapeHtml(title)}"><img class="light" src="${escapeHtml(webview.asWebviewUri(icons.light).toString())}" alt=""><img class="dark" src="${escapeHtml(webview.asWebviewUri(icons.dark).toString())}" alt=""><span>${toolLabel(u.tool)}</span>${warning}<span class="plan">${escapeHtml(u.error && !u.windows.length ? 'unavailable' : u.plan ?? '')}</span></summary><ul>${rows}</ul></details>`;
+      // With several Codex logins the account tells the groups apart; the collapsed state is remembered per login.
+      const manyCodex = this.usages.filter((x) => x.tool === 'codex').length > 1;
+      const plan = u.error && !u.windows.length ? 'unavailable' : u.plan ?? '';
+      const sub = manyCodex && u.tool === 'codex' ? [u.account, plan].filter(Boolean).join(' · ') : plan;
+      const key = u.tool === 'codex' && u.account ? `${u.tool}:${u.account}` : u.tool;
+      return `<details data-tool="${escapeHtml(key)}" open><summary title="${escapeHtml(title)}"><img class="light" src="${escapeHtml(webview.asWebviewUri(icons.light).toString())}" alt=""><img class="dark" src="${escapeHtml(webview.asWebviewUri(icons.dark).toString())}" alt=""><span>${toolLabel(u.tool)}</span>${warning}<span class="plan">${escapeHtml(sub)}</span></summary><ul>${rows}</ul></details>`;
     }).join('');
   }
 }
@@ -155,7 +160,7 @@ function usageTone(w: UsageWindow): 'red' | 'orange' | 'green' {
 /** Compact status-bar text like `Claude 51%/87%  Codex 12%` — percent LEFT in each window. */
 export function usageStatusText(usages: ToolUsage[]): string {
   return usages
-    .filter((u) => u.windows.length)
+    .filter((u) => u.windows.length && !u.inactive)
     .map((u) => `${isUsageStale(u) ? '$(warning) ' : ''}${toolLabel(u.tool)} ${u.windows.filter((w) => !w.detail || w.percent > 0).map((w) => `${remaining(w)}%`).join('/')}`)
     .join('  ');
 }
@@ -163,7 +168,7 @@ export function usageStatusText(usages: ToolUsage[]): string {
 /** The tightest window across both tools decides the status bar colour. */
 export function usageStatusColor(usages: ToolUsage[]): vscode.ThemeColor | undefined {
   let worst: UsageWindow | undefined;
-  for (const u of usages) for (const w of u.windows) if (!w.detail && (!worst || remaining(w) < remaining(worst))) worst = w;
+  for (const u of usages) if (!u.inactive) for (const w of u.windows) if (!w.detail && (!worst || remaining(w) < remaining(worst))) worst = w;
   if (!worst) return undefined;
   const left = remaining(worst);
   if (worst.severity === 'locked' || left < 10) return new vscode.ThemeColor('statusBarItem.errorForeground');

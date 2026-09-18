@@ -5,13 +5,14 @@ import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
 import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab } from './open.js';
 import { markThisWindow } from './window.js';
 import { formatTranscript, readTranscript } from './transcript.js';
+import { listCodexAccounts } from './codex-accounts.js';
 import { closeCodexSession } from './close.js';
 import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
 import { SessionItem, SessionsProvider, type GroupBy, type ViewOptions } from './tree.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
 import { switchCodexAccount } from './codex-accounts-ui.js';
-import { fetchClaudeUsage, readCodexUsage, type ToolUsage } from './usage.js';
+import { fetchClaudeUsage, readCodexUsage, type ToolUsage, readInactiveCodexUsage } from './usage.js';
 import { UsageProvider, usageStatusColor, usageStatusText, usageStatusTooltip } from './usage-view.js';
 import { initIcons } from './icons.js';
 import { listRepoWorktrees, loadWorktreeStats, sessionWorktrees, type RepoWorktree } from './worktree.js';
@@ -122,9 +123,13 @@ export function activate(context: vscode.ExtensionContext): void {
     if (usageRunning) return;
     usageRunning = true;
     try {
+      // Claude, then the Codex login in use, then every other saved Codex login: those only the network can answer for.
+      const codex = config.tools.includes('codex');
+      const savedLogins = codex && config.usage.codexNetwork ? (await listCodexAccounts(config.codexHome).catch(() => [])).filter((a) => !a.current) : [];
       const results = await Promise.all<ToolUsage | undefined>([
         config.tools.includes('claude') ? fetchClaudeUsage(config.claudeHome, config.usage.claudeNetwork, path.join(context.globalStorageUri.fsPath, 'claude-usage'), config.usage.refreshInterval * 1000) : undefined,
-        config.tools.includes('codex') ? readCodexUsage(config.codexHome, config.usage.codexNetwork) : undefined,
+        codex ? readCodexUsage(config.codexHome, config.usage.codexNetwork) : undefined,
+        ...savedLogins.map((a) => readInactiveCodexUsage(a)),
       ]);
       const usages = results.filter((u): u is ToolUsage => u !== undefined);
       for (const u of usages) if (u.error) output.appendLine(`[${new Date().toISOString()}] usage ${u.tool}: ${u.error}`);
