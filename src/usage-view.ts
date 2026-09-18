@@ -69,7 +69,8 @@ img { width: 16px; height: 16px; }
 .light { display: none; }
 .vscode-light .light, .vscode-high-contrast-light .light { display: block; }
 .vscode-light .dark, .vscode-high-contrast-light .dark { display: none; }
-.plan, .value { opacity: .7; font-size: .9em; }
+/* Secondary text is dimmed the way a tree row's description is, by colour rather than opacity so the meter inside keeps its full tone. */
+.plan, .value { color: var(--vscode-descriptionForeground); font-size: .9em; }
 .plan { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 ul { list-style: none; margin: 0; padding: 0; }
 li { display: flex; align-items: baseline; gap: 6px; min-height: 22px; line-height: 22px; padding: 0 8px 0 28px; white-space: nowrap; }
