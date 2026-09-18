@@ -81,6 +81,9 @@ export function activate(context: vscode.ExtensionContext): void {
   // The row of the chat in the active editor tab is kept selected, the way the Explorer follows the active file.
   let latestSessions: Session[] = [];
   const transcriptChanged = new vscode.EventEmitter<vscode.Uri>();
+  // Revealing scrolls the view, so it happens once per change of active chat, never again on refreshes while the
+  // same chat stays active: the selection itself survives refreshes through the row id.
+  let revealedKey: string | undefined;
   const selectActiveTabSession = (): void => {
     if (!view.visible) return;
     const s = sessionOfActiveTab(latestSessions);
@@ -88,10 +91,15 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!item) {
       // An agent panel showing no known session (a fresh Codex panel, a title matching nothing): a selection left
       // over from the previous tab would point at the wrong row, so it is cleared rather than kept.
-      if (activeTabIsAgentPanel()) for (const sel of view.selection) if (sel instanceof SessionItem) provider.dropSelection(sel);
+      if (activeTabIsAgentPanel()) {
+        revealedKey = undefined;
+        for (const sel of view.selection) if (sel instanceof SessionItem) provider.dropSelection(sel);
+      }
       return;
     }
-    if (view.selection.some((sel) => sel === item)) return;
+    const key = `${s.tool}:${s.id}`;
+    if (key === revealedKey) return;
+    revealedKey = key;
     void view.reveal(item, { select: true, focus: false, expand: false }).then(undefined, () => undefined);
   };
   context.subscriptions.push(
