@@ -95,6 +95,14 @@ async function openCodex(uri: vscode.Uri): Promise<void> {
   });
 }
 
+/** Close the tab showing this session, if one is open. Only the tab goes: the agent's process is left alone. */
+export async function closeSessionTab(session: Session): Promise<boolean> {
+  const tab = session.tool === 'claude' ? existingClaudeTab(session) : existingCodexTabEntry(session.id, session.title)?.tab;
+  if (!tab) return false;
+  await vscode.window.tabGroups.close(tab, true);
+  return true;
+}
+
 export function resumeCommand(session: Session): string {
   return session.tool === 'claude' ? `claude --resume ${session.id}` : `codex resume ${session.id}`;
 }

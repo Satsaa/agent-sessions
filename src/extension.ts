@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
-import { activeTabIsAgentPanel, existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab } from './open.js';
+import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab } from './open.js';
 import { markThisWindow } from './window.js';
 import { formatTranscript, readTranscript } from './transcript.js';
 import { closeCodexSession } from './close.js';
@@ -452,6 +452,8 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!s) return;
       archived.add(`${s.tool}:${s.id}`);
       await persistArchived();
+      // Archiving puts the session away, so its tab goes too; the agent keeps running.
+      await closeSessionTab(s).catch((err: unknown) => output.appendLine(`close tab for ${s.tool} ${s.id} failed: ${err instanceof Error ? err.message : String(err)}`));
       provider.setOptions(options());
       updateIndicators(provider.visible());
     }),
