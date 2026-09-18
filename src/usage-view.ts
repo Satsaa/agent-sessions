@@ -82,6 +82,8 @@ li { display: flex; align-items: baseline; gap: 6px; min-height: 22px; line-heig
 .red { color: var(--vscode-charts-red); }
 .stale { color: var(--vscode-editorWarning-foreground); }
 .message { white-space: normal; opacity: .7; }
+/* A saved login Codex is not running under. */
+details.inactive { opacity: .6; }
 </style></head><body><main>${this.groupsHtml(view.webview)}</main>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
@@ -119,7 +121,7 @@ vscode.postMessage('ready');
       const plan = u.error && !u.windows.length ? 'unavailable' : u.plan ?? '';
       const sub = manyCodex && u.tool === 'codex' ? [u.account, plan].filter(Boolean).join(' · ') : plan;
       const key = u.tool === 'codex' && u.account ? `${u.tool}:${u.account}` : u.tool;
-      return `<details data-tool="${escapeHtml(key)}" open><summary title="${escapeHtml(title)}"><img class="light" src="${escapeHtml(webview.asWebviewUri(icons.light).toString())}" alt=""><img class="dark" src="${escapeHtml(webview.asWebviewUri(icons.dark).toString())}" alt=""><span>${toolLabel(u.tool)}</span>${warning}<span class="plan">${escapeHtml(sub)}</span></summary><ul>${rows}</ul></details>`;
+      return `<details data-tool="${escapeHtml(key)}"${u.inactive ? ' class="inactive"' : ''} open><summary title="${escapeHtml(title)}"><img class="light" src="${escapeHtml(webview.asWebviewUri(icons.light).toString())}" alt=""><img class="dark" src="${escapeHtml(webview.asWebviewUri(icons.dark).toString())}" alt=""><span>${toolLabel(u.tool)}</span>${warning}<span class="plan">${escapeHtml(sub)}</span></summary><ul>${rows}</ul></details>`;
     }).join('');
   }
 }
