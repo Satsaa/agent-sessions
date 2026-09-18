@@ -105,7 +105,15 @@ function textOf(content: unknown): string {
   return '';
 }
 
-async function summarizeTranscript(file: string, mtimeMs: number, size: number): Promise<TranscriptSummary> {
+/** A subagent transcript's sidecar: `<session id>/subagents/agent-<id>.meta.json`. Teammates carry `name` and `taskKind`. */
+interface SubagentMeta {
+  agentType?: string;
+  description?: string;
+  name?: string;
+  taskKind?: string;
+}
+
+async function summarizeTranscript(file: string, mtimeMs: number, size: number, sidechain = false): Promise<TranscriptSummary> {
   const cached = transcriptCache.get(file);
   if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.summary;
 
@@ -141,7 +149,8 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number):
         }
         case 'user':
         case 'assistant': {
-          if (d.isSidechain) break;
+          // A subagent's own transcript is all sidechain; in a main transcript sidechain records are another agent's.
+          if (Boolean(d.isSidechain) !== sidechain) break;
           // The first cwd is the directory the session was started in; later ones follow the shell.
           if (d.cwd) {
             summary.cwd ??= d.cwd;
@@ -198,6 +207,56 @@ function stateFor(live: LiveInfo | undefined, lastRole: TranscriptSummary['lastR
   }
 }
 
+/** A subagent is live only while its parent is; within that, a transcript still moving is running. */
+const SUBAGENT_ACTIVE_WINDOW_MS = 2 * 60_000;
+
+function subagentState(parentLive: LiveInfo | undefined, summary: TranscriptSummary): SessionState {
+  if (!parentLive) return 'stopped';
+  if (summary.lastRole === 'user') return 'running';
+  if (summary.lastAt !== undefined && Date.now() - summary.lastAt < SUBAGENT_ACTIVE_WINDOW_MS) return 'running';
+  return 'stopped';
+}
+
+/**
+ * Subagents and teammates a session spawned: `<project dir>/<session id>/subagents/agent-*.jsonl`, each with a
+ * `.meta.json` naming it (a teammate by its `name`, a subagent by the task description).
+ */
+async function listSubagents(parent: Session, parentLive: LiveInfo | undefined): Promise<Session[]> {
+  const dir = path.join(path.dirname(parent.transcriptPath), parent.id, 'subagents');
+  const out: Session[] = [];
+  for (const e of await listDir(dir)) {
+    if (!e.isFile() || !e.name.startsWith('agent-') || !e.name.endsWith('.jsonl')) continue;
+    const file = path.join(dir, e.name);
+    const st = await statOrUndefined(file);
+    if (!st) continue;
+    const agentId = e.name.slice('agent-'.length, -'.jsonl'.length);
+    const summary = await summarizeTranscript(file, st.mtimeMs, st.size, true);
+    const meta = await readJsonFile<SubagentMeta>(file.slice(0, -'.jsonl'.length) + '.meta.json');
+    const teammate = meta?.taskKind === 'in_process_teammate';
+    const label = (teammate ? meta?.name : undefined) ?? meta?.description ?? meta?.name;
+    out.push({
+      tool: 'claude',
+      id: agentId,
+      title: label?.trim() || summary.title || '(subagent)',
+      cwd: summary.cwd ?? parent.cwd,
+      branch: summary.branch ?? parent.branch,
+      worktree: parent.worktree,
+      updatedAt: summary.lastAt ?? st.mtimeMs,
+      startedAt: summary.firstAt ?? st.birthtimeMs,
+      state: subagentState(parentLive, summary),
+      archived: false,
+      subagent: true,
+      parentId: parent.id,
+      agentRole: teammate ? 'teammate' : meta?.agentType,
+      empty: !summary.hasPrompt,
+      transcriptPath: file,
+      pid: undefined,
+      inThisWindow: false,
+    });
+  }
+  return out;
+}
+
 export async function listClaudeSessions(home: string): Promise<Session[]> {
   const projectsDir = path.join(home, 'projects');
   const live = await readLiveSessions(home);
@@ -220,7 +279,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
       const liveInfo = live.get(id);
       const cwd = summary.cwd ?? liveInfo?.cwd;
       seen.add(id);
-      sessions.push({
+      const parent: Session = {
         tool: 'claude',
         id,
         title: customTitle ?? liveInfo?.name ?? summary.title ?? '(no prompt yet)',
@@ -233,11 +292,15 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
         state: stateFor(liveInfo, summary.lastRole),
         archived: false,
         subagent: false,
+        parentId: undefined,
+        agentRole: undefined,
         empty: !summary.hasPrompt,
         transcriptPath: file,
         pid: liveInfo?.pid,
         inThisWindow: false,
-      });
+      };
+      sessions.push(parent);
+      sessions.push(...(await listSubagents(parent, liveInfo)));
     }
   }
 
@@ -256,6 +319,8 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
       state: stateFor(info, undefined),
       archived: false,
       subagent: false,
+      parentId: undefined,
+      agentRole: undefined,
       empty: true,
       transcriptPath: '',
       pid: info.pid,

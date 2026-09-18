@@ -65,6 +65,24 @@ interface ThreadRow {
   archived: number;
   source: string;
   rollout_path: string;
+  agent_nickname: string | null;
+}
+
+/** `source` of a spawned thread: `{"subagent":{"thread_spawn":{"parent_thread_id":…,"agent_nickname":…}}}`; guardians carry `{"subagent":{"other":"guardian"}}`. */
+interface SpawnSource {
+  subagent?: { thread_spawn?: { parent_thread_id?: string; agent_nickname?: string | null; agent_role?: string | null } };
+}
+
+function spawnOf(source: unknown): { parentId: string | undefined; role: string | undefined } {
+  const raw = typeof source === 'string' ? (isSubagentSource(source) ? source : undefined) : source;
+  if (!raw) return { parentId: undefined, role: undefined };
+  try {
+    const parsed = (typeof raw === 'string' ? JSON.parse(raw) : raw) as SpawnSource;
+    const spawn = parsed.subagent?.thread_spawn;
+    return { parentId: spawn?.parent_thread_id || undefined, role: spawn?.agent_nickname || spawn?.agent_role || undefined };
+  } catch {
+    return { parentId: undefined, role: undefined };
+  }
 }
 
 async function readThreadNames(home: string): Promise<Map<string, string>> {
@@ -201,14 +219,23 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
 
   let rows: ThreadRow[];
   const lastTurn = new Map<string, string>();
+  const parents = new Map<string, string>();
   try {
     const db = new mod.DatabaseSync(stateFile, { readOnly: true });
     try {
       rows = db
         .prepare(
-          'SELECT id, title, first_user_message, cwd, git_branch, updated_at, updated_at_ms, created_at, archived, source, rollout_path FROM threads',
+          'SELECT id, title, first_user_message, cwd, git_branch, updated_at, updated_at_ms, created_at, archived, source, rollout_path, agent_nickname FROM threads',
         )
         .all() as unknown as ThreadRow[];
+      try {
+        // Codex's own record of who spawned whom; the source JSON is the fallback for rows written before the table.
+        for (const e of db.prepare('SELECT parent_thread_id, child_thread_id FROM thread_spawn_edges').all() as { parent_thread_id: string; child_thread_id: string }[]) {
+          parents.set(e.child_thread_id, e.parent_thread_id);
+        }
+      } catch {
+        // Older state databases have no spawn edges.
+      }
     } finally {
       db.close();
     }
@@ -246,6 +273,7 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
     const worktree = st ? await worktreeForThread(r.cwd || undefined, r.git_branch ?? undefined, r.rollout_path, locked, st.mtimeMs, st.size) : undefined;
     const prompt = r.first_user_message ? cleanTitle(r.first_user_message) : '';
     const title = names.get(r.id) ?? (r.title ? cleanTitle(r.title) : '') ?? prompt;
+    const spawn = spawnOf(r.source);
     sessions.push({
       tool: 'codex',
       id: r.id,
@@ -258,6 +286,8 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
       state: stateFor(locked, lastTurn.get(r.id)),
       archived: r.archived === 1,
       subagent: isSubagentSource(r.source),
+      parentId: parents.get(r.id) ?? spawn.parentId,
+      agentRole: r.agent_nickname || spawn.role,
       empty: !r.first_user_message,
       transcriptPath: r.rollout_path,
       pid: locks.get(r.id),
@@ -282,6 +312,8 @@ interface RolloutSummary {
   cwd: string | undefined;
   branch: string | undefined;
   subagent: boolean;
+  parentId: string | undefined;
+  agentRole: string | undefined;
   firstPrompt: string | undefined;
   lastTurnInProgress: boolean;
   lastAt: number | undefined;
@@ -293,7 +325,7 @@ const rolloutCache = new Map<string, { mtimeMs: number; size: number; summary: R
 async function summarizeRollout(file: string, mtimeMs: number, size: number): Promise<RolloutSummary> {
   const cached = rolloutCache.get(file);
   if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.summary;
-  const summary: RolloutSummary = { id: undefined, cwd: undefined, branch: undefined, subagent: false, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined, firstAt: undefined };
+  const summary: RolloutSummary = { id: undefined, cwd: undefined, branch: undefined, subagent: false, parentId: undefined, agentRole: undefined, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined, firstAt: undefined };
   const rl = readline.createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
   try {
     for await (const line of rl) {
@@ -317,7 +349,12 @@ async function summarizeRollout(file: string, mtimeMs: number, size: number): Pr
         summary.id ??= meta.id;
         summary.cwd ??= meta.cwd;
         summary.branch ??= meta.git?.branch;
-        if (meta.thread_source === 'subagent' || (meta.source && typeof meta.source === 'object')) summary.subagent = true;
+        if (meta.thread_source === 'subagent' || (meta.source && typeof meta.source === 'object')) {
+          summary.subagent = true;
+          const spawn = spawnOf(meta.source);
+          summary.parentId = spawn.parentId;
+          summary.agentRole = spawn.role;
+        }
       } else if (d.type === 'event_msg') {
         const kind = p.type;
         if (kind === 'user_message' && !summary.firstPrompt) {
@@ -364,6 +401,8 @@ async function listFromRollouts(home: string, names: Map<string, string>, locks:
         state: stateFor(locked, s.lastTurnInProgress ? 'inProgress' : undefined),
         archived,
         subagent: s.subagent,
+        parentId: s.parentId,
+        agentRole: s.agentRole,
         empty: !s.firstPrompt,
         transcriptPath: file,
         pid: locks.get(s.id),

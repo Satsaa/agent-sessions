@@ -13,6 +13,7 @@ export class WorktreeItem extends vscode.TreeItem {
     public readonly sessions: Session[],
     locallyArchived: ReadonlySet<string>,
     pinned: ReadonlySet<string>,
+    childrenOf: ReadonlyMap<string, Session[]>,
   ) {
     super(worktree.isMain ? `${worktree.name} (main checkout)` : worktree.name, sessions.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
     this.id = `worktree:${worktree.path}`;
@@ -21,10 +22,13 @@ export class WorktreeItem extends vscode.TreeItem {
     this.description = describe(worktree, stats, sessions);
     this.tooltip = tooltip(worktree, stats, sessions);
     this.resourceUri = vscode.Uri.file(worktree.path);
-    this.children = sessions.map((s) => new SessionItem(s, locallyArchived.has(`${s.tool}:${s.id}`), true, undefined, `wt:${worktree.path}:`, pinned.has(`${s.tool}:${s.id}`)));
+    const item = (s: Session, showTool: boolean): SessionItem =>
+      new SessionItem(s, locallyArchived.has(`${s.tool}:${s.id}`), showTool, undefined, `wt:${worktree.path}:`, pinned.has(`${s.tool}:${s.id}`), '',
+        (childrenOf.get(`${s.tool}:${s.id}`) ?? []).map((c) => item(c, false)));
+    this.children = sessions.map((s) => item(s, true));
   }
 
-  readonly children: vscode.TreeItem[];
+  readonly children: SessionItem[];
 }
 
 class RepoItem extends vscode.TreeItem {
@@ -41,7 +45,7 @@ class RepoItem extends vscode.TreeItem {
   }
 }
 
-type Node = RepoItem | WorktreeItem | vscode.TreeItem;
+type Node = RepoItem | WorktreeItem | SessionItem;
 
 function iconFor(wt: RepoWorktree, stats: WorktreeStats | undefined, sessions: Session[]): vscode.ThemeIcon {
   if (stats?.gone || wt.prunable) return new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.orange'));
@@ -109,6 +113,15 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
 
   /** Every worktree found, with stats and the sessions bound to it. */
   set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>): void {
+    // Spawned sessions nest under their parent wherever that parent is shown; they are never rows of their own here.
+    const childrenOf = new Map<string, Session[]>();
+    for (const s of sessions) {
+      if (!s.subagent || !s.parentId) continue;
+      const list = childrenOf.get(`${s.tool}:${s.parentId}`) ?? [];
+      list.push(s);
+      childrenOf.set(`${s.tool}:${s.parentId}`, list);
+    }
+    for (const list of childrenOf.values()) list.sort((a, b) => b.startedAt - a.startedAt);
     const byPath = new Map<string, Session[]>();
     for (const s of sessions) {
       const key = s.worktree?.path ?? (s.cwd ? path.resolve(s.cwd) : undefined);
@@ -128,7 +141,7 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
     const byRepo = new Map<string, WorktreeItem[]>();
     for (const wt of worktrees) {
       const list = byRepo.get(wt.repoRoot) ?? [];
-      list.push(new WorktreeItem(wt, stats.get(wt.path), assigned(wt), locallyArchived, pinned));
+      list.push(new WorktreeItem(wt, stats.get(wt.path), assigned(wt), locallyArchived, pinned, childrenOf));
       byRepo.set(wt.repoRoot, list);
     }
     const repos = [...byRepo.entries()];
@@ -142,8 +155,7 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
 
   getChildren(element?: Node): Node[] {
     if (!element) return this.roots;
-    if (element instanceof RepoItem || element instanceof WorktreeItem) return element.children;
-    return [];
+    return element.children;
   }
 
   getParent(): undefined {

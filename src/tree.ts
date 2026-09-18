@@ -28,8 +28,10 @@ export class SessionItem extends vscode.TreeItem {
     idPrefix = '',
     pinned = false,
     idSuffix = '',
+    /** Subagents and teammates this session spawned, shown under it. */
+    public readonly children: SessionItem[] = [],
   ) {
-    super(session.title, vscode.TreeItemCollapsibleState.None);
+    super(session.title, children.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
     const archived = session.archived || archivedHere;
     this.id = `${idPrefix}${session.tool}:${session.id}${idSuffix}`;
     this.iconPath = stateIcon(session.tool, session.state, archived);
@@ -71,6 +73,7 @@ const STATE_LABEL: Record<SessionState, string> = {
 function describe(session: Session, showTool: boolean, stats: WorktreeStats | undefined): string {
   const parts: string[] = [];
   if (showTool) parts.push(toolLabel(session.tool));
+  if (session.agentRole) parts.push(session.agentRole);
   const wt = session.worktree;
   if (wt) {
     let text = `⎇ ${wt.name}`;
@@ -91,7 +94,7 @@ function tooltipFor(session: Session, archived: boolean, stats: WorktreeStats | 
   const md = new vscode.MarkdownString(undefined, true);
   md.isTrusted = true;
   md.appendMarkdown(`**${escapeMd(session.title)}**\n\n`);
-  md.appendMarkdown(`${toolLabel(session.tool)} · ${STATE_LABEL[session.state]}${session.inThisWindow ? ' · **this window**' : ''}${archived ? ' · archived' : ''}${session.subagent ? ' · subagent' : ''}\n\n`);
+  md.appendMarkdown(`${toolLabel(session.tool)} · ${STATE_LABEL[session.state]}${session.inThisWindow ? ' · **this window**' : ''}${archived ? ' · archived' : ''}${session.subagent ? (session.agentRole === 'teammate' ? ' · teammate' : ' · subagent') : ''}\n\n`);
   const wt = session.worktree;
   if (wt) {
     md.appendMarkdown(`$(root-folder) worktree **${escapeMd(wt.name)}** \`${wt.path}\`\n\n`);
@@ -160,9 +163,31 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     this.rebuild();
   }
 
-  /** Sessions after filtering, for badges and the status bar. */
+  /** Sessions after filtering, for badges and the status bar: the rows themselves, not the spawned sessions nested under them. */
   visible(): Session[] {
-    return this.filtered();
+    return this.topLevel(this.filtered()).all;
+  }
+
+  /**
+   * Split the filtered sessions into rows and the spawned sessions nested under a shown row. A spawned session whose
+   * parent is not a row stands alone only when subagents are switched on; otherwise it is hidden.
+   */
+  private topLevel(sessions: Session[]): { all: Session[]; childrenOf: Map<string, Session[]> } {
+    const rows = new Set(sessions.filter((s) => !s.subagent).map((s) => `${s.tool}:${s.id}`));
+    const childrenOf = new Map<string, Session[]>();
+    const all: Session[] = [];
+    for (const s of sessions) {
+      const parentKey = s.subagent && s.parentId ? `${s.tool}:${s.parentId}` : undefined;
+      if (parentKey && rows.has(parentKey)) {
+        const list = childrenOf.get(parentKey) ?? [];
+        list.push(s);
+        childrenOf.set(parentKey, list);
+      } else if (!s.subagent || this.options.showSubagents) {
+        all.push(s);
+      }
+    }
+    for (const list of childrenOf.values()) list.sort(byStart);
+    return { all, childrenOf };
   }
 
   getTreeItem(element: Node): vscode.TreeItem {
@@ -171,12 +196,22 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
 
   getChildren(element?: Node): Node[] {
     if (!element) return this.roots;
-    return element instanceof GroupItem ? element.children : [];
+    return element.children;
   }
 
   getParent(element: Node): Node | undefined {
-    if (element instanceof SessionItem) return this.roots.find((r) => r instanceof GroupItem && r.children.includes(element));
+    if (!(element instanceof SessionItem)) return undefined;
+    for (const [node, parent] of this.walk()) if (node === element) return parent;
     return undefined;
+  }
+
+  /** Every node with its parent: groups, their sessions, and the spawned sessions nested under those. */
+  private *walk(): Generator<[Node, Node | undefined]> {
+    const visit = function* (node: Node, parent: Node | undefined): Generator<[Node, Node | undefined]> {
+      yield [node, parent];
+      for (const child of node.children) yield* visit(child, node);
+    };
+    for (const root of this.roots) yield* visit(root, undefined);
   }
 
   /**
@@ -191,13 +226,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
 
   /** The row showing a session, for `TreeView.reveal`. */
   itemFor(tool: Session['tool'], id: string): SessionItem | undefined {
-    for (const root of this.roots) {
-      if (root instanceof SessionItem && root.session.tool === tool && root.session.id === id) return root;
-      if (root instanceof GroupItem) {
-        const hit = root.children.find((c) => c.session.tool === tool && c.session.id === id);
-        if (hit) return hit;
-      }
-    }
+    for (const [node] of this.walk()) if (node instanceof SessionItem && node.session.tool === tool && node.session.id === id) return node;
     return undefined;
   }
 
@@ -216,8 +245,8 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     return this.sessions.filter((s) => {
       const archived = s.archived || o.locallyArchived.has(`${s.tool}:${s.id}`);
       if (archived && !o.showArchived) return false;
-      if (s.subagent && !o.showSubagents) return false;
-      if (s.empty && !o.showEmpty && !isLive(s.state) && !o.pinned.has(`${s.tool}:${s.id}`)) return false;
+      // Spawned sessions stay in: `topLevel` nests them under their parent and drops the parentless unless switched on.
+      if (s.empty && !s.subagent && !o.showEmpty && !isLive(s.state) && !o.pinned.has(`${s.tool}:${s.id}`)) return false;
       if (repoRoots) {
         const root = s.worktree?.repoRoot ?? repoRootOf(s.cwd) ?? s.cwd;
         if (!root || !repoRoots.has(path.resolve(root))) return false;
@@ -228,13 +257,14 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
 
   private rebuild(): void {
     const o = this.options;
-    const all = this.filtered();
+    const { all, childrenOf } = this.topLevel(this.filtered());
     const isPinned = (s: Session) => o.pinned.has(`${s.tool}:${s.id}`);
     const active = all.filter((s) => isLive(s.state) || isPinned(s)).sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || byStart(a, b));
     const history = all.filter((s) => !isLive(s.state) && !isPinned(s)).sort(byRecency).slice(0, o.historyLimit);
     const shown = [...active, ...history];
-    const item = (s: Session, showTool = true) =>
-      new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), showTool, s.worktree ? this.stats.get(s.worktree.path) : undefined, '', isPinned(s), retiredSuffix(s));
+    const item = (s: Session, showTool = true): SessionItem =>
+      new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), showTool, s.worktree ? this.stats.get(s.worktree.path) : undefined, '', isPinned(s), retiredSuffix(s),
+        (childrenOf.get(`${s.tool}:${s.id}`) ?? []).map((c) => item(c, false)));
     const retiredSuffix = (s: Session) => {
       const n = this.retired.get(`${s.tool}:${s.id}`);
       return n ? `#${n}` : '';
@@ -302,5 +332,5 @@ function renderKey(node: Node): unknown {
     : typeof icon === 'object' && icon !== null && 'dark' in icon ? String(icon.dark)
     : String(icon);
   const base = [node.id, node.label, node.description, node.contextValue, node.collapsibleState, iconKey];
-  return node instanceof GroupItem ? [...base, node.children.map(renderKey)] : base;
+  return node.children.length ? [...base, node.children.map(renderKey)] : base;
 }
