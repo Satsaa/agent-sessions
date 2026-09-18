@@ -66,22 +66,44 @@ interface ThreadRow {
   source: string;
   rollout_path: string;
   agent_nickname: string | null;
+  agent_path: string | null;
 }
 
 /** `source` of a spawned thread: `{"subagent":{"thread_spawn":{"parent_thread_id":…,"agent_nickname":…}}}`; guardians carry `{"subagent":{"other":"guardian"}}`. */
 interface SpawnSource {
-  subagent?: { thread_spawn?: { parent_thread_id?: string; agent_nickname?: string | null; agent_role?: string | null } };
+  subagent?: { thread_spawn?: { parent_thread_id?: string; agent_nickname?: string | null; agent_role?: string | null; agent_path?: string | null }; other?: string };
 }
 
-function spawnOf(source: unknown): { parentId: string | undefined; role: string | undefined } {
+interface Spawn {
+  parentId: string | undefined;
+  role: string | undefined;
+  /** The task label the parent gave the agent, read from its `agent_path` (`/root/review_dev_integration`). */
+  label: string | undefined;
+}
+
+const NO_SPAWN: Spawn = { parentId: undefined, role: undefined, label: undefined };
+
+/** `/root/review_dev_integration` → "Review dev integration": the name the parent shows for the agent. */
+export function agentLabel(agentPath: string | null | undefined): string | undefined {
+  const base = agentPath?.split('/').filter(Boolean).pop()?.replace(/[_-]+/g, ' ').trim();
+  return base ? base[0]!.toUpperCase() + base.slice(1) : undefined;
+}
+
+function spawnOf(source: unknown, agentPath?: string | null): Spawn {
   const raw = typeof source === 'string' ? (isSubagentSource(source) ? source : undefined) : source;
-  if (!raw) return { parentId: undefined, role: undefined };
+  if (!raw) return NO_SPAWN;
   try {
     const parsed = (typeof raw === 'string' ? JSON.parse(raw) : raw) as SpawnSource;
     const spawn = parsed.subagent?.thread_spawn;
-    return { parentId: spawn?.parent_thread_id || undefined, role: spawn?.agent_nickname || spawn?.agent_role || undefined };
+    // Codex's own review threads (`{"subagent":{"other":"guardian"}}`) have no parent and no path; name them by kind.
+    const other = parsed.subagent?.other;
+    return {
+      parentId: spawn?.parent_thread_id || undefined,
+      role: spawn?.agent_nickname || spawn?.agent_role || undefined,
+      label: agentLabel(agentPath ?? spawn?.agent_path) ?? (other ? `${agentLabel(other)} review` : undefined),
+    };
   } catch {
-    return { parentId: undefined, role: undefined };
+    return NO_SPAWN;
   }
 }
 
@@ -225,7 +247,7 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
     try {
       rows = db
         .prepare(
-          'SELECT id, title, first_user_message, cwd, git_branch, updated_at, updated_at_ms, created_at, archived, source, rollout_path, agent_nickname FROM threads',
+          'SELECT id, title, first_user_message, cwd, git_branch, updated_at, updated_at_ms, created_at, archived, source, rollout_path, agent_nickname, agent_path FROM threads',
         )
         .all() as unknown as ThreadRow[];
       try {
@@ -273,11 +295,11 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
     const worktree = st ? await worktreeForThread(r.cwd || undefined, r.git_branch ?? undefined, r.rollout_path, locked, st.mtimeMs, st.size) : undefined;
     const prompt = r.first_user_message ? cleanTitle(r.first_user_message) : '';
     const title = names.get(r.id) ?? (r.title ? cleanTitle(r.title) : '') ?? prompt;
-    const spawn = spawnOf(r.source);
+    const spawn = spawnOf(r.source, r.agent_path);
     sessions.push({
       tool: 'codex',
       id: r.id,
-      title: title || prompt || '(no prompt yet)',
+      title: title || spawn.label || prompt || (isSubagentSource(r.source) ? '(subagent)' : '(no prompt yet)'),
       cwd: r.cwd || undefined,
       branch: r.git_branch ?? undefined,
       worktree,
@@ -304,6 +326,7 @@ interface RolloutMeta {
   cwd?: string;
   source?: unknown;
   thread_source?: string;
+  agent_path?: string | null;
   git?: { branch?: string };
 }
 
@@ -314,6 +337,7 @@ interface RolloutSummary {
   subagent: boolean;
   parentId: string | undefined;
   agentRole: string | undefined;
+  agentLabel: string | undefined;
   firstPrompt: string | undefined;
   lastTurnInProgress: boolean;
   lastAt: number | undefined;
@@ -325,7 +349,7 @@ const rolloutCache = new Map<string, { mtimeMs: number; size: number; summary: R
 async function summarizeRollout(file: string, mtimeMs: number, size: number): Promise<RolloutSummary> {
   const cached = rolloutCache.get(file);
   if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.summary;
-  const summary: RolloutSummary = { id: undefined, cwd: undefined, branch: undefined, subagent: false, parentId: undefined, agentRole: undefined, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined, firstAt: undefined };
+  const summary: RolloutSummary = { id: undefined, cwd: undefined, branch: undefined, subagent: false, parentId: undefined, agentRole: undefined, agentLabel: undefined, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined, firstAt: undefined };
   const rl = readline.createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
   try {
     for await (const line of rl) {
@@ -351,9 +375,10 @@ async function summarizeRollout(file: string, mtimeMs: number, size: number): Pr
         summary.branch ??= meta.git?.branch;
         if (meta.thread_source === 'subagent' || (meta.source && typeof meta.source === 'object')) {
           summary.subagent = true;
-          const spawn = spawnOf(meta.source);
+          const spawn = spawnOf(meta.source, meta.agent_path);
           summary.parentId = spawn.parentId;
           summary.agentRole = spawn.role;
+          summary.agentLabel = spawn.label;
         }
       } else if (d.type === 'event_msg') {
         const kind = p.type;
@@ -392,7 +417,7 @@ async function listFromRollouts(home: string, names: Map<string, string>, locks:
       sessions.push({
         tool: 'codex',
         id: s.id,
-        title: names.get(s.id) ?? s.firstPrompt ?? '(no prompt yet)',
+        title: names.get(s.id) ?? s.agentLabel ?? s.firstPrompt ?? (s.subagent ? '(subagent)' : '(no prompt yet)'),
         cwd: s.cwd,
         branch: s.branch,
         worktree: await worktreeForThread(s.cwd, s.branch, file, locked, st.mtimeMs, st.size),

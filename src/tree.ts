@@ -46,10 +46,13 @@ export class SessionItem extends vscode.TreeItem {
     this.description = `${pinned ? '📌 ' : ''}${describe(session, showTool, stats)}`;
     this.tooltip = tooltipFor(session, archived, stats);
     if (pinned) this.tooltip.appendMarkdown('\n\n$(pin) Pinned to Active');
-    this.contextValue = ['session', session.tool, archived ? 'archived' : '', pinned ? 'pinned' : '', isLive(session.state) ? 'live' : 'stopped']
+    this.contextValue = ['session', session.tool, archived ? 'archived' : '', pinned ? 'pinned' : '', isLive(session.state) ? 'live' : 'stopped', session.subagent ? 'subagent' : '']
       .filter(Boolean)
       .join('-');
-    this.command = { command: 'agentSessions.open', title: 'Open Session', arguments: [this] };
+    // A spawned agent has no panel of its own to resume; its transcript is what there is to see.
+    this.command = session.subagent
+      ? { command: 'agentSessions.openTranscript', title: 'Open Transcript', arguments: [this] }
+      : { command: 'agentSessions.open', title: 'Open Session', arguments: [this] };
   }
 }
 

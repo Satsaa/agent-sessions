@@ -55,6 +55,9 @@ function readConfig(): Config {
   };
 }
 
+/** Read-only transcript documents: `agent-sessions-transcript:/<tool>/<id>/<title>.md`. */
+const TRANSCRIPT_SCHEME = 'agent-sessions-transcript';
+
 export function activate(context: vscode.ExtensionContext): void {
   initIcons(context);
   const output = vscode.window.createOutputChannel('Agent Sessions');
@@ -77,6 +80,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // The row of the chat in the active editor tab is kept selected, the way the Explorer follows the active file.
   let latestSessions: Session[] = [];
+  const transcriptChanged = new vscode.EventEmitter<vscode.Uri>();
   const selectActiveTabSession = (): void => {
     if (!view.visible) return;
     const s = sessionOfActiveTab(latestSessions);
@@ -441,6 +445,22 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!s) return;
       await vscode.env.clipboard.writeText(resumeCommand(s));
       vscode.window.setStatusBarMessage(`Copied: ${resumeCommand(s)}`, 3000);
+    }),
+    vscode.workspace.registerTextDocumentContentProvider(TRANSCRIPT_SCHEME, {
+      onDidChange: transcriptChanged.event,
+      async provideTextDocumentContent(uri) {
+        const [tool, id] = uri.path.split('/').filter(Boolean);
+        const s = latestSessions.find((x) => x.tool === tool && x.id === id);
+        if (!s) return `# Session ${id} is no longer listed.\n`;
+        return formatTranscript(s, await readTranscript(s));
+      },
+    }),
+    vscode.commands.registerCommand('agentSessions.openTranscript', async (arg: unknown) => {
+      const s = sessionOf(arg);
+      if (!s) return;
+      const uri = vscode.Uri.from({ scheme: TRANSCRIPT_SCHEME, path: `/${s.tool}/${s.id}/${s.title.replace(/[\/\\:]/g, ' ').slice(0, 60) || 'transcript'}.md` });
+      transcriptChanged.fire(uri);
+      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), { preview: true });
     }),
     vscode.commands.registerCommand('agentSessions.revealTranscript', async (arg: unknown) => {
       const s = sessionOf(arg);

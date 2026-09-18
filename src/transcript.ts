@@ -85,11 +85,12 @@ function at(value: unknown): number | undefined {
   return Number.isFinite(t) ? t : undefined;
 }
 
-async function readClaude(file: string): Promise<TranscriptMessage[]> {
+async function readClaude(file: string, sidechain: boolean): Promise<TranscriptMessage[]> {
   const out: TranscriptMessage[] = [];
   for await (const line of lines(file)) {
     const d = parse(line) as { type?: string; isMeta?: boolean; isSidechain?: boolean; timestamp?: string; message?: { role?: string; content?: unknown } } | undefined;
-    if (!d || (d.type !== 'user' && d.type !== 'assistant') || d.isMeta || d.isSidechain) continue;
+    // A subagent's own transcript is all sidechain; in a main transcript sidechain records belong to another agent.
+    if (!d || (d.type !== 'user' && d.type !== 'assistant') || d.isMeta || Boolean(d.isSidechain) !== sidechain) continue;
     const role = d.type;
     // A user record whose content is only tool_result blocks yields no text and is skipped.
     const text = role === 'user' ? cleanMessageText(textBlocks(d.message?.content, CLAUDE_TEXT)) : textBlocks(d.message?.content, CLAUDE_TEXT).trim();
@@ -115,7 +116,7 @@ async function readCodex(file: string): Promise<TranscriptMessage[]> {
 
 export async function readTranscript(session: Session): Promise<TranscriptMessage[]> {
   if (!session.transcriptPath) return [];
-  return session.tool === 'claude' ? readClaude(session.transcriptPath) : readCodex(session.transcriptPath);
+  return session.tool === 'claude' ? readClaude(session.transcriptPath, session.subagent) : readCodex(session.transcriptPath);
 }
 
 /** Consecutive assistant records (one reply streamed as several messages) merge into one block. */

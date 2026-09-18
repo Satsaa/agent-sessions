@@ -70,6 +70,8 @@ interface TranscriptSummary {
   lastAt: number | undefined;
   firstAt: number | undefined;
   lastRole: 'user' | 'assistant' | undefined;
+  /** The last record is the person (or parent agent) cutting the turn off. */
+  lastInterrupted: boolean;
   hasPrompt: boolean;
 }
 
@@ -117,7 +119,7 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number, 
   const cached = transcriptCache.get(file);
   if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.summary;
 
-  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, lastAt: undefined, firstAt: undefined, lastRole: undefined, hasPrompt: false };
+  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, lastAt: undefined, firstAt: undefined, lastRole: undefined, lastInterrupted: false, hasPrompt: false };
   let customTitle: string | undefined;
   let aiTitle: string | undefined;
   let firstPrompt: string | undefined;
@@ -165,9 +167,15 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number, 
             }
           }
           const role = d.message?.role === 'assistant' || d.type === 'assistant' ? 'assistant' : 'user';
+          summary.lastInterrupted = false;
           if (role === 'user') {
             if (d.isMeta) break;
             const text = textOf(d.message?.content);
+            if (/^\[Request interrupted by user/.test(text.trim())) {
+              summary.lastInterrupted = true;
+              summary.lastRole = role;
+              break;
+            }
             // Tool results are user-role records too; only free text counts as a prompt.
             if (!text.trim()) break;
             summary.hasPrompt = true;
@@ -209,11 +217,17 @@ function stateFor(live: LiveInfo | undefined, lastRole: TranscriptSummary['lastR
 
 /** A subagent is live only while its parent is; within that, a transcript still moving is running. */
 const SUBAGENT_ACTIVE_WINDOW_MS = 2 * 60_000;
+/** A subagent waiting on a tool call writes nothing until it returns; allow a long one before calling it stopped. */
+const SUBAGENT_TOOL_WINDOW_MS = 10 * 60_000;
 
+/**
+ * Claude writes no end marker for a subagent, so recency stands in for one: a transcript that stopped growing is a
+ * subagent that finished. An interruption marker ends it outright, however recent.
+ */
 function subagentState(parentLive: LiveInfo | undefined, summary: TranscriptSummary): SessionState {
-  if (!parentLive) return 'stopped';
-  if (summary.lastRole === 'user') return 'running';
-  if (summary.lastAt !== undefined && Date.now() - summary.lastAt < SUBAGENT_ACTIVE_WINDOW_MS) return 'running';
+  if (!parentLive || summary.lastInterrupted || summary.lastAt === undefined) return 'stopped';
+  const idle = Date.now() - summary.lastAt;
+  if (idle < (summary.lastRole === 'user' ? SUBAGENT_TOOL_WINDOW_MS : SUBAGENT_ACTIVE_WINDOW_MS)) return 'running';
   return 'stopped';
 }
 
