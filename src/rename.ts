@@ -45,10 +45,14 @@ export async function renameSession(session: Session, codexHome: string, title: 
   const mod = loadSqlite();
   const stateFile = mod ? await newestDb(codexHome, 'state') : undefined;
   if (!mod || !stateFile) return;
-  // Codex's own title column is what its sidebar and tab show; WAL mode lets this short write coexist with a running Codex.
+  // Codex shows `threads.name` (what its own rename, `thread/name/set`, writes) over the generated `title`, so a
+  // thread renamed once in Codex keeps that name unless both move. Older databases have no `name` column.
+  // WAL mode lets this short write coexist with a running Codex.
   const db = new mod.DatabaseSync(stateFile);
   try {
-    db.prepare('UPDATE threads SET title = ? WHERE id = ?').run(name, session.id);
+    const columns = db.prepare('PRAGMA table_info(threads)').all() as { name: string }[];
+    const hasName = columns.some((c) => c.name === 'name');
+    db.prepare(hasName ? 'UPDATE threads SET title = ?, name = ? WHERE id = ?' : 'UPDATE threads SET title = ? WHERE id = ?').run(...(hasName ? [name, name, session.id] : [name, session.id]));
   } finally {
     db.close();
   }

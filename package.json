@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.5.13",
+  "version": "0.5.14",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -264,6 +264,12 @@
         "title": "Rename Session",
         "category": "Agent Sessions",
         "icon": "$(edit)"
+      },
+      {
+        "command": "agentSessions.reloadPanels",
+        "title": "Reload Agent Panels",
+        "category": "Agent Sessions",
+        "icon": "$(debug-restart)"
       }
     ],
     "menus": {
@@ -277,6 +283,11 @@
           "command": "agentSessions.newCodex",
           "when": "view == agentSessions.list",
           "group": "navigation@2"
+        },
+        {
+          "command": "agentSessions.reloadPanels",
+          "when": "view == agentSessions.list",
+          "group": "navigation@8"
         },
         {
           "command": "agentSessions.refresh",
@@ -479,6 +490,11 @@
           "command": "agentSessions.rename",
           "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/",
           "group": "1_open@4"
+        },
+        {
+          "command": "agentSessions.reloadPanels",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/",
+          "group": "1_open@5"
         }
       ],
       "commandPalette": [

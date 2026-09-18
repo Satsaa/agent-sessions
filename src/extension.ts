@@ -376,6 +376,11 @@ export function activate(context: vscode.ExtensionContext): void {
         await refresh();
       }
     }),
+    vscode.commands.registerCommand('agentSessions.reloadPanels', async () => {
+      // VS Code's own "Developer: Reload Webviews": every webview editor in the window (Codex and Claude panels alike)
+      // reloads its page in place, tabs and positions untouched. There is no per-panel variant in the API.
+      await vscode.commands.executeCommand('workbench.action.webview.reloadWebviewAction');
+    }),
     vscode.commands.registerCommand('agentSessions.rename', async (arg: unknown) => {
       // From the keybinding there is no argument: take the selected row of whichever tree has one.
       const s = sessionOf(arg) ?? sessionOf(view.selection[0]) ?? sessionOf(worktreesView.selection[0]);
