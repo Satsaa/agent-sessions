@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
-import { existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab } from './open.js';
+import { activeTabIsAgentPanel, existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab } from './open.js';
 import { markThisWindow } from './window.js';
 import { formatTranscript, readTranscript } from './transcript.js';
 import { closeCodexSession } from './close.js';
@@ -81,7 +81,12 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!view.visible) return;
     const s = sessionOfActiveTab(latestSessions);
     const item = s && provider.itemFor(s.tool, s.id);
-    if (!item) return;
+    if (!item) {
+      // An agent panel showing no known session (a fresh Codex panel, a title matching nothing): a selection left
+      // over from the previous tab would point at the wrong row, so it is cleared rather than kept.
+      if (activeTabIsAgentPanel()) for (const sel of view.selection) if (sel instanceof SessionItem) provider.dropSelection(sel);
+      return;
+    }
     if (view.selection.some((sel) => sel === item)) return;
     void view.reveal(item, { select: true, focus: false, expand: false }).then(undefined, () => undefined);
   };

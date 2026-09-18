@@ -27,10 +27,11 @@ export class SessionItem extends vscode.TreeItem {
     stats: WorktreeStats | undefined,
     idPrefix = '',
     pinned = false,
+    idSuffix = '',
   ) {
     super(session.title, vscode.TreeItemCollapsibleState.None);
     const archived = session.archived || archivedHere;
-    this.id = `${idPrefix}${session.tool}:${session.id}`;
+    this.id = `${idPrefix}${session.tool}:${session.id}${idSuffix}`;
     this.iconPath = stateIcon(session.tool, session.state, archived);
     this.description = `${pinned ? '📌 ' : ''}${describe(session, showTool, stats)}`;
     this.tooltip = tooltipFor(session, archived, stats);
@@ -137,6 +138,8 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   private roots: Node[] = [];
   /** What the view last rendered; a rebuild that changes nothing visible fires no event. */
   private rendered = '';
+  /** Per session, how many times its row identity was retired to drop a selection (see `dropSelection`). */
+  private readonly retired = new Map<string, number>();
 
   constructor(options: ViewOptions) {
     this.options = options;
@@ -174,6 +177,16 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   getParent(element: Node): Node | undefined {
     if (element instanceof SessionItem) return this.roots.find((r) => r instanceof GroupItem && r.children.includes(element));
     return undefined;
+  }
+
+  /**
+   * Deselect a row. The tree API has no way to clear a selection, but the view restores selection by element id
+   * across a refresh and drops ids that are gone, so the row is rebuilt under a fresh id.
+   */
+  dropSelection(item: SessionItem): void {
+    const key = `${item.session.tool}:${item.session.id}`;
+    this.retired.set(key, (this.retired.get(key) ?? 0) + 1);
+    this.rebuild();
   }
 
   /** The row showing a session, for `TreeView.reveal`. */
@@ -221,7 +234,11 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     const history = all.filter((s) => !isLive(s.state) && !isPinned(s)).sort(byRecency).slice(0, o.historyLimit);
     const shown = [...active, ...history];
     const item = (s: Session, showTool = true) =>
-      new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), showTool, s.worktree ? this.stats.get(s.worktree.path) : undefined, '', isPinned(s));
+      new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), showTool, s.worktree ? this.stats.get(s.worktree.path) : undefined, '', isPinned(s), retiredSuffix(s));
+    const retiredSuffix = (s: Session) => {
+      const n = this.retired.get(`${s.tool}:${s.id}`);
+      return n ? `#${n}` : '';
+    };
 
     switch (o.groupBy) {
       case 'none':
