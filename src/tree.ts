@@ -178,8 +178,8 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
 
   /**
    * Split the filtered sessions into rows and the spawned sessions nested under a shown row. By default a child is
-   * shown only while active or for a few minutes after; a spawned session whose parent is not a row is hidden.
-   * "Show all subagents" lifts both limits.
+   * shown only while active or for a few minutes after; "show all subagents" lifts that limit. A spawned session whose
+   * parent is not a row is never shown.
    */
   private topLevel(sessions: Session[]): { all: Session[]; childrenOf: Map<string, Session[]> } {
     const rows = new Set(sessions.filter((s) => !s.subagent).map((s) => `${s.tool}:${s.id}`));
@@ -193,7 +193,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
         const list = childrenOf.get(parentKey) ?? [];
         list.push(s);
         childrenOf.set(parentKey, list);
-      } else if (!s.subagent || this.options.showSubagents) {
+      } else if (!s.subagent) {
         all.push(s);
       }
     }

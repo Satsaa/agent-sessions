@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.5.21",
+  "version": "0.5.22",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -605,7 +605,7 @@
         "agentSessions.showSubagents": {
           "type": "boolean",
           "default": false,
-          "description": "Show every spawned subagent and teammate under its session, and parentless ones as rows of their own. Off: only subagents that are working or finished within the last five minutes appear under their session."
+          "description": "Show every spawned subagent and teammate under its session. Off: only those working or finished within the last five minutes appear. Subagents whose parent session is not listed are never shown."
         },
         "agentSessions.showEmpty": {
           "type": "boolean",
