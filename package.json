@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.5.15",
+  "version": "0.5.16",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -347,11 +347,6 @@
       ],
       "view/item/context": [
         {
-          "command": "agentSessions.openInTerminal",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/",
-          "group": "inline@1"
-        },
-        {
           "command": "agentSessions.archive",
           "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-stopped$/ && viewItem =~ /archived/ == false",
           "group": "inline@2"
@@ -470,11 +465,6 @@
           "command": "agentSessions.copyTranscript",
           "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/",
           "group": "2_copy@2"
-        },
-        {
-          "command": "agentSessions.copyTranscript",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/",
-          "group": "inline@1"
         },
         {
           "command": "agentSessions.rename",
