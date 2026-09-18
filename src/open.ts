@@ -48,12 +48,12 @@ export function existingClaudeTab(session: Session): vscode.Tab | undefined {
   return undefined;
 }
 
-function existingCodexTabEntry(threadId: string, title: string): { uri: vscode.Uri; viewColumn: vscode.ViewColumn } | undefined {
-  let byTitle: { uri: vscode.Uri; viewColumn: vscode.ViewColumn } | undefined;
+function existingCodexTabEntry(threadId: string, title: string): { tab: vscode.Tab; uri: vscode.Uri; group: vscode.TabGroup } | undefined {
+  let byTitle: { tab: vscode.Tab; uri: vscode.Uri; group: vscode.TabGroup } | undefined;
   for (const group of vscode.window.tabGroups.all) {
     for (const tab of group.tabs) {
       if (!(tab.input instanceof vscode.TabInputCustom) || tab.input.uri.scheme !== 'openai-codex') continue;
-      const entry = { uri: tab.input.uri, viewColumn: group.viewColumn };
+      const entry = { tab, uri: tab.input.uri, group };
       if (tab.input.uri.path.includes(threadId)) return entry;
       if (titleMatchesLabel(title, tab.label)) byTitle ??= entry;
     }
@@ -66,16 +66,24 @@ function existingCodexTab(threadId: string, title: string): vscode.Uri | undefin
 }
 
 /**
- * Reload the open Codex tab showing this session, in place. VS Code has no per-webview reload, so the tab's editor is
- * swapped to the default editor and straight back: `openWith` on an open resource replaces the editor in the same
- * tab, and Codex's custom editor is recreated with a fresh webview at that route. Returns false when no tab shows it.
+ * Reload the open Codex tab showing this session. VS Code has no per-webview reload and swapping the editor in place
+ * keeps Codex's retained webview alive, so the tab is closed and its route reopened in the same group, then moved back
+ * to the slot it had. Returns false when no tab shows the session.
  */
 export async function reloadCodexTab(session: Session): Promise<boolean> {
   const entry = existingCodexTabEntry(session.id, session.title);
   if (!entry) return false;
-  const options: vscode.TextDocumentShowOptions = { viewColumn: entry.viewColumn, preserveFocus: false, preview: false };
-  await vscode.commands.executeCommand('vscode.openWith', entry.uri, 'default', options);
-  await vscode.commands.executeCommand('vscode.openWith', entry.uri, CODEX_EDITOR_VIEW_TYPE, options);
+  const { tab, uri, group } = entry;
+  const index = group.tabs.indexOf(tab);
+  const wasActive = tab.isActive;
+  await vscode.window.tabGroups.close(tab);
+  await vscode.commands.executeCommand('vscode.openWith', uri, CODEX_EDITOR_VIEW_TYPE, {
+    viewColumn: group.viewColumn,
+    preserveFocus: !wasActive,
+    preview: false,
+  });
+  // The reopened tab lands at the end of the group; `moveActiveEditor` positions are 1-based.
+  if (index >= 0) await vscode.commands.executeCommand('moveActiveEditor', { to: 'position', by: 'tab', value: index + 1 });
   return true;
 }
 
