@@ -420,6 +420,11 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       await refresh();
     }),
+    vscode.commands.registerCommand('agentSessions.copyIdentifier', async (arg: unknown) => {
+      const s = sessionOf(arg);
+      if (!s) return;
+      await vscode.env.clipboard.writeText(`${toolLabel(s.tool)} ${s.id}`);
+    }),
     vscode.commands.registerCommand('agentSessions.copyTranscript', async (arg: unknown) => {
       const s = sessionOf(arg);
       if (!s) return;
