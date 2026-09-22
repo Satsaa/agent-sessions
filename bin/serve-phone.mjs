@@ -2,6 +2,7 @@
 // Serves the Agent Sessions view and the agent panels to a phone browser through `code serve-web`.
 //
 //   node bin/serve-phone.mjs [--port 8321] [--host 127.0.0.1] [--vsix agent-sessions-x.y.z.vsix] [--no-token]
+//   node bin/serve-phone.mjs --install-service [same flags]   # a systemd user unit that runs it, now and after reboots
 //
 // A dedicated server data dir (~/.agent-sessions/web) keeps this window apart from the desktop's: its own settings
 // (chrome hidden, phoneMode on), its own extensions (this one, Codex, Claude Code). The URL printed opens an empty
@@ -118,6 +119,11 @@ async function installExtensions() {
   for (const l of lines) console.log(l.trim());
 }
 
+if (args.includes('--install-service')) {
+  installService();
+  process.exit(0);
+}
+
 const code = findCode();
 if (!code) {
   console.error('No `code` CLI found: put it on PATH or set AGENT_SESSIONS_CODE to it.');
@@ -129,6 +135,31 @@ const tkn = token();
 const serveArgs = ['serve-web', '--host', host, '--port', port, '--accept-server-license-terms', '--server-data-dir', serverDir, '--cli-data-dir', cliDir];
 if (tkn) serveArgs.push('--connection-token', tkn);
 else serveArgs.push('--without-connection-token');
+
+/** A systemd user unit for this script with the flags given (bar --install-service); lingering keeps it up after logout. */
+function installService() {
+  const unitDir = join(homedir(), '.config', 'systemd', 'user');
+  mkdirSync(unitDir, { recursive: true });
+  const rest = args.filter((a) => a !== '--install-service').map((a) => JSON.stringify(a)).join(' ');
+  const unit = `[Unit]
+Description=Agent Sessions on a phone (code serve-web)
+After=network.target
+
+[Service]
+ExecStart=${process.execPath} ${fileURLToPath(import.meta.url)} ${rest}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+`;
+  writeFileSync(join(unitDir, 'agent-sessions-phone.service'), unit);
+  for (const cmd of [['systemctl', ['--user', 'daemon-reload']], ['systemctl', ['--user', 'enable', '--now', 'agent-sessions-phone.service']], ['loginctl', ['enable-linger', process.env.USER ?? '']]]) {
+    const r = spawnSync(cmd[0], cmd[1], { encoding: 'utf8' });
+    if (r.status !== 0) console.error(`${cmd[0]} ${cmd[1].join(' ')}: ${(r.stderr || r.stdout).trim()}`);
+  }
+  console.log('Installed agent-sessions-phone.service; `systemctl --user status agent-sessions-phone` and `journalctl --user -u agent-sessions-phone -f` for the URL.');
+}
 
 let stopping = false;
 function serve() {

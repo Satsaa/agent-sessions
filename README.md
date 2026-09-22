@@ -108,7 +108,7 @@ list's buttons and menus work as on the desktop.
 ```sh
 pnpm package                       # the vsix the phone window installs
 pnpm phone --port 8321             # prints http://127.0.0.1:8321/?ew=true&tkn=…
-pnpm phone --host 0.0.0.0 --port 8321
+pnpm phone --install-service --host 172.17.0.1 --port 8321   # systemd user unit, survives logout and reboot
 ```
 
 - The window lives in its own server data dir, `~/.agent-sessions/web`: its own Machine settings (activity bar, status
@@ -119,7 +119,9 @@ pnpm phone --host 0.0.0.0 --port 8321
 - The connection token is generated once into `~/.agent-sessions/web/token`; `--no-token` drops it. Pinch-zoom and the
   browser's zoom level scale the workbench.
 - `serve-web` is plain HTTP. Use it on a trusted network, over `ssh -L 8321:127.0.0.1:8321 host`, or put a TLS proxy in
-  front (Caddy: `agents.example.com { reverse_proxy 127.0.0.1:8321 }`), and keep the token in the URL.
+  front and keep the token in the URL. With a containerised Caddy, bind to the Docker host gateway
+  (`--host 172.17.0.1`) and route `agents.example.com { reverse_proxy host.docker.internal:8321 }`: nothing but the
+  proxy reaches the port. `--install-service` writes a systemd user unit with the same flags and enables lingering.
 - Phone mode moves the extension's views into a secondary side bar container and maximizes it, which is the workbench's
   own full-window layout for chat; opening a tab closes the side bars, closing the last tab or Back restores the list.
   The `code` CLI is taken from `PATH`, or from `~/.vscode-server`, or from `AGENT_SESSIONS_CODE`.
