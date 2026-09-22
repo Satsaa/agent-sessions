@@ -1,16 +1,22 @@
 #!/usr/bin/env node
 // Serves the Agent Sessions view and the agent panels to a phone browser through `code serve-web`.
 //
-//   node bin/serve-phone.mjs [--port 8321] [--host 127.0.0.1] [--vsix agent-sessions-x.y.z.vsix] [--password-file path] [--no-password]
+//   node bin/serve-phone.mjs [--port 8321] [--host 127.0.0.1] [--folder ~] [--vsix agent-sessions-x.y.z.vsix] [--password-file path] [--no-password]
 //   node bin/serve-phone.mjs --install-service [same flags]   # a systemd user unit that runs it, now and after reboots
 //
 // A dedicated server data dir (~/.agent-sessions/web) keeps this window apart from the desktop's: its own settings
 // (chrome hidden, phoneMode on), its own extensions (this one, Codex, Claude Code). The URL printed opens an empty
 // window (`ew=true`): no folder means no Restricted Mode, so every extension activates without a trust prompt.
-// The CLI exits after a while without clients, so it is restarted for as long as this script runs.
+// The `code` CLI only downloads the web build (serve-web); the build's own `code-server` is what runs, because it
+// takes --disable-workspace-trust and the CLI does not: without it every folder opens in Restricted Mode, where no
+// extension activates, and trust could only be granted by hand in each browser. It is restarted if it ever exits.
 //
 // The port asks for a password (HTTP basic auth, any user name): serve-web itself listens on loopback only, and this
 // script proxies to it. The password is generated once into ~/.agent-sessions/web/password.
+//
+// The URL opens a folder (--folder, the home directory by default) rather than an empty window: Claude Code resumes
+// only sessions of the window's folder, so the extension moves the window to a session's folder when needed, and
+// a folder is what it moves between.
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -28,6 +34,7 @@ const flag = (name, fallback) => {
 const port = flag('port', '8321');
 const host = flag('host', '127.0.0.1');
 const withPassword = !args.includes('--no-password');
+const folder = resolve(flag('folder', homedir()));
 const root = join(homedir(), '.agent-sessions', 'web');
 const serverDir = join(root, 'server');
 const cliDir = join(root, 'cli');
@@ -156,12 +163,7 @@ function webCodeServer() {
 }
 
 async function installExtensions() {
-  for (let i = 0; i < 120 && !webCodeServer(); i++) await new Promise((r) => setTimeout(r, 1000));
   const cs = webCodeServer();
-  if (!cs) {
-    console.error('serve-web did not download its web build; extensions were not installed.');
-    return;
-  }
   const install = ['--extensions-dir', join(serverDir, 'extensions'), '--install-extension', 'openai.chatgpt', '--install-extension', 'anthropic.claude-code'];
   const vsix = ourVsix();
   if (vsix) install.push('--install-extension', vsix, '--force');
@@ -176,50 +178,39 @@ if (args.includes('--install-service')) {
   process.exit(0);
 }
 
-const code = findCode();
-if (!code) {
-  console.error('No `code` CLI found: put it on PATH or set AGENT_SESSIONS_CODE to it.');
-  process.exit(1);
+/** The web build, downloaded by the CLI's serve-web on first run (it is stopped as soon as the build is there). */
+async function ensureWebBuild() {
+  if (webCodeServer()) return;
+  const code = findCode();
+  if (!code) {
+    console.error('No `code` CLI found to download the web build: put it on PATH or set AGENT_SESSIONS_CODE to it.');
+    process.exit(1);
+  }
+  console.log('Downloading the VS Code web build…');
+  const dl = spawn(code, ['serve-web', '--host', '127.0.0.1', '--port', '0', '--without-connection-token', '--accept-server-license-terms', '--server-data-dir', serverDir, '--cli-data-dir', cliDir], { stdio: ['ignore', 'ignore', 'inherit'] });
+  for (let i = 0; i < 300 && !webCodeServer(); i++) await new Promise((r) => setTimeout(r, 1000));
+  dl.kill();
+  if (!webCodeServer()) {
+    console.error('The web build did not arrive within five minutes.');
+    process.exit(1);
+  }
 }
+
 mkdirSync(root, { recursive: true });
 writeSettings();
+await ensureWebBuild();
 const secret = password();
-// With a password, serve-web listens on loopback behind the gate; without one it takes the public address itself.
+// With a password, the server listens on loopback behind the gate; without one it takes the public address itself.
 const upstreamPort = secret ? String(Number(port) + 1) : port;
-const serveArgs = ['serve-web', '--host', secret ? '127.0.0.1' : host, '--port', upstreamPort, '--without-connection-token', '--accept-server-license-terms', '--server-data-dir', serverDir, '--cli-data-dir', cliDir];
+const serveArgs = ['--host', secret ? '127.0.0.1' : host, '--port', upstreamPort, '--without-connection-token', '--accept-server-license-terms', '--server-data-dir', serverDir, '--disable-workspace-trust'];
 if (secret) gate(secret, upstreamPort);
-
-/** A systemd user unit for this script with the flags given (bar --install-service); lingering keeps it up after logout. */
-function installService() {
-  const unitDir = join(homedir(), '.config', 'systemd', 'user');
-  mkdirSync(unitDir, { recursive: true });
-  const rest = args.filter((a) => a !== '--install-service').map((a) => JSON.stringify(a)).join(' ');
-  const unit = `[Unit]
-Description=Agent Sessions on a phone (code serve-web)
-After=network.target
-
-[Service]
-ExecStart=${process.execPath} ${fileURLToPath(import.meta.url)} ${rest}
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-`;
-  writeFileSync(join(unitDir, 'agent-sessions-phone.service'), unit);
-  for (const cmd of [['systemctl', ['--user', 'daemon-reload']], ['systemctl', ['--user', 'enable', '--now', 'agent-sessions-phone.service']], ['loginctl', ['enable-linger', process.env.USER ?? '']]]) {
-    const r = spawnSync(cmd[0], cmd[1], { encoding: 'utf8' });
-    if (r.status !== 0) console.error(`${cmd[0]} ${cmd[1].join(' ')}: ${(r.stderr || r.stdout).trim()}`);
-  }
-  console.log('Installed agent-sessions-phone.service; `systemctl --user status agent-sessions-phone` and `journalctl --user -u agent-sessions-phone -f` for the URL.');
-}
 
 let stopping = false;
 function serve() {
-  const child = spawn(code, serveArgs, { stdio: ['ignore', 'inherit', 'inherit'] });
+  const child = spawn(webCodeServer(), serveArgs, { stdio: ['ignore', 'inherit', 'inherit'] });
   child.on('exit', (status) => {
     if (stopping) return;
-    console.log(`serve-web exited (${status}); restarting in 2s.`);
+    console.log(`code-server exited (${status}); restarting in 2s.`);
     setTimeout(serve, 2000);
   });
   return child;
@@ -234,7 +225,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 }
 void installExtensions().then(() => {
   const shown = host === '0.0.0.0' || host === '::' ? 'your-host' : host;
-  console.log(`\nAgent Sessions on a phone: http://${shown}:${port}/?ew=true`);
+  console.log(`\nAgent Sessions on a phone: http://${shown}:${port}/?folder=${encodeURIComponent(folder)}`);
   console.log(secret ? `Password (any user name): ${secret}\n` : 'No password: the port is open to whoever reaches it.\n');
   console.log('Plain HTTP: use it on a trusted network, over an SSH tunnel, or behind a TLS proxy (see README).');
 });

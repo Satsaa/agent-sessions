@@ -7,6 +7,33 @@ export const BLANK_DOC_PATH = '/blank';
 /** The views of the Sessions container, moved into the phone container for the maximized secondary side bar. */
 const VIEW_IDS = ['agentSessions.list', 'agentSessions.usage', 'agentSessions.worktrees'];
 const PHONE_CONTAINER = 'workbench.view.extension.agentSessionsPhone';
+const PENDING_KEY = 'agentSessions.phone.pendingOpen';
+
+/** A session to open right after the window has reopened on its folder. */
+export interface PendingOpen {
+  tool: string;
+  id: string;
+}
+
+/**
+ * Claude Code runs `claude` in the window's first folder and lists only that folder's sessions, so a Claude session
+ * from elsewhere would start a new chat. In phone mode the window follows the session: the id is remembered, the
+ * window reopens on the session's folder, and activation finishes the open. Codex resumes by thread id anywhere.
+ */
+export async function reopenOnFolder(context: vscode.ExtensionContext, pending: PendingOpen, folder: string): Promise<void> {
+  await context.globalState.update(PENDING_KEY, pending);
+  await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(folder), { forceReuseWindow: true });
+}
+
+export function windowFolder(): string | undefined {
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
+export async function takePendingOpen(context: vscode.ExtensionContext): Promise<PendingOpen | undefined> {
+  const pending = context.globalState.get<PendingOpen>(PENDING_KEY);
+  if (pending) await context.globalState.update(PENDING_KEY, undefined);
+  return pending;
+}
 
 /**
  * Phone mode: one part of the workbench on screen at a time, for `code serve-web` viewed on a phone.

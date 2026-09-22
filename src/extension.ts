@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
-import { PhoneLayout } from './phone.js';
+import { PhoneLayout, reopenOnFolder, takePendingOpen, windowFolder } from './phone.js';
 import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab } from './open.js';
 import { markThisWindow } from './window.js';
 import { formatTranscript, readTranscript } from './transcript.js';
@@ -163,6 +163,20 @@ export function activate(context: vscode.ExtensionContext): void {
   const phone = new PhoneLayout();
   context.subscriptions.push(phone);
   syncContexts();
+  // The session the window was reopened for (see reopenOnFolder): opened once the list knows it.
+  let pendingOpen = config.phoneMode ? takePendingOpen(context) : Promise.resolve(undefined);
+  const finishPendingOpen = async (sessions: Session[]): Promise<void> => {
+    const p = await pendingOpen;
+    if (!p) return;
+    const s = sessions.find((x) => x.tool === p.tool && x.id === p.id);
+    if (!s) return;
+    pendingOpen = Promise.resolve(undefined);
+    try {
+      await openSession(s);
+    } catch (e) {
+      output.appendLine(`phone: reopen ${p.tool} ${p.id} failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
 
   // ---- Refresh ----
 
@@ -181,6 +195,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ]);
         const sessions: Session[] = lists.flat();
         latestSessions = sessions;
+        void finishPendingOpen(sessions);
         await markThisWindow(sessions, openTabLabels());
         provider.setSessions(sessions);
         updateIndicators(provider.visible());
@@ -381,6 +396,10 @@ export function activate(context: vscode.ExtensionContext): void {
       const s = sessionOf(arg);
       if (!s) return;
       try {
+        if (config.phoneMode && s.tool === 'claude' && s.cwd && s.cwd !== windowFolder()) {
+          await reopenOnFolder(context, { tool: s.tool, id: s.id }, s.cwd);
+          return;
+        }
         await openSession(s);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

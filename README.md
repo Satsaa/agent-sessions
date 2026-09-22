@@ -113,8 +113,12 @@ pnpm phone --install-service --host 172.17.0.1 --port 8321   # systemd user unit
 
 - The window lives in its own server data dir, `~/.agent-sessions/web`: its own Machine settings (activity bar, status
   bar and command center hidden, `agentSessions.phoneMode` on), its own extensions (this one, Codex, Claude Code,
-  installed from the marketplace on first run). The desktop's settings and windows are untouched.
-- `ew=true` opens an empty window: no folder, so no Restricted Mode and no trust prompt, and every extension activates.
+  installed from the marketplace on first run). The desktop's settings and windows are untouched. The `code` CLI is
+  taken from `~/.vscode-server`, `PATH`, or `AGENT_SESSIONS_CODE`.
+- The URL opens a folder (`--folder`, home by default). Claude Code resumes only sessions of the window's folder, so
+  opening a Claude session from another folder moves the window there first (a reload, a few seconds); Codex sessions
+  open anywhere. The server runs with workspace trust disabled, so no Restricted Mode prompt appears for any folder
+  (the `code` CLI only downloads the web build; its own `code-server` is what runs, since the CLI has no such flag).
   Reloading keeps the list screen.
 - The port asks for a password (HTTP basic auth, any user name), generated once into `~/.agent-sessions/web/password`
   or read from `--password-file`; `--no-password` opens the port. serve-web itself stays on loopback behind the gate.
@@ -125,7 +129,7 @@ pnpm phone --install-service --host 172.17.0.1 --port 8321   # systemd user unit
   proxy reaches the port. `--install-service` writes a systemd user unit with the same flags and enables lingering.
 - Phone mode moves the extension's views into a secondary side bar container and maximizes it, which is the workbench's
   own full-window layout for chat; opening a tab closes the side bars, closing the last tab or Back restores the list.
-  The `code` CLI is taken from `PATH`, or from `~/.vscode-server`, or from `AGENT_SESSIONS_CODE`.
+
 
 ## Caveats
 
