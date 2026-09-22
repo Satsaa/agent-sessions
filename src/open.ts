@@ -166,7 +166,13 @@ export function openTabLabels(): Set<string> {
  */
 /** Whether the active editor tab is a Claude or Codex panel at all, matched session or not. */
 export function activeTabIsAgentPanel(): boolean {
-  const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+  const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+  return !!tab && isAgentPanelTab(tab);
+}
+
+/** A Codex or Claude Code panel tab. */
+export function isAgentPanelTab(tab: vscode.Tab): boolean {
+  const input = tab.input;
   if (input instanceof vscode.TabInputCustom) return input.uri.scheme === 'openai-codex';
   return input instanceof vscode.TabInputWebview && /claude/i.test(input.viewType);
 }

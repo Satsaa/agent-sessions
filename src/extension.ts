@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
+import { PhoneLayout } from './phone.js';
 import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab } from './open.js';
 import { markThisWindow } from './window.js';
 import { formatTranscript, readTranscript } from './transcript.js';
@@ -28,6 +29,7 @@ interface Config {
   claudeHome: string;
   codexHome: string;
   pollInterval: number;
+  phoneMode: boolean;
   usage: { enabled: boolean; claudeNetwork: boolean; codexNetwork: boolean; refreshInterval: number };
   view: Omit<ViewOptions, 'locallyArchived' | 'pinned'>;
 }
@@ -39,6 +41,7 @@ function readConfig(): Config {
     claudeHome: claudeHome(c.get<string>('claudeHome', '')),
     codexHome: codexHome(c.get<string>('codexHome', '')),
     pollInterval: Math.max(1, c.get<number>('pollInterval', 5)),
+    phoneMode: c.get<boolean>('phoneMode', false),
     usage: {
       enabled: c.get<boolean>('usage.enabled', true),
       claudeNetwork: c.get<boolean>('usage.claudeNetwork', true),
@@ -154,7 +157,11 @@ export function activate(context: vscode.ExtensionContext): void {
     void vscode.commands.executeCommand('setContext', 'agentSessions.showArchived', config.view.showArchived);
     void vscode.commands.executeCommand('setContext', 'agentSessions.showSubagents', config.view.showSubagents);
     void vscode.commands.executeCommand('setContext', 'agentSessions.scope', config.view.scope);
+    void vscode.commands.executeCommand('setContext', 'agentSessions.phoneMode', config.phoneMode);
+    phone.setEnabled(config.phoneMode);
   };
+  const phone = new PhoneLayout();
+  context.subscriptions.push(phone);
   syncContexts();
 
   // ---- Refresh ----
@@ -468,6 +475,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return formatTranscript(s, await readTranscript(s));
       },
     }),
+    vscode.commands.registerCommand('agentSessions.back', () => phone.back()),
     vscode.commands.registerCommand('agentSessions.openTranscript', async (arg: unknown) => {
       const s = sessionOf(arg);
       if (!s) return;

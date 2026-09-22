@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.5.31",
+  "version": "0.6.0",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -26,6 +26,12 @@
     "workspace"
   ],
   "main": "./dist/extension.cjs",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "Sessions are read from the Claude Code and Codex home directories, not from the workspace."
+    }
+  },
   "type": "module",
   "activationEvents": [
     "onStartupFinished"
@@ -35,6 +41,13 @@
       "activitybar": [
         {
           "id": "agentSessionsHub",
+          "title": "Agent Sessions",
+          "icon": "resources/icon.svg"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "agentSessionsPhone",
           "title": "Agent Sessions",
           "icon": "resources/icon.svg"
         }
@@ -281,9 +294,22 @@
         "title": "Reload Codex Panel",
         "category": "Agent Sessions",
         "icon": "$(debug-restart)"
+      },
+      {
+        "command": "agentSessions.back",
+        "title": "Back to Sessions",
+        "category": "Agent Sessions",
+        "icon": "$(arrow-left)"
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "agentSessions.back",
+          "when": "agentSessions.phoneMode",
+          "group": "navigation@0"
+        }
+      ],
       "view/title": [
         {
           "command": "agentSessions.newClaude",
@@ -505,6 +531,10 @@
       ],
       "commandPalette": [
         {
+          "command": "agentSessions.back",
+          "when": "agentSessions.phoneMode"
+        },
+        {
           "command": "agentSessions.openTranscript",
           "when": "false"
         },
@@ -653,6 +683,11 @@
           "minimum": 1,
           "description": "Seconds between status polls while a session is live. File changes refresh the list immediately regardless."
         },
+        "agentSessions.phoneMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "One workbench part at a time, for a phone: the Sessions view fills the window until a session is opened, the session fills it until the Back button. Meant for the window served by `pnpm phone` (code serve-web); leave off in a desktop window."
+        },
         "agentSessions.usage.enabled": {
           "type": "boolean",
           "default": true,
@@ -700,7 +735,8 @@
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit",
     "package": "pnpm build && vsce package --no-dependencies",
-    "install-local": "pnpm package && code --install-extension agent-sessions-$npm_package_version.vsix"
+    "install-local": "pnpm package && code --install-extension agent-sessions-$npm_package_version.vsix",
+    "phone": "node bin/serve-phone.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",

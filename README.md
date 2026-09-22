@@ -96,6 +96,33 @@ pnpm package      # agent-sessions-<version>.vsix
 | `agentSessions.usage.refreshInterval` | `120` | seconds |
 | `agentSessions.claudeHome` | `""` | overrides `$CLAUDE_CONFIG_DIR` / `~/.claude` |
 | `agentSessions.codexHome` | `""` | overrides `$CODEX_HOME` / `~/.codex` |
+| `agentSessions.phoneMode` | `false` | one workbench part at a time, for the window served by `pnpm phone` |
+
+## On a phone
+
+`pnpm phone` serves the real VS Code workbench through `code serve-web`, cut down to two screens: the Sessions view
+filling the window, and a Codex or Claude Code panel filling the window with a **Back to Sessions** arrow in its title
+bar. Sessions are the vendors' own panels, so sending messages, reading history, renaming and everything else in the
+list's buttons and menus work as on the desktop.
+
+```sh
+pnpm package                       # the vsix the phone window installs
+pnpm phone --port 8321             # prints http://127.0.0.1:8321/?ew=true&tkn=…
+pnpm phone --host 0.0.0.0 --port 8321
+```
+
+- The window lives in its own server data dir, `~/.agent-sessions/web`: its own Machine settings (activity bar, status
+  bar and command center hidden, `agentSessions.phoneMode` on), its own extensions (this one, Codex, Claude Code,
+  installed from the marketplace on first run). The desktop's settings and windows are untouched.
+- `ew=true` opens an empty window: no folder, so no Restricted Mode and no trust prompt, and every extension activates.
+  Reloading keeps the list screen.
+- The connection token is generated once into `~/.agent-sessions/web/token`; `--no-token` drops it. Pinch-zoom and the
+  browser's zoom level scale the workbench.
+- `serve-web` is plain HTTP. Use it on a trusted network, over `ssh -L 8321:127.0.0.1:8321 host`, or put a TLS proxy in
+  front (Caddy: `agents.example.com { reverse_proxy 127.0.0.1:8321 }`), and keep the token in the URL.
+- Phone mode moves the extension's views into a secondary side bar container and maximizes it, which is the workbench's
+  own full-window layout for chat; opening a tab closes the side bars, closing the last tab or Back restores the list.
+  The `code` CLI is taken from `PATH`, or from `~/.vscode-server`, or from `AGENT_SESSIONS_CODE`.
 
 ## Caveats
 
