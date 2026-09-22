@@ -107,7 +107,7 @@ list's buttons and menus work as on the desktop.
 
 ```sh
 pnpm package                       # the vsix the phone window installs
-pnpm phone --port 8321             # prints http://127.0.0.1:8321/?ew=true&tkn=…
+pnpm phone --port 8321             # prints the URL and the password
 pnpm phone --install-service --host 172.17.0.1 --port 8321   # systemd user unit, survives logout and reboot
 ```
 
@@ -116,10 +116,11 @@ pnpm phone --install-service --host 172.17.0.1 --port 8321   # systemd user unit
   installed from the marketplace on first run). The desktop's settings and windows are untouched.
 - `ew=true` opens an empty window: no folder, so no Restricted Mode and no trust prompt, and every extension activates.
   Reloading keeps the list screen.
-- The connection token is generated once into `~/.agent-sessions/web/token`; `--no-token` drops it. Pinch-zoom and the
-  browser's zoom level scale the workbench.
-- `serve-web` is plain HTTP. Use it on a trusted network, over `ssh -L 8321:127.0.0.1:8321 host`, or put a TLS proxy in
-  front and keep the token in the URL. With a containerised Caddy, bind to the Docker host gateway
+- The port asks for a password (HTTP basic auth, any user name), generated once into `~/.agent-sessions/web/password`
+  or read from `--password-file`; `--no-password` opens the port. serve-web itself stays on loopback behind the gate.
+  Pinch-zoom and the browser's zoom level scale the workbench.
+- It is plain HTTP. Use it on a trusted network, over `ssh -L 8321:127.0.0.1:8321 host`, or put a TLS proxy in front
+  (the password prompt passes through). With a containerised Caddy, bind to the Docker host gateway
   (`--host 172.17.0.1`) and route `agents.example.com { reverse_proxy host.docker.internal:8321 }`: nothing but the
   proxy reaches the port. `--install-service` writes a systemd user unit with the same flags and enables lingering.
 - Phone mode moves the extension's views into a secondary side bar container and maximizes it, which is the workbench's
