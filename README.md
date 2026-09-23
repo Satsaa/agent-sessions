@@ -129,7 +129,8 @@ pnpm phone --install-service --host 172.17.0.1 --port 8321   # systemd user unit
   (`--host 172.17.0.1`) and route `agents.example.com { reverse_proxy host.docker.internal:8321 }`: nothing but the
   proxy reaches the port. `--install-service` writes a systemd user unit with the same flags and enables lingering.
 - Phone mode moves the extension's views into a secondary side bar container and maximizes it, which is the workbench's
-  own full-window layout for chat; opening a tab closes the side bars, closing the last tab or Back restores the list.
+  own full-window layout for chat; opening or revealing a session closes the side bars; Back, or closing the last tab, restores the list. Back leaves the
+  tabs open behind the list, since closing a Claude Code or Codex panel ends that session's process.
 
 The launcher fixes the workbench for a phone: dark theme, VS Code's built-in chat and agent features off, no extension recommendations, telemetry or experiments, no port-forwarding offers, Git repository scan, file watching or task detection, extension auto-updates off, of the built-in extensions only Git and the default themes (the rest are moved out of the downloaded web build at each launch: no grammars, language servers, file viewers, Copilot or sign-in), and notifications at the top below the editor tabs (a stylesheet the launcher's proxy adds to the page, so it also fronts serve-web without a password). Codex is pinned to 26.908 because later builds depend on a Codex Audio extension the web client cannot run.
 
