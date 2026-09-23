@@ -130,6 +130,9 @@ pnpm phone --install-service --host 172.17.0.1 --port 8321   # systemd user unit
 - Phone mode moves the extension's views into a secondary side bar container and maximizes it, which is the workbench's
   own full-window layout for chat; opening a tab closes the side bars, closing the last tab or Back restores the list.
 
+The launcher fixes the workbench for a phone: dark theme, VS Code's built-in chat and agent features off, no extension recommendations, telemetry or experiments. Codex is pinned to 26.908 because later builds depend on a Codex Audio extension the web client cannot run.
+
+
 
 ## Caveats
 

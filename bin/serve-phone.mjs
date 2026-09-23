@@ -70,6 +70,8 @@ function ourVsix() {
   return existsSync(candidate) ? candidate : undefined;
 }
 
+const CODEX_VERSION = '26.908.40401';
+
 const MACHINE_SETTINGS = {
   'workbench.activityBar.location': 'hidden',
   'workbench.statusBar.visible': false,
@@ -85,6 +87,20 @@ const MACHINE_SETTINGS = {
   'workbench.panel.defaultLocation': 'bottom',
   'terminal.integrated.enablePersistentSessions': false,
   'agentSessions.phoneMode': true,
+  // The phone shows agent sessions and nothing else: no built-in chat/agent features, no
+  // suggestions, no telemetry or experiments, and a fixed dark theme regardless of the browser.
+  'chat.disableAIFeatures': true,
+  'chat.commandCenter.enabled': false,
+  'chat.agent.enabled': false,
+  'workbench.colorTheme': 'Default Dark Modern',
+  'window.autoDetectColorScheme': false,
+  'window.autoDetectHighContrast': false,
+  'workbench.editor.empty.hint': 'hidden',
+  'extensions.ignoreRecommendations': true,
+  'workbench.enableExperiments': false,
+  'telemetry.telemetryLevel': 'off',
+  'update.showReleaseNotes': false,
+  'git.openRepositoryInParentFolders': 'never',
 };
 
 function writeSettings() {
@@ -164,7 +180,10 @@ function webCodeServer() {
 
 async function installExtensions() {
   const cs = webCodeServer();
-  const install = ['--extensions-dir', join(serverDir, 'extensions'), '--install-extension', 'openai.chatgpt', '--install-extension', 'anthropic.claude-code'];
+  // Codex 26.917+ depends on "Codex Audio", a UI-kind extension with no browser entry, which the web
+  // client cannot run, so Codex itself refuses to activate there. Installing an exact version pins it
+  // (no auto-update). Bump when a Codex build works in `code serve-web` again.
+  const install = ['--extensions-dir', join(serverDir, 'extensions'), '--install-extension', `openai.chatgpt@${CODEX_VERSION}`, '--install-extension', 'anthropic.claude-code'];
   const vsix = ourVsix();
   if (vsix) install.push('--install-extension', vsix, '--force');
   else console.error('No agent-sessions vsix found next to package.json (run `pnpm package`), pass --vsix; the extension itself was not installed.');
