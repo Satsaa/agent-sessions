@@ -72,7 +72,7 @@ const session = (id, overrides = {}) => ({ tool: 'codex', id, title: id, state: 
 const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), ...overrides });
 
 test('pinned stopped sessions stay in Active outside the history cap without becoming live', () => {
-  const provider = new SessionsProvider(options());
+  const provider = new SessionsProvider(options(), () => {});
   provider.setSessions([session('old'), session('running', { state: 'running', startedAt: 9 }), session('recent', { updatedAt: 20 })]);
   const [active, history] = provider.getChildren();
   assert.equal(active.label, 'Active');
@@ -84,7 +84,7 @@ test('pinned stopped sessions stay in Active outside the history cap without bec
 });
 
 test('pinning remains tool-specific and respects repository and archive filtering', () => {
-  const provider = new SessionsProvider(options());
+  const provider = new SessionsProvider(options(), () => {});
   provider.setSessions([session('old'), session('old', { tool: 'claude' }), session('hidden', { archived: true })]);
   assert.equal(provider.getChildren()[0].children.length, 1);
   provider.setOptions(options({ scope: 'workspace' }));

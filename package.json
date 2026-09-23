@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -81,7 +81,13 @@
     "viewsWelcome": [
       {
         "view": "agentSessions.list",
-        "contents": "No sessions found under ~/.claude or ~/.codex.\n[New Claude session](command:agentSessions.newClaude)\n[New Codex session](command:agentSessions.newCodex)"
+        "contents": "Loading sessions…",
+        "when": "!agentSessions.loaded"
+      },
+      {
+        "view": "agentSessions.list",
+        "contents": "No sessions found under ~/.claude or ~/.codex.\n[New Claude session](command:agentSessions.newClaude)\n[New Codex session](command:agentSessions.newCodex)",
+        "when": "agentSessions.loaded"
       }
     ],
     "commands": [

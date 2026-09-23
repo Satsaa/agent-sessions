@@ -70,7 +70,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const pinned = new Set<string>(context.globalState.get<string[]>(PINNED_KEY, []));
   const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned });
 
-  const provider = new SessionsProvider(options());
+  const provider = new SessionsProvider(options(), () => void vscode.commands.executeCommand('setContext', 'agentSessions.loaded', true));
   const view = vscode.window.createTreeView('agentSessions.list', { treeDataProvider: provider, showCollapseAll: true });
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   statusBar.command = 'agentSessions.list.focus';
@@ -545,7 +545,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  void refresh();
+  void vscode.window.withProgress({ location: { viewId: 'agentSessions.list' } }, () => refresh());
   void refreshUsage();
 }
 

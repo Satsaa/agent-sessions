@@ -154,14 +154,27 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   private rendered = '';
   /** Per session, how many times its row identity was retired to drop a selection (see `dropSelection`). */
   private readonly retired = new Map<string, number>();
+  /** Whether the first scan has landed, and whether the view has been told (see `announceLoaded`). */
+  private scanned = false;
+  private announced = false;
 
-  constructor(options: ViewOptions) {
+  /** `onLoaded` runs once, when the view has the first scan's rows, so its empty state can stop saying "loading". */
+  constructor(options: ViewOptions, private readonly onLoaded: () => void) {
     this.options = options;
   }
 
   setSessions(sessions: Session[]): void {
     this.sessions = sessions;
+    this.scanned = true;
     this.rebuild();
+    // No rows means no change event and no fetch to wait for: the empty state is already the answer.
+    if (!this.roots.length) this.announceLoaded();
+  }
+
+  private announceLoaded(): void {
+    if (this.announced) return;
+    this.announced = true;
+    this.onLoaded();
   }
 
   setWorktreeStats(stats: Map<string, WorktreeStats>): void {
@@ -209,7 +222,11 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   }
 
   getChildren(element?: Node): Node[] {
-    if (!element) return this.roots;
+    if (!element) {
+      // Announced from the fetch itself, so the rows reach the view before its "no sessions" state could show.
+      if (this.scanned) this.announceLoaded();
+      return this.roots;
+    }
     return element.children;
   }
 

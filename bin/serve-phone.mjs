@@ -103,7 +103,55 @@ const MACHINE_SETTINGS = {
   'git.openRepositoryInParentFolders': 'never',
   // Toasts at the top, where a phone's keyboard and thumb are not; WORKBENCH_CSS moves them below the tabs.
   'workbench.notifications.position': 'top-right',
+  // Less background work and fewer popups: no port-forwarding offers for the dev servers agents start, no Git scan
+  // of the whole folder (worktree deletion opens its repository itself), no file watching of the home folder, no
+  // task/npm detection. Extension versions are the launcher's (see CODEX_VERSION), not auto-updates.
+  'remote.autoForwardPorts': false,
+  'git.autoRepositoryDetection': false,
+  'git.showProgress': false,
+  'files.watcherExclude': { '**': true },
+  'extensions.autoUpdate': false,
+  'extensions.autoCheckUpdates': false,
+  'task.autoDetect': 'off',
+  'npm.autoDetect': 'off',
+  'debug.showInStatusBar': 'never',
+  'workbench.settings.enableNaturalLanguageSearch': false,
+  'terminal.integrated.suggest.enabled': false,
 };
+
+/**
+ * Built-in extensions the phone has no use for, left out of the server's built-in scan on every launch
+ * (VSCODE_SKIP_BUILTIN_EXTENSIONS; `--disable-extension` does not reach the web client), so they stay off across
+ * web-build updates:
+ * Copilot, GitHub and account sign-in, port tunnels and the in-editor browser, the debugger, editing aids, and the
+ * heavy language servers. Git stays: the Delete worktree action goes through it.
+ */
+const DISABLED_BUILTINS = [
+  'GitHub.copilot-chat',
+  'TypeScriptTeam.jsts-chat-features',
+  'vscode.github',
+  'vscode.github-authentication',
+  'vscode.microsoft-authentication',
+  'vscode.tunnel-forwarding',
+  'vscode.simple-browser',
+  'vscode.debug-auto-launch',
+  'vscode.debug-server-ready',
+  'ms-vscode.js-debug',
+  'ms-vscode.js-debug-companion',
+  'ms-vscode.vscode-js-profile-table',
+  'vscode.merge-conflict',
+  'vscode.references-view',
+  'vscode.terminal-suggest',
+  'vscode.npm',
+  'vscode.grunt',
+  'vscode.gulp',
+  'vscode.jake',
+  'vscode.emmet',
+  'vscode.ipynb',
+  'vscode.extension-editing',
+  'vscode.typescript-language-features',
+  'vscode.php-language-features',
+];
 
 /**
  * Added to every workbench page. VS Code offsets top-right toasts and the notification centre by the title bar only
@@ -259,7 +307,8 @@ front(secret, upstreamPort);
 
 let stopping = false;
 function serve() {
-  const child = spawn(webCodeServer(), serveArgs, { stdio: ['ignore', 'inherit', 'inherit'] });
+  const env = { ...process.env, VSCODE_SKIP_BUILTIN_EXTENSIONS: DISABLED_BUILTINS.join(',') };
+  const child = spawn(webCodeServer(), serveArgs, { env, stdio: ['ignore', 'inherit', 'inherit'] });
   child.on('exit', (status) => {
     if (stopping) return;
     console.log(`code-server exited (${status}); restarting in 2s.`);
