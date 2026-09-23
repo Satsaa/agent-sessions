@@ -41,7 +41,7 @@ Two status bar items mirror this: working / waiting / replied counts on the left
 - Right-click: Resume in Terminal (`claude --resume` / `codex resume` in the session's cwd), Copy Resume Command, Open Transcript File, Open Working Directory in New Window, Archive / Unarchive.
 - View menu: show/hide archived sessions, show/hide subagent threads, only this repository (worktrees of the workspace's repo included), group by Activity / Repository / Tool / None.
 
-If the Claude Code or Codex extension is not installed, opening falls back to a terminal.
+Claude Code resumes only sessions started in the window's first folder, so opening a Claude session from another folder hands it to a window on that folder, which opens it: a new window, or the one already open there. Codex sessions open in any window. If the Claude Code or Codex extension is not installed, opening falls back to a terminal.
 
 ## Filtering defaults
 
@@ -115,9 +115,10 @@ pnpm phone --install-service --host 172.17.0.1 --port 8321   # systemd user unit
   bar and command center hidden, `agentSessions.phoneMode` on), its own extensions (this one, Codex, Claude Code,
   installed from the marketplace on first run). The desktop's settings and windows are untouched. The `code` CLI is
   taken from `~/.vscode-server`, `PATH`, or `AGENT_SESSIONS_CODE`.
-- The URL opens a folder (`--folder`, home by default). Claude Code resumes only sessions of the window's folder, so
-  opening a Claude session from another folder moves the window there first (a reload, a few seconds); Codex sessions
-  open anywhere. The server runs with workspace trust disabled, so no Restricted Mode prompt appears for any folder
+- The URL opens a folder (`--folder`, home by default). Opening a Claude session from another folder moves the window
+  there first (a reload, a few seconds), since Claude Code resumes only that folder's sessions. **New Claude / New
+  Codex** first asks for the folder, offering the recent sessions' folders, since a session is filed under the folder
+  it starts in. The server runs with workspace trust disabled, so no Restricted Mode prompt appears for any folder
   (the `code` CLI only downloads the web build; its own `code-server` is what runs, since the CLI has no such flag).
   Reloading keeps the list screen.
 - The port asks for a password (HTTP basic auth, any user name), generated once into `~/.agent-sessions/web/password`

@@ -2,7 +2,8 @@ import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
-import { PhoneLayout, reopenOnFolder, takePendingOpen, windowFolder } from './phone.js';
+import { PhoneLayout, windowFolder } from './phone.js';
+import { type PendingOpen, claimOpen, offerOpen, pendingOpenFile, watchOffers } from './pending-open.js';
 import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab } from './open.js';
 import { markThisWindow } from './window.js';
 import { formatTranscript, readTranscript } from './transcript.js';
@@ -104,6 +105,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // The row of the chat in the active editor tab is kept selected, the way the Explorer follows the active file.
   let latestSessions: Session[] = [];
+  let scanned = () => {};
+  const firstScan = new Promise<void>((resolve) => (scanned = resolve));
   const transcriptChanged = new vscode.EventEmitter<vscode.Uri>();
   // Revealing scrolls the view, so it happens once per change of active chat, never again on refreshes while the
   // same chat stays active: the selection itself survives refreshes through the row id.
@@ -183,19 +186,61 @@ export function activate(context: vscode.ExtensionContext): void {
   const phone = new PhoneLayout();
   context.subscriptions.push(phone);
   syncContexts();
-  // The session the window was reopened for (see reopenOnFolder): opened once the list knows it.
-  let pendingOpen = config.phoneMode ? takePendingOpen(context) : Promise.resolve(undefined);
+  // Claude Code resumes only sessions of the window's first folder, so a session from another folder is handed to
+  // a window on that folder (see pending-open.ts): the phone reopens its one window there, the desktop opens or
+  // focuses a window of its own. The receiving window claims the hand-off on activation, or live when already open.
+  const install = context.globalStorageUri.fsPath;
+  const pendingFile = pendingOpenFile();
+  const folderUri = (folder: string) => vscode.workspace.workspaceFolders?.[0]?.uri.with({ path: folder }) ?? vscode.Uri.file(folder);
+  const handOff = async (tool: Tool, id: string | undefined, folder: string) => {
+    await offerOpen(pendingFile, { tool, ...(id ? { id } : {}), folder, install, at: Date.now() });
+    await vscode.commands.executeCommand('vscode.openFolder', folderUri(folder), config.phoneMode ? { forceReuseWindow: true } : { forceNewWindow: true });
+  };
+  let pendingOpen: Promise<PendingOpen | undefined> = claimOpen(pendingFile, install, windowFolder());
+  context.subscriptions.push(watchOffers(pendingFile, () => void claimOpen(pendingFile, install, windowFolder()).then((p) => {
+    if (!p) return;
+    pendingOpen = Promise.resolve(p);
+    void refresh();
+  })));
   const finishPendingOpen = async (sessions: Session[]): Promise<void> => {
     const p = await pendingOpen;
     if (!p) return;
-    const s = sessions.find((x) => x.tool === p.tool && x.id === p.id);
-    if (!s) return;
+    const s = p.id ? sessions.find((x) => x.tool === p.tool && x.id === p.id) : undefined;
+    if (p.id && !s) return;
     pendingOpen = Promise.resolve(undefined);
+    output.appendLine(`hand-off: ${p.id ? 'resuming' : 'starting'} ${p.tool} ${p.id ?? ''} in ${p.folder}`);
     try {
-      await openSession(s);
+      await (s ? openSession(s) : newSession(p.tool));
     } catch (e) {
-      output.appendLine(`phone: reopen ${p.tool} ${p.id} failed: ${e instanceof Error ? e.message : String(e)}`);
+      output.appendLine(`hand-off ${p.tool} ${p.id ?? 'new'} failed: ${e instanceof Error ? e.message : String(e)}`);
     }
+  };
+
+  /**
+   * Phone mode starts a session in a folder picked from the recent sessions' folders, the window's own first: the
+   * window's folder is wherever the last session was, and a session started in the wrong one stays filed under it.
+   */
+  const newIn = async (tool: Tool) => {
+    if (!config.phoneMode) return newSession(tool);
+    // Right after the page loads, the first scan may still be running; its folders are the choices.
+    await firstScan;
+    const here = windowFolder();
+    const recent = [...latestSessions].sort((a, b) => b.updatedAt - a.updatedAt).flatMap((s) => (s.cwd ? [s.cwd] : []));
+    const folders = [...new Set([...(here ? [here] : []), ...recent])].slice(0, 12);
+    const other = 'Other folder…';
+    const picked = await vscode.window.showQuickPick(
+      [...folders.map((f) => ({ label: path.basename(f) || f, description: f === here ? `${f} · this window` : f, folder: f })), { label: other, description: '', folder: '' }],
+      { placeHolder: `New ${toolLabel(tool)} session in` },
+    );
+    if (!picked) return;
+    let folder = picked.folder;
+    if (!folder) {
+      const chosen = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, ...(here ? { defaultUri: folderUri(here) } : {}) });
+      if (!chosen?.[0]) return;
+      folder = chosen[0].path;
+    }
+    if (here && path.resolve(folder) === path.resolve(here)) return newSession(tool);
+    await handOff(tool, undefined, folder);
   };
 
   // ---- Refresh ----
@@ -216,6 +261,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ]);
         const sessions: Session[] = lists.flat();
         latestSessions = sessions;
+        scanned();
         void finishPendingOpen(sessions);
         await markThisWindow(sessions, openTabLabels());
         provider.setSessions(sessions);
@@ -401,8 +447,8 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showErrorMessage(`Could not switch Codex account: ${message}`);
       }
     }),
-    vscode.commands.registerCommand('agentSessions.newClaude', () => newSession('claude')),
-    vscode.commands.registerCommand('agentSessions.newCodex', () => newSession('codex')),
+    vscode.commands.registerCommand('agentSessions.newClaude', () => newIn('claude')),
+    vscode.commands.registerCommand('agentSessions.newCodex', () => newIn('codex')),
     vscode.commands.registerCommand('agentSessions.showArchived', () => setting('showArchived', true)),
     vscode.commands.registerCommand('agentSessions.hideArchived', () => setting('showArchived', false)),
     vscode.commands.registerCommand('agentSessions.showSubagents', () => setting('showSubagents', true)),
@@ -423,8 +469,9 @@ export function activate(context: vscode.ExtensionContext): void {
       const s = sessionOf(arg);
       if (!s) return;
       try {
-        if (config.phoneMode && s.tool === 'claude' && s.cwd && s.cwd !== windowFolder()) {
-          await reopenOnFolder(context, { tool: s.tool, id: s.id }, s.cwd);
+        const here = windowFolder();
+        if (s.tool === 'claude' && s.cwd && !existingClaudeTab(s) && (!here || path.resolve(s.cwd) !== path.resolve(here))) {
+          await handOff(s.tool, s.id, s.cwd);
           return;
         }
         await openSession(s);
