@@ -6,7 +6,7 @@ import { createReadStream } from 'node:fs';
 import type { Session, SessionState } from './types.js';
 import type { Worktree } from './types.js';
 import { cleanTitle, expandHome, listDir, processAlive, readJsonFile, statOrUndefined } from './util.js';
-import { worktreeFromCwd, worktreeFromPath } from './worktree.js';
+import { commandDirs, inRepository, worktreeFromCwd, worktreeFromPath } from './worktree.js';
 
 export function claudeHome(configured: string): string {
   if (configured) return expandHome(configured);
@@ -66,6 +66,12 @@ interface TranscriptSummary {
   worktree: Worktree | null | undefined;
   /** The most recent cwd recorded on a message: where the session's shell is now. */
   lastCwd: string | undefined;
+  /**
+   * The repository directory the session last worked in: a file it edited, a `cd` or `git -C` in a command, or its
+   * shell moving. Claude's shell returns to the start directory after every command, so this finds a worktree the
+   * session reaches by absolute path, which is how agents working from the main checkout use one.
+   */
+  workDir: string | undefined;
   /** Timestamp of the last message; the file's mtime drifts (Claude rewrites transcripts on resume and title updates). */
   lastAt: number | undefined;
   firstAt: number | undefined;
@@ -97,6 +103,22 @@ interface TranscriptLine {
   worktreeSession?: { worktreePath?: string; worktreeName?: string; worktreeBranch?: string; originalCwd?: string } | null;
 }
 
+/** Tools whose target is a file the session is changing. */
+const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+
+/** The directories an assistant record's tool calls work in, in order. */
+function toolCallDirs(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  const out: string[] = [];
+  for (const c of content as { type?: string; name?: string; input?: { file_path?: unknown; notebook_path?: unknown; command?: unknown } }[]) {
+    if (c?.type !== 'tool_use' || !c.input) continue;
+    const file = c.input.file_path ?? c.input.notebook_path;
+    if (c.name && EDIT_TOOLS.has(c.name) && typeof file === 'string' && path.isAbsolute(file)) out.push(path.dirname(file));
+    else if (c.name === 'Bash' && typeof c.input.command === 'string') out.push(...commandDirs(c.input.command));
+  }
+  return out;
+}
+
 function textOf(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
@@ -119,7 +141,7 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number, 
   const cached = transcriptCache.get(file);
   if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.summary;
 
-  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, lastAt: undefined, firstAt: undefined, lastRole: undefined, lastInterrupted: false, hasPrompt: false };
+  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, workDir: undefined, lastAt: undefined, firstAt: undefined, lastRole: undefined, lastInterrupted: false, hasPrompt: false };
   let customTitle: string | undefined;
   let aiTitle: string | undefined;
   let firstPrompt: string | undefined;
@@ -156,7 +178,11 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number, 
           // The first cwd is the directory the session was started in; later ones follow the shell.
           if (d.cwd) {
             summary.cwd ??= d.cwd;
+            if (d.cwd !== summary.lastCwd && inRepository(d.cwd)) summary.workDir = d.cwd;
             summary.lastCwd = d.cwd;
+          }
+          if (d.type === 'assistant') {
+            for (const dir of toolCallDirs(d.message?.content)) if (inRepository(dir)) summary.workDir = dir;
           }
           if (d.gitBranch) summary.branch = d.gitBranch;
           if (d.timestamp) {
@@ -198,6 +224,17 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number, 
   summary.title = customTitle ?? aiTitle ?? firstPrompt;
   transcriptCache.set(file, { mtimeMs, size, summary });
   return summary;
+}
+
+/**
+ * The worktree a session is bound to (EnterWorktree) or, without a binding, the one it last worked in; undefined
+ * when that was a main checkout. The recorded branch belongs to the shell's directory, so it names the worktree
+ * only when that directory is where the work was.
+ */
+function workingWorktree(summary: TranscriptSummary): Worktree | undefined {
+  if (summary.worktree !== undefined) return summary.worktree ?? undefined;
+  if (!summary.workDir) return undefined;
+  return worktreeFromCwd(summary.workDir, summary.workDir === summary.lastCwd ? summary.branch : undefined);
 }
 
 function stateFor(live: LiveInfo | undefined, lastRole: TranscriptSummary['lastRole']): SessionState {
@@ -254,7 +291,7 @@ async function listSubagents(parent: Session, parentLive: LiveInfo | undefined):
       title: label?.trim() || summary.title || '(subagent)',
       cwd: summary.cwd ?? parent.cwd,
       branch: summary.branch ?? parent.branch,
-      worktree: parent.worktree,
+      worktree: workingWorktree(summary) ?? parent.worktree,
       updatedAt: summary.lastAt ?? st.mtimeMs,
       startedAt: summary.firstAt ?? st.birthtimeMs,
       state: subagentState(parentLive, summary),
@@ -299,8 +336,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
         title: customTitle ?? liveInfo?.name ?? summary.title ?? '(no prompt yet)',
         cwd,
         branch: summary.branch,
-        // Without a binding, the shell's current directory tells: started inside a worktree, or `cd`'d into one and stayed.
-        worktree: summary.worktree ?? worktreeFromCwd(summary.lastCwd ?? cwd, summary.branch),
+        worktree: workingWorktree(summary) ?? (summary.workDir ? undefined : worktreeFromCwd(cwd, undefined)),
         updatedAt: summary.lastAt ?? st.mtimeMs,
         startedAt: summary.firstAt ?? st.birthtimeMs,
         state: stateFor(liveInfo, summary.lastRole),

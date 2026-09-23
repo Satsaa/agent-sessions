@@ -5,7 +5,7 @@ import { createReadStream } from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import type { Session, SessionState } from './types.js';
 import { cleanTitle, expandHome, listDir, statOrUndefined, walkFiles } from './util.js';
-import { worktreeFromCwd } from './worktree.js';
+import { commandDirs, inRepository, worktreeFromCwd } from './worktree.js';
 import { holdersOfFilesIn } from './window.js';
 import type { Worktree } from './types.js';
 
@@ -154,7 +154,6 @@ function stateFor(locked: boolean, lastTurn: string | undefined): SessionState {
 
 // ---- Where a thread's commands actually run ----
 
-const DIR_REF = /"workdir"\s*:\s*"([^"]+)"|\bcd\s+(\/[^\s;&|"')]+)|\bgit\s+-C\s+(\/[^\s;&|"')]+)/g;
 const TAIL_BYTES = 256 * 1024;
 const workDirCache = new Map<string, { mtimeMs: number; size: number; dir: string | undefined }>();
 
@@ -174,9 +173,7 @@ function lastDirInLine(line: string): string | undefined {
   const p = d.payload;
   if (!p || (p.type !== 'function_call' && p.type !== 'custom_tool_call')) return undefined;
   const text = p.input ?? p.arguments ?? '';
-  let last: string | undefined;
-  for (const m of text.matchAll(DIR_REF)) last = m[1] ?? m[2] ?? m[3];
-  return last;
+  return commandDirs(text).filter(inRepository).at(-1);
 }
 
 async function lastDirInTail(rolloutPath: string, size: number): Promise<string | undefined> {

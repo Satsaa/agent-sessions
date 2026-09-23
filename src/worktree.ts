@@ -2,13 +2,34 @@ import { execFile } from 'node:child_process';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Session, Worktree } from './types.js';
-import { repoRootOf, statOrUndefined, worktreeTopOf } from './util.js';
+import { expandHome, repoRootOf, statOrUndefined, worktreeTopOf } from './util.js';
 
 /** Build the worktree record for a session that only knows where it ran (Codex, or Claude sessions started inside a worktree). */
 export function worktreeFromCwd(cwd: string | undefined, branch: string | undefined): Worktree | undefined {
   const top = worktreeTopOf(cwd);
   if (!top) return undefined;
   return { path: top, name: path.basename(top), branch, repoRoot: repoRootOf(top) };
+}
+
+const DIR_REF = /"workdir"\s*:\s*"([^"]+)"|\bcd\s+["']?(~?\/[^\s;&|"'`)\\]+)|\bgit\s+-C\s+["']?(~?\/[^\s;&|"'`)\\]+)/g;
+
+/**
+ * The directories a command addresses, in order: a Codex exec call's `workdir`, `cd <dir>` and `git -C <dir>`.
+ * Agents keep their shell in the directory they started in and reach a worktree through these, so they say
+ * where the work is going on better than the cwd a transcript records.
+ */
+export function commandDirs(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(DIR_REF)) {
+    const dir = m[1] ?? m[2] ?? m[3];
+    if (dir) out.push(path.resolve(expandHome(dir)));
+  }
+  return out;
+}
+
+/** A directory counts as a place the agent works only inside a git repository; scratch and temp folders say nothing. */
+export function inRepository(dir: string): boolean {
+  return repoRootOf(dir) !== undefined;
 }
 
 /** Build the worktree record from an explicit path the tool recorded (Claude's `worktree-state`). */
