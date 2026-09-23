@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.6.11",
+  "version": "0.6.12",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -396,7 +396,7 @@
         },
         {
           "command": "agentSessions.archive",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-stopped$/ && viewItem =~ /archived/ == false && viewItem =~ /subagent/ == false",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-stopped$/ && !(viewItem =~ /archived/) && !(viewItem =~ /subagent/)",
           "group": "inline@2"
         },
         {
@@ -406,12 +406,12 @@
         },
         {
           "command": "agentSessions.open",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /subagent/ == false",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /subagent/)",
           "group": "1_open@1"
         },
         {
           "command": "agentSessions.openInTerminal",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /subagent/ == false",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /subagent/)",
           "group": "1_open@2"
         },
         {
@@ -421,7 +421,7 @@
         },
         {
           "command": "agentSessions.copyResumeCommand",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /subagent/ == false",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /subagent/)",
           "group": "2_copy@1"
         },
         {
@@ -431,7 +431,7 @@
         },
         {
           "command": "agentSessions.archive",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /archived/ == false && viewItem =~ /subagent/ == false",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /archived/) && !(viewItem =~ /subagent/)",
           "group": "3_archive@1"
         },
         {
@@ -481,22 +481,22 @@
         },
         {
           "command": "agentSessions.pin",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /-pinned-/) && viewItem =~ /subagent/ == false",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /-pinned-/) && !(viewItem =~ /subagent/)",
           "group": "inline@4"
         },
         {
           "command": "agentSessions.pin",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /-pinned-/) && viewItem =~ /subagent/ == false",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /-pinned-/) && !(viewItem =~ /subagent/)",
           "group": "2_pin@1"
         },
         {
           "command": "agentSessions.unpin",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-pinned-/ && viewItem =~ /subagent/ == false",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-pinned-/ && !(viewItem =~ /subagent/)",
           "group": "inline@4"
         },
         {
           "command": "agentSessions.unpin",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-pinned-/ && viewItem =~ /subagent/ == false",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-pinned-/ && !(viewItem =~ /subagent/)",
           "group": "2_pin@1"
         },
         {
@@ -521,17 +521,17 @@
         },
         {
           "command": "agentSessions.rename",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /subagent/ == false",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /subagent/)",
           "group": "inline@0"
         },
         {
           "command": "agentSessions.rename",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /subagent/ == false",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /subagent/)",
           "group": "1_open@4"
         },
         {
           "command": "agentSessions.reloadCodexPanel",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/ && viewItem =~ /subagent/ == false",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/ && !(viewItem =~ /subagent/)",
           "group": "1_open@5"
         }
       ],
