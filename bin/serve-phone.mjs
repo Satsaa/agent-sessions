@@ -19,7 +19,7 @@
 // a folder is what it moves between.
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
 import { homedir } from 'node:os';
@@ -120,38 +120,29 @@ const MACHINE_SETTINGS = {
 };
 
 /**
- * Built-in extensions the phone has no use for, left out of the server's built-in scan on every launch
- * (VSCODE_SKIP_BUILTIN_EXTENSIONS; `--disable-extension` does not reach the web client), so they stay off across
- * web-build updates:
- * Copilot, GitHub and account sign-in, port tunnels and the in-editor browser, the debugger, editing aids, and the
- * heavy language servers. Git stays: the Delete worktree action goes through it.
+ * The only built-in extensions the phone loads: Git (the Delete worktree action goes through it) and the default
+ * themes (Default Dark Modern). No grammars, language servers, file viewers or sign-in; the phone shows agent
+ * sessions, not files. Folder names in the web build's `extensions` directory; see trimBuiltins.
  */
-const DISABLED_BUILTINS = [
-  'GitHub.copilot-chat',
-  'TypeScriptTeam.jsts-chat-features',
-  'vscode.github',
-  'vscode.github-authentication',
-  'vscode.microsoft-authentication',
-  'vscode.tunnel-forwarding',
-  'vscode.simple-browser',
-  'vscode.debug-auto-launch',
-  'vscode.debug-server-ready',
-  'ms-vscode.js-debug',
-  'ms-vscode.js-debug-companion',
-  'ms-vscode.vscode-js-profile-table',
-  'vscode.merge-conflict',
-  'vscode.references-view',
-  'vscode.terminal-suggest',
-  'vscode.npm',
-  'vscode.grunt',
-  'vscode.gulp',
-  'vscode.jake',
-  'vscode.emmet',
-  'vscode.ipynb',
-  'vscode.extension-editing',
-  'vscode.typescript-language-features',
-  'vscode.php-language-features',
-];
+const KEPT_BUILTINS = ['git', 'git-base', 'theme-defaults'];
+
+/**
+ * Moves every other built-in out of the web build's `extensions` directory (into `extensions-unused`, back again if
+ * the list grows), each launch, so a newly downloaded build is trimmed too. The build is the launcher's own
+ * download, used by nothing else. Neither `--builtin-extensions-dir` (ignored by the server's scanner) nor
+ * VSCODE_SKIP_BUILTIN_EXTENSIONS (server only; the browser still fetched the rest) removes them from both sides.
+ */
+function trimBuiltins() {
+  const build = dirname(dirname(webCodeServer()));
+  const on = join(build, 'extensions');
+  const off = join(build, 'extensions-unused');
+  mkdirSync(off, { recursive: true });
+  for (const name of readdirSync(on)) {
+    // node_modules holds packages shared by built-ins, not an extension.
+    if (name !== 'node_modules' && !KEPT_BUILTINS.includes(name) && statSync(join(on, name)).isDirectory()) renameSync(join(on, name), join(off, name));
+  }
+  for (const name of KEPT_BUILTINS) if (!existsSync(join(on, name)) && existsSync(join(off, name))) renameSync(join(off, name), join(on, name));
+}
 
 /**
  * Added to every workbench page. VS Code offsets top-right toasts and the notification centre by the title bar only
@@ -303,12 +294,12 @@ const secret = password();
 // serve-web listens on loopback behind the front, which takes the public address.
 const upstreamPort = String(Number(port) + 1);
 const serveArgs = ['--host', '127.0.0.1', '--port', upstreamPort, '--without-connection-token', '--accept-server-license-terms', '--server-data-dir', serverDir, '--disable-workspace-trust'];
+trimBuiltins();
 front(secret, upstreamPort);
 
 let stopping = false;
 function serve() {
-  const env = { ...process.env, VSCODE_SKIP_BUILTIN_EXTENSIONS: DISABLED_BUILTINS.join(',') };
-  const child = spawn(webCodeServer(), serveArgs, { env, stdio: ['ignore', 'inherit', 'inherit'] });
+  const child = spawn(webCodeServer(), serveArgs, { stdio: ['ignore', 'inherit', 'inherit'] });
   child.on('exit', (status) => {
     if (stopping) return;
     console.log(`code-server exited (${status}); restarting in 2s.`);

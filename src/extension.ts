@@ -475,6 +475,7 @@ export function activate(context: vscode.ExtensionContext): void {
           return;
         }
         await openSession(s);
+        await phone.showSession();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         output.appendLine(`open ${s.tool} ${s.id} failed: ${msg}`);
