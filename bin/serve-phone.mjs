@@ -307,6 +307,9 @@ function serve() {
   });
   return child;
 }
+// Extensions install before the server starts: its startup cleanup of removed versions, running beside an
+// install of the same extension, once left the registry naming a folder that neither side kept.
+await installExtensions();
 let child = serve();
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
@@ -315,9 +318,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
     process.exit(0);
   });
 }
-void installExtensions().then(() => {
-  const shown = host === '0.0.0.0' || host === '::' ? 'your-host' : host;
-  console.log(`\nAgent Sessions on a phone: http://${shown}:${port}/?folder=${encodeURIComponent(folder)}`);
-  console.log(secret ? `Password (any user name): ${secret}\n` : 'No password: the port is open to whoever reaches it.\n');
-  console.log('Plain HTTP: use it on a trusted network, over an SSH tunnel, or behind a TLS proxy (see README).');
-});
+const shown = host === '0.0.0.0' || host === '::' ? 'your-host' : host;
+console.log(`\nAgent Sessions on a phone: http://${shown}:${port}/?folder=${encodeURIComponent(folder)}`);
+console.log(secret ? `Password (any user name): ${secret}\n` : 'No password: the port is open to whoever reaches it.\n');
+console.log('Plain HTTP: use it on a trusted network, over an SSH tunnel, or behind a TLS proxy (see README).');
