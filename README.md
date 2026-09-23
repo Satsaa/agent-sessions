@@ -45,7 +45,7 @@ If the Claude Code or Codex extension is not installed, opening falls back to a 
 
 ## Filtering defaults
 
-- **Archived** sessions are hidden. Codex's own archive flag is honoured; sessions archived from this view are remembered by the extension.
+- **Archived** sessions are hidden. Codex's own archive flag is honoured; sessions archived or pinned from this view are kept in `~/.agent-sessions/state.json`, shared live by every window running as the same user (desktop remote windows and the phone server alike). Marks from earlier versions move there on first start.
 - **Subagent threads** (Codex threads spawned by another thread) are hidden.
 - **Empty** stopped sessions where no prompt was ever sent are hidden.
 - History is capped at 200 sessions (`agentSessions.historyLimit`).

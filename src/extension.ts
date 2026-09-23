@@ -19,6 +19,7 @@ import { initIcons } from './icons.js';
 import { listRepoWorktrees, loadWorktreeStats, sessionWorktrees, type RepoWorktree } from './worktree.js';
 import { WorktreeItem, WorktreesProvider } from './worktrees-tree.js';
 import { repoRootOf } from './util.js';
+import { type MarkList, type SessionMarks, marksFile, mergeMarks, readMarks, setMark, watchMarks } from './marks.js';
 import * as path from 'node:path';
 
 const ARCHIVED_KEY = 'agentSessions.archived';
@@ -66,8 +67,27 @@ export function activate(context: vscode.ExtensionContext): void {
   initIcons(context);
   const output = vscode.window.createOutputChannel('Agent Sessions');
   let config = readConfig();
-  const archived = new Set<string>(context.globalState.get<string[]>(ARCHIVED_KEY, []));
-  const pinned = new Set<string>(context.globalState.get<string[]>(PINNED_KEY, []));
+  // Filled from the shared marks file (see marks.ts); the sets are shared by reference with the views.
+  const archived = new Set<string>();
+  const pinned = new Set<string>();
+  const marksPath = marksFile();
+  const takeMarks = (m: SessionMarks) => {
+    archived.clear();
+    for (const k of m.archived) archived.add(k);
+    pinned.clear();
+    for (const k of m.pinned) pinned.add(k);
+  };
+  // Marks this install kept in globalState before the file existed move into it once, then leave globalState.
+  const marksReady = (async () => {
+    const legacy = { archived: context.globalState.get<string[]>(ARCHIVED_KEY, []), pinned: context.globalState.get<string[]>(PINNED_KEY, []) };
+    if (legacy.archived.length || legacy.pinned.length) {
+      takeMarks(await mergeMarks(marksPath, legacy));
+      await context.globalState.update(ARCHIVED_KEY, undefined);
+      await context.globalState.update(PINNED_KEY, undefined);
+    } else {
+      takeMarks(await readMarks(marksPath));
+    }
+  })().catch((err: unknown) => output.appendLine(`reading ${marksPath} failed: ${err instanceof Error ? err.message : String(err)}`));
   const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned });
 
   const provider = new SessionsProvider(options(), () => void vscode.commands.executeCommand('setContext', 'agentSessions.loaded', true));
@@ -189,6 +209,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     refreshing = (async () => {
       try {
+        await marksReady;
         const lists = await Promise.all([
           config.tools.includes('claude') ? listClaudeSessions(config.claudeHome).catch((e) => fail('claude', e)) : [],
           config.tools.includes('codex') ? listCodexSessions(config.codexHome).catch((e) => fail('codex', e)) : [],
@@ -314,7 +335,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const setting = async (key: string, value: unknown) => {
     await vscode.workspace.getConfiguration('agentSessions').update(key, value, vscode.ConfigurationTarget.Global);
   };
-  const persistArchived = () => context.globalState.update(ARCHIVED_KEY, [...archived]);
+  const mark = async (list: MarkList, s: Session, present: boolean) => takeMarks(await setMark(marksPath, list, `${s.tool}:${s.id}`, present));
+  // Another window (the phone, or a second desktop window) archived or pinned something.
+  context.subscriptions.push(watchMarks(marksPath, (m) => {
+    takeMarks(m);
+    provider.setOptions(options());
+    void refresh();
+  }));
 
   context.subscriptions.push(
     vscode.commands.registerCommand('agentSessions.show', () => vscode.commands.executeCommand('agentSessions.list.focus')),
@@ -515,8 +542,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('agentSessions.archive', async (arg: unknown) => {
       const s = sessionOf(arg);
       if (!s) return;
-      archived.add(`${s.tool}:${s.id}`);
-      await persistArchived();
+      await mark('archived', s, true);
       // Archiving puts the session away, so its tab goes too; the agent keeps running.
       await closeSessionTab(s).catch((err: unknown) => output.appendLine(`close tab for ${s.tool} ${s.id} failed: ${err instanceof Error ? err.message : String(err)}`));
       provider.setOptions(options());
@@ -525,18 +551,14 @@ export function activate(context: vscode.ExtensionContext): void {
     ...(['pin', 'unpin'] as const).map((action) => vscode.commands.registerCommand(`agentSessions.${action}`, async (arg: unknown) => {
       const s = sessionOf(arg);
       if (!s) return;
-      const key = `${s.tool}:${s.id}`;
-      if (action === 'pin') pinned.add(key);
-      else pinned.delete(key);
-      await context.globalState.update(PINNED_KEY, [...pinned]);
+      await mark('pinned', s, action === 'pin');
       provider.setOptions(options());
       await refresh();
     })),
     vscode.commands.registerCommand('agentSessions.unarchive', async (arg: unknown) => {
       const s = sessionOf(arg);
       if (!s) return;
-      archived.delete(`${s.tool}:${s.id}`);
-      await persistArchived();
+      await mark('archived', s, false);
       if (s.archived) {
         vscode.window.showInformationMessage(`This session is archived in ${s.tool === 'codex' ? 'Codex' : 'Claude Code'} itself; unarchive it there to hide the badge.`);
       }
