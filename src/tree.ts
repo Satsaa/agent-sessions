@@ -273,9 +273,18 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   private filtered(): Session[] {
     const o = this.options;
     const repoRoots = o.scope === 'workspace' ? this.workspaceRepoRoots() : undefined;
+    const byKey = new Map(this.sessions.map((s) => [`${s.tool}:${s.id}`, s]));
+    // Archiving a session puts away what it spawned too; otherwise its subagents would lose their parent row and
+    // stand alone in the list. The chain is followed up to the top, with a guard against a cycle in bad data.
+    const archivedWithAncestors = (s: Session): boolean => {
+      for (let at: Session | undefined = s, depth = 0; at && depth < 32; depth++) {
+        if (at.archived || o.locallyArchived.has(`${at.tool}:${at.id}`)) return true;
+        at = at.subagent && at.parentId ? byKey.get(`${at.tool}:${at.parentId}`) : undefined;
+      }
+      return false;
+    };
     return this.sessions.filter((s) => {
-      const archived = s.archived || o.locallyArchived.has(`${s.tool}:${s.id}`);
-      if (archived && !o.showArchived) return false;
+      if (!o.showArchived && archivedWithAncestors(s)) return false;
       // Spawned sessions stay in: `topLevel` nests them under their parent and drops the parentless unless switched on.
       if (s.empty && !s.subagent && !o.showEmpty && !isLive(s.state) && !o.pinned.has(`${s.tool}:${s.id}`)) return false;
       if (repoRoots) {

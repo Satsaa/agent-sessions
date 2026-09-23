@@ -120,3 +120,17 @@ test('worktree delete refuses main checkouts and unresolved repository roots', a
   await assert.rejects(deleteWorktree(worktree), /Open the main repository/);
   assert.deepEqual(calls.map(call => call[0]), ['git.openRepository']);
 });
+
+test('archiving a session hides its subagents instead of promoting them to rows', () => {
+  const parent = session('parent', { state: 'running' });
+  const child = session('child', { state: 'running', subagent: true, parentId: 'parent' });
+  const grandchild = session('grandchild', { state: 'running', subagent: true, parentId: 'child' });
+  const provider = new SessionsProvider(options({ pinned: new Set() }), () => {});
+  provider.setSessions([parent, child]);
+  assert.deepEqual(provider.getChildren()[0].children.map(row => row.session.id), ['parent'], 'live subagents nest under their parent');
+  provider.setSessions([parent, child, grandchild]);
+  provider.setOptions(options({ pinned: new Set(), locallyArchived: new Set(['codex:parent']) }));
+  assert.deepEqual(provider.getChildren(), [], 'an archived session takes its subagents, however deep, out of the list with it');
+  provider.setOptions(options({ pinned: new Set(), locallyArchived: new Set(['codex:parent']), showArchived: true }));
+  assert.deepEqual(provider.getChildren()[0].children.filter(row => row.session.id !== 'grandchild').map(row => row.session.id), ['parent'], 'showing archived brings the parent back with its subagent nested again');
+});
