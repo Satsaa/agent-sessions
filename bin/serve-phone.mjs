@@ -11,8 +11,8 @@
 // takes --disable-workspace-trust and the CLI does not: without it every folder opens in Restricted Mode, where no
 // extension activates, and trust could only be granted by hand in each browser. It is restarted if it ever exits.
 //
-// The port asks for a password (HTTP basic auth, any user name): serve-web itself listens on loopback only, and this
-// script proxies to it. The password is generated once into ~/.agent-sessions/web/password.
+// serve-web itself listens on loopback only, and this script proxies to it: the proxy asks for a password (HTTP basic
+// auth, any user name; generated once into ~/.agent-sessions/web/password) and adds the workbench stylesheet.
 //
 // The URL opens a folder (--folder, the home directory by default) rather than an empty window: Claude Code resumes
 // only sessions of the window's folder, so the extension moves the window to a session's folder when needed, and
@@ -101,7 +101,20 @@ const MACHINE_SETTINGS = {
   'telemetry.telemetryLevel': 'off',
   'update.showReleaseNotes': false,
   'git.openRepositoryInParentFolders': 'never',
+  // Toasts at the top, where a phone's keyboard and thumb are not; WORKBENCH_CSS moves them below the tabs.
+  'workbench.notifications.position': 'top-right',
 };
+
+/**
+ * Added to every workbench page. VS Code offsets top-right toasts and the notification centre by the title bar only
+ * (inline `top`, or an `!important` rule in the modern UI), so they cover the editor tabs; push them below the tab
+ * row. The repeated class outranks that rule. Internal class names: if a VS Code release renames them, toasts fall
+ * back to sitting on the tabs.
+ */
+const WORKBENCH_CSS = `
+.monaco-workbench.monaco-workbench.monaco-workbench > .notifications-toasts.top-right { top: 72px !important; }
+.monaco-workbench.monaco-workbench.monaco-workbench > .notifications-center.top-right { top: 76px !important; }
+`;
 
 function writeSettings() {
   const dir = join(serverDir, 'data', 'Machine');
@@ -123,9 +136,13 @@ function password() {
   return readFileSync(file, 'utf8').trim();
 }
 
-/** The password gate: a proxy on the public address in front of serve-web on loopback, HTTP and WebSocket alike. */
-function gate(secret, upstreamPort) {
+/**
+ * The front: a proxy on the public address in front of serve-web on loopback, HTTP and WebSocket alike. It asks for
+ * the password when there is one and adds WORKBENCH_CSS to HTML pages.
+ */
+function front(secret, upstreamPort) {
   const ok = (req) => {
+    if (!secret) return true;
     const h = req.headers.authorization ?? '';
     if (!h.startsWith('Basic ')) return false;
     const given = Buffer.from(Buffer.from(h.slice(6), 'base64').toString('utf8').split(':').slice(1).join(':'));
@@ -138,9 +155,25 @@ function gate(secret, upstreamPort) {
   };
   const server = createServer((req, res) => {
     if (!ok(req)) return refuse(res);
-    const up = httpRequest({ host: '127.0.0.1', port: upstreamPort, method: req.method, path: req.url, headers: req.headers }, (r) => {
-      res.writeHead(r.statusCode ?? 502, r.headers);
-      r.pipe(res);
+    // A page navigation is fetched uncompressed so the style can be spliced in; everything else streams through.
+    const page = req.method === 'GET' && (req.headers.accept ?? '').includes('text/html');
+    const headers = { ...req.headers };
+    if (page) delete headers['accept-encoding'];
+    const up = httpRequest({ host: '127.0.0.1', port: upstreamPort, method: req.method, path: req.url, headers }, (r) => {
+      if (!page || !(r.headers['content-type'] ?? '').startsWith('text/html')) {
+        res.writeHead(r.statusCode ?? 502, r.headers);
+        r.pipe(res);
+        return;
+      }
+      const chunks = [];
+      r.on('data', (c) => chunks.push(c));
+      r.on('end', () => {
+        const html = Buffer.concat(chunks).toString('utf8').replace('</head>', `<style>${WORKBENCH_CSS}</style></head>`);
+        const out = { ...r.headers };
+        delete out['content-length'];
+        res.writeHead(r.statusCode ?? 502, out);
+        res.end(html);
+      });
     });
     up.on('error', () => {
       res.writeHead(502);
@@ -219,10 +252,10 @@ mkdirSync(root, { recursive: true });
 writeSettings();
 await ensureWebBuild();
 const secret = password();
-// With a password, the server listens on loopback behind the gate; without one it takes the public address itself.
-const upstreamPort = secret ? String(Number(port) + 1) : port;
-const serveArgs = ['--host', secret ? '127.0.0.1' : host, '--port', upstreamPort, '--without-connection-token', '--accept-server-license-terms', '--server-data-dir', serverDir, '--disable-workspace-trust'];
-if (secret) gate(secret, upstreamPort);
+// serve-web listens on loopback behind the front, which takes the public address.
+const upstreamPort = String(Number(port) + 1);
+const serveArgs = ['--host', '127.0.0.1', '--port', upstreamPort, '--without-connection-token', '--accept-server-license-terms', '--server-data-dir', serverDir, '--disable-workspace-trust'];
+front(secret, upstreamPort);
 
 let stopping = false;
 function serve() {
