@@ -103,8 +103,9 @@ pnpm package      # agent-sessions-<version>.vsix
 
 `pnpm phone` serves the real VS Code workbench through `code serve-web`, cut down to two screens: the Sessions view
 filling the window, and a Codex or Claude Code panel filling the window with a **Back to Sessions** arrow in its title
-bar. Sessions are the vendors' own panels, so sending messages, reading history, renaming and everything else in the
-list's buttons and menus work as on the desktop.
+bar. Sessions are the vendors' own panels, so sending messages and reading history work as on the desktop. Tapping a
+row opens it; its **⋯** button lists what the desktop's buttons and right-click menu offer (rename, pin, archive, close,
+copy), since a finger has neither hover nor right click.
 
 ```sh
 pnpm package                       # the vsix the phone window installs
@@ -131,7 +132,12 @@ pnpm phone --install-service --host 172.17.0.1 --port 8321   # systemd user unit
   proxy reaches the port. `--install-service` writes a systemd user unit with the same flags and enables lingering.
 - Phone mode moves the extension's views into a secondary side bar container and maximizes it, which is the workbench's
   own full-window layout for chat; opening or revealing a session closes the side bars; Back, or closing the last tab, restores the list. Back leaves the
-  tabs open behind the list, since closing a Claude Code or Codex panel ends that session's process.
+  tabs open behind the list, since closing a Claude Code or Codex panel ends that session's process. Layout changes run
+  one at a time, and a fresh window starts maximized (`workbench.secondarySideBar.defaultVisibility`), so the screen is
+  never split between the list and a session.
+- Every page load is a new extension host. What the listings read from each transcript is cached in
+  `~/.agent-sessions/cache/` (by path, mtime and size) for every window, so a new one lists in about a second instead
+  of re-reading every transcript.
 
 The launcher fixes the workbench for a phone: dark theme, VS Code's built-in chat and agent features off, no extension recommendations, telemetry or experiments, no port-forwarding offers, Git repository scan, file watching or task detection, extension auto-updates off, of the built-in extensions only Git and the default themes (the rest are moved out of the downloaded web build at each launch: no grammars, language servers, file viewers, Copilot or sign-in), and notifications at the top below the editor tabs (a stylesheet the launcher's proxy adds to the page, so it also fronts serve-web without a password). Codex is pinned to 26.908 because later builds depend on a Codex Audio extension the web client cannot run.
 

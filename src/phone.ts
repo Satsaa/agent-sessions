@@ -7,6 +7,8 @@ export const BLANK_DOC_PATH = '/blank';
 /** The views of the Sessions container, moved into the phone container for the maximized secondary side bar. */
 const VIEW_IDS = ['agentSessions.list', 'agentSessions.usage', 'agentSessions.worktrees'];
 const PHONE_CONTAINER = 'workbench.view.extension.agentSessionsPhone';
+/** When session mode re-closes the side bar after entering, for a panel that reveals itself late. */
+const SESSION_SETTLE_MS = [400, 1200, 3000];
 
 export function windowFolder(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -20,12 +22,18 @@ export function windowFolder(): string | undefined {
  *   or Codex panel ends that session's process, so leaving a session must not close it.
  * - Session mode: the side bars are closed, the editor area (a Codex or Claude panel) is the window.
  *
- * Opening or switching to a tab enters session mode; Back, or closing the last tab, returns to the list. The editor
+ * Opening a tab, or a session from the list, enters session mode; Back, or closing the last tab, returns to the list. The editor
  * area cannot be hidden alone (the workbench shows the bottom panel instead), hence the maximized side bar.
+ *
+ * Mode changes run one at a time, each deciding from the tabs open when its turn comes. Two at once interleave their
+ * layout commands, and a tab that opens and closes within one change (a session handed off to another window) must
+ * still end in list mode: either way the workbench is left showing its own default, the Explorer beside an empty editor.
  */
 export class PhoneLayout implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
-  private busy = false;
+  private queue: Promise<void> = Promise.resolve();
+  /** Counts mode changes, so a settle pass scheduled for one does nothing once another has happened. */
+  private generation = 0;
   private enabled = false;
   private mode: 'list' | 'session' = 'list';
 
@@ -70,22 +78,38 @@ export class PhoneLayout implements vscode.Disposable {
   }
 
   private async follow(e: vscode.TabChangeEvent): Promise<void> {
-    if (!this.enabled || this.busy) return;
-    if (this.tabCount() === 0) {
-      if (this.mode === 'session') await this.run(() => this.enterListMode());
-      return;
-    }
-    // A session was opened, or an open one brought forward (opening a session whose tab exists reveals that tab).
-    const shown = e.opened.length > 0 || e.changed.some((t) => t.isActive);
-    if (shown && this.mode === 'list') await this.run(() => this.enterSessionMode());
+    if (!this.enabled) return;
+    // Only a new tab counts as a session being shown. A tab turning active is no sign of one: the workbench reports it
+    // after list mode hides the editor group, and following it bounced Back into session mode. Opening a session whose
+    // tab already exists goes through showSession instead.
+    const shown = e.opened.length > 0;
+    await this.run(async () => {
+      if (this.tabCount() === 0) {
+        if (this.mode === 'session') await this.enterListMode();
+      } else if (shown && this.mode === 'list') await this.enterSessionMode();
+    });
   }
 
   private async enterSessionMode(): Promise<void> {
+    if (this.tabCount() === 0) return this.enterListMode();
     await vscode.commands.executeCommand('workbench.action.restoreAuxiliaryBar');
     await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
     await vscode.commands.executeCommand('workbench.action.closeSidebar');
     await vscode.commands.executeCommand('workbench.action.closePanel');
     this.mode = 'session';
+    // The panel may reveal itself after this has run (Claude Code revealing a session's existing tab does), and
+    // revealing an editor while the side bar is maximized un-maximizes it to half the window: close it again once
+    // the reveal has had time to land. Closing a hidden side bar changes nothing.
+    const generation = ++this.generation;
+    for (const ms of SESSION_SETTLE_MS) {
+      setTimeout(() => {
+        void this.run(async () => {
+          if (this.generation !== generation || this.mode !== 'session') return;
+          await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+          await vscode.commands.executeCommand('workbench.action.closeSidebar');
+        });
+      }, ms);
+    }
   }
 
   private async enterListMode(): Promise<void> {
@@ -94,16 +118,14 @@ export class PhoneLayout implements vscode.Disposable {
     await vscode.commands.executeCommand('agentSessions.list.focus');
     await vscode.commands.executeCommand('workbench.action.maximizeAuxiliaryBar');
     this.mode = 'list';
+    this.generation++;
   }
 
-  private async run(fn: () => Promise<void>): Promise<void> {
-    this.busy = true;
-    try {
-      await fn();
-    } catch {
+  private run(fn: () => Promise<void>): Promise<void> {
+    const next = this.queue.then(fn).catch(() => {
       // Layout commands are best effort: a missing command in some client leaves the layout as it is.
-    } finally {
-      this.busy = false;
-    }
+    });
+    this.queue = next;
+    return next;
   }
 }

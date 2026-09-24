@@ -9,6 +9,8 @@ import { build } from 'esbuild';
 
 const require = createRequire(import.meta.url);
 const directory = await mkdtemp(join(tmpdir(), 'agent-sessions-worktree-test-'));
+// The session listings cache what they read under the home folder (file-cache.ts); a test's own stays in its directory.
+process.env.HOME = directory;
 const bundle = join(directory, 'claude.cjs');
 await build({ stdin: { contents: `export * from './src/claude.ts';`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'cjs', outfile: bundle, external: ['vscode', 'node:sqlite'] });
 const { listClaudeSessions } = require(bundle);

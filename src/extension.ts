@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
 import { PhoneLayout, windowFolder } from './phone.js';
+import { rowActionsFor } from './row-actions.js';
 import { type PendingOpen, claimOpen, offerOpen, pendingOpenFile, watchOffers } from './pending-open.js';
 import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab } from './open.js';
 import { markThisWindow } from './window.js';
@@ -211,6 +212,7 @@ export function activate(context: vscode.ExtensionContext): void {
     output.appendLine(`hand-off: ${p.id ? 'resuming' : 'starting'} ${p.tool} ${p.id ?? ''} in ${p.folder}`);
     try {
       await (s ? openSession(s) : newSession(p.tool));
+      await phone.showSession();
     } catch (e) {
       output.appendLine(`hand-off ${p.tool} ${p.id ?? 'new'} failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -570,6 +572,16 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     }),
     vscode.commands.registerCommand('agentSessions.back', () => phone.back()),
+    vscode.commands.registerCommand('agentSessions.rowActions', async (arg: unknown) => {
+      if (!(arg instanceof vscode.TreeItem)) return;
+      const titles = new Map<string, string>(
+        (context.extension.packageJSON as { contributes: { commands: { command: string; title: string }[] } }).contributes.commands.map((c) => [c.command, c.title]),
+      );
+      const picks = rowActionsFor(arg.contextValue).map((command) => ({ label: titles.get(command) ?? command, command }));
+      const label = typeof arg.label === 'string' ? arg.label : (arg.label?.label ?? '');
+      const chosen = await vscode.window.showQuickPick(picks, { title: label });
+      if (chosen) await vscode.commands.executeCommand(chosen.command, arg);
+    }),
     vscode.commands.registerCommand('agentSessions.openTranscript', async (arg: unknown) => {
       const s = sessionOf(arg);
       if (!s) return;

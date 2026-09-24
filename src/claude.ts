@@ -6,6 +6,7 @@ import { createReadStream } from 'node:fs';
 import type { Session, SessionState } from './types.js';
 import type { Worktree } from './types.js';
 import { cleanTitle, expandHome, listDir, processAlive, readJsonFile, statOrUndefined } from './util.js';
+import { FileCache } from './file-cache.js';
 import { commandDirs, inRepository, worktreeFromCwd, worktreeFromPath } from './worktree.js';
 
 export function claudeHome(configured: string): string {
@@ -81,13 +82,8 @@ interface TranscriptSummary {
   hasPrompt: boolean;
 }
 
-interface CacheEntry {
-  mtimeMs: number;
-  size: number;
-  summary: TranscriptSummary;
-}
-
-const transcriptCache = new Map<string, CacheEntry>();
+/** Bump when summarizeTranscript reads something new or reads it differently. */
+const transcriptCache = new FileCache<TranscriptSummary>('claude-transcripts', 1);
 
 interface TranscriptLine {
   type?: string;
@@ -138,8 +134,8 @@ interface SubagentMeta {
 }
 
 async function summarizeTranscript(file: string, mtimeMs: number, size: number, sidechain = false): Promise<TranscriptSummary> {
-  const cached = transcriptCache.get(file);
-  if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.summary;
+  const cached = transcriptCache.get(file, mtimeMs, size);
+  if (cached) return cached;
 
   const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, workDir: undefined, lastAt: undefined, firstAt: undefined, lastRole: undefined, lastInterrupted: false, hasPrompt: false };
   let customTitle: string | undefined;
@@ -222,7 +218,7 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number, 
   }
 
   summary.title = customTitle ?? aiTitle ?? firstPrompt;
-  transcriptCache.set(file, { mtimeMs, size, summary });
+  transcriptCache.set(file, mtimeMs, size, summary);
   return summary;
 }
 
@@ -310,6 +306,7 @@ async function listSubagents(parent: Session, parentLive: LiveInfo | undefined):
 
 export async function listClaudeSessions(home: string): Promise<Session[]> {
   const projectsDir = path.join(home, 'projects');
+  await transcriptCache.ready();
   const live = await readLiveSessions(home);
   const sessions: Session[] = [];
   const seen = new Set<string>();

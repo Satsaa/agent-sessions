@@ -5,6 +5,7 @@ import { createReadStream } from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import type { Session, SessionState } from './types.js';
 import { cleanTitle, expandHome, listDir, statOrUndefined, walkFiles } from './util.js';
+import { FileCache } from './file-cache.js';
 import { commandDirs, inRepository, worktreeFromCwd } from './worktree.js';
 import { holdersOfFilesIn } from './window.js';
 import type { Worktree } from './types.js';
@@ -155,7 +156,8 @@ function stateFor(locked: boolean, lastTurn: string | undefined): SessionState {
 // ---- Where a thread's commands actually run ----
 
 const TAIL_BYTES = 256 * 1024;
-const workDirCache = new Map<string, { mtimeMs: number; size: number; dir: string | undefined }>();
+/** Bump when lastCommandDir's reading changes. `null` records a rollout read in full that named no directory. */
+const workDirCache = new FileCache<string | null>('codex-workdirs', 1);
 
 /**
  * Codex records a thread's cwd once and never moves it, but the agent addresses a worktree through
@@ -205,18 +207,19 @@ async function lastDirInFile(rolloutPath: string): Promise<string | undefined> {
 }
 
 async function lastCommandDir(rolloutPath: string, mtimeMs: number, size: number): Promise<string | undefined> {
-  const cached = workDirCache.get(rolloutPath);
-  if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.dir;
+  const hit = workDirCache.get(rolloutPath, mtimeMs, size);
+  if (hit !== undefined) return hit ?? undefined;
+  const earlier = workDirCache.previous(rolloutPath);
   let dir: string | undefined;
   try {
     // The tail is enough while the thread keeps issuing commands; a stretch of pure output
     // (one tool result can be far larger than the tail) must not make a known directory vanish,
     // so the previous answer sticks, and a rollout seen for the first time is read in full.
-    dir = (await lastDirInTail(rolloutPath, size)) ?? cached?.dir ?? (cached ? undefined : await lastDirInFile(rolloutPath));
+    dir = (await lastDirInTail(rolloutPath, size)) ?? (earlier ? (earlier.value ?? undefined) : await lastDirInFile(rolloutPath));
   } catch {
-    dir = cached?.dir;
+    dir = earlier?.value ?? undefined;
   }
-  workDirCache.set(rolloutPath, { mtimeMs, size, dir });
+  workDirCache.set(rolloutPath, mtimeMs, size, dir ?? null);
   return dir;
 }
 
@@ -341,11 +344,12 @@ interface RolloutSummary {
   firstAt: number | undefined;
 }
 
-const rolloutCache = new Map<string, { mtimeMs: number; size: number; summary: RolloutSummary }>();
+/** Bump when summarizeRollout reads something new or reads it differently. */
+const rolloutCache = new FileCache<RolloutSummary>('codex-rollouts', 1);
 
 async function summarizeRollout(file: string, mtimeMs: number, size: number): Promise<RolloutSummary> {
-  const cached = rolloutCache.get(file);
-  if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.summary;
+  const cached = rolloutCache.get(file, mtimeMs, size);
+  if (cached) return cached;
   const summary: RolloutSummary = { id: undefined, cwd: undefined, branch: undefined, subagent: false, parentId: undefined, agentRole: undefined, agentLabel: undefined, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined, firstAt: undefined };
   const rl = readline.createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
   try {
@@ -394,7 +398,7 @@ async function summarizeRollout(file: string, mtimeMs: number, size: number): Pr
     const m = /rollout-.*?-([0-9a-f]{8}-[0-9a-f-]{27,})\.jsonl$/.exec(path.basename(file));
     summary.id = m?.[1];
   }
-  rolloutCache.set(file, { mtimeMs, size, summary });
+  rolloutCache.set(file, mtimeMs, size, summary);
   return summary;
 }
 
@@ -436,7 +440,7 @@ async function listFromRollouts(home: string, names: Map<string, string>, locks:
 }
 
 export async function listCodexSessions(home: string): Promise<Session[]> {
-  const [names, locks] = await Promise.all([readThreadNames(home), readLocks(home)]);
+  const [names, locks] = await Promise.all([readThreadNames(home), readLocks(home), workDirCache.ready(), rolloutCache.ready()]);
   return (await listFromSqlite(home, names, locks)) ?? (await listFromRollouts(home, names, locks));
 }
 

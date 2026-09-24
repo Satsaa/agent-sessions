@@ -85,6 +85,9 @@ const MACHINE_SETTINGS = {
   'workbench.tips.enabled': false,
   'workbench.welcomePage.walkthroughs.openOnInstall': false,
   'workbench.panel.defaultLocation': 'bottom',
+  // A window opening on a folder it has not shown before (every hand-off) starts in list mode's layout, the maximized
+  // secondary side bar, rather than the Explorer beside an empty editor until the extension activates and moves it.
+  'workbench.secondarySideBar.defaultVisibility': 'maximized',
   'terminal.integrated.enablePersistentSessions': false,
   'agentSessions.phoneMode': true,
   // The phone shows agent sessions and nothing else: no built-in chat/agent features, no
@@ -145,15 +148,44 @@ function trimBuiltins() {
 }
 
 /**
- * Added to every workbench page. VS Code offsets top-right toasts and the notification centre by the title bar only
- * (inline `top`, or an `!important` rule in the modern UI), so they cover the editor tabs; push them below the tab
- * row. The repeated class outranks that rule. Internal class names: if a VS Code release renames them, toasts fall
+ * Added to every workbench page: row buttons a finger can reach (no hover to reveal them), and toasts clear of the
+ * tabs. VS Code offsets top-right toasts and the notification centre by the title bar only (inline `top`, or an
+ * `!important` rule in the modern UI), so they cover the editor tabs; push them below the tab row. The repeated class outranks that rule. Internal class names: if a VS Code release renames them, toasts fall
  * back to sitting on the tabs.
  */
 const WORKBENCH_CSS = `
 .monaco-workbench.monaco-workbench.monaco-workbench > .notifications-toasts.top-right { top: 72px !important; }
 .monaco-workbench.monaco-workbench.monaco-workbench > .notifications-center.top-right { top: 76px !important; }
+/* A finger has no hover: row buttons stay visible, with room to hit them. */
+.customview-tree .monaco-list .monaco-list-row .custom-view-tree-node-item .actions { display: block !important; }
+.customview-tree .monaco-list .monaco-list-row .custom-view-tree-node-item .actions .action-label { padding: 6px !important; }
 `;
+
+/**
+ * Added to every workbench page with the page's own script nonce (its CSP admits nothing else). VS Code's touch
+ * support fires one tap gesture on every registered element under the finger, the list row included, so tapping a
+ * row's button also opened the row: for a session in another folder, a hand-off that reloads the window before the
+ * button's action runs. A tap that starts on a row button goes to that button alone, as a click.
+ */
+const WORKBENCH_SCRIPT = `
+addEventListener('-monaco-gesturetap', (e) => {
+  const origin = e.initialTarget ?? e.target;
+  const item = origin instanceof Element ? origin.closest('.custom-view-tree-node-item .actions .action-item') : null;
+  if (!item) return;
+  e.stopImmediatePropagation();
+  // The gesture is dispatched once per registered element: click once.
+  if (item.dataset.tapped) return;
+  item.dataset.tapped = '1';
+  setTimeout(() => delete item.dataset.tapped, 0);
+  item.querySelector('.action-label')?.click();
+}, true);
+`;
+
+function injectIntoPage(html) {
+  const nonce = /<script nonce="([^"]+)"/.exec(html)?.[1];
+  const script = nonce ? `<script nonce="${nonce}">${WORKBENCH_SCRIPT}</script>` : '';
+  return html.replace('</head>', `<style>${WORKBENCH_CSS}</style>${script}</head>`);
+}
 
 function writeSettings() {
   const dir = join(serverDir, 'data', 'Machine');
@@ -177,7 +209,7 @@ function password() {
 
 /**
  * The front: a proxy on the public address in front of serve-web on loopback, HTTP and WebSocket alike. It asks for
- * the password when there is one and adds WORKBENCH_CSS to HTML pages.
+ * the password when there is one and adds WORKBENCH_CSS and WORKBENCH_SCRIPT to HTML pages.
  */
 function front(secret, upstreamPort) {
   const ok = (req) => {
@@ -207,7 +239,7 @@ function front(secret, upstreamPort) {
       const chunks = [];
       r.on('data', (c) => chunks.push(c));
       r.on('end', () => {
-        const html = Buffer.concat(chunks).toString('utf8').replace('</head>', `<style>${WORKBENCH_CSS}</style></head>`);
+        const html = injectIntoPage(Buffer.concat(chunks).toString('utf8'));
         const out = { ...r.headers };
         delete out['content-length'];
         res.writeHead(r.statusCode ?? 502, out);

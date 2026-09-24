@@ -9,6 +9,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 const require = createRequire(import.meta.url);
 const directory = await mkdtemp(join(tmpdir(), 'agent-sessions-rename-test-'));
+// The session listings cache what they read under the home folder (file-cache.ts); a test's own stays in its directory.
+process.env.HOME = directory;
 const bundle = join(directory, 'rename.cjs');
 await build({ stdin: { contents: `export * from './src/rename.ts'; export * from './src/claude.ts'; export { titleMatchesLabel } from './src/util.ts';`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'cjs', outfile: bundle, external: ['vscode', 'node:sqlite'] });
 const { renameSession, listClaudeSessions } = require(bundle);

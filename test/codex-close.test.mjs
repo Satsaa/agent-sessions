@@ -9,6 +9,8 @@ import { build } from 'esbuild';
 const require = createRequire(import.meta.url);
 const fs = require('node:fs/promises');
 const directory = await mkdtemp(join(tmpdir(), 'agent-sessions-close-test-'));
+// The session listings cache what they read under the home folder (file-cache.ts); a test's own stays in its directory.
+process.env.HOME = directory;
 const bundle = join(directory, 'close.cjs');
 await build({ stdin: { contents: `export * from './src/codex-close.ts'; export * from './src/codex.ts';`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'cjs', outfile: bundle });
 const { codexOwner, stopCodexOwner, listCodexSessions } = require(bundle);

@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.6.12",
+  "version": "0.6.15",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -306,6 +306,12 @@
         "title": "Back to Sessions",
         "category": "Agent Sessions",
         "icon": "$(arrow-left)"
+      },
+      {
+        "command": "agentSessions.rowActions",
+        "title": "More Actions…",
+        "category": "Agent Sessions",
+        "icon": "$(ellipsis)"
       }
     ],
     "menus": {
@@ -396,12 +402,12 @@
         },
         {
           "command": "agentSessions.archive",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-stopped$/ && !(viewItem =~ /archived/) && !(viewItem =~ /subagent/)",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-stopped$/ && !(viewItem =~ /archived/) && !(viewItem =~ /subagent/) && !agentSessions.phoneMode",
           "group": "inline@2"
         },
         {
           "command": "agentSessions.unarchive",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /archived/",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /archived/ && !agentSessions.phoneMode",
           "group": "inline@2"
         },
         {
@@ -441,7 +447,7 @@
         },
         {
           "command": "agentSessions.worktree.openFolder",
-          "when": "view == agentSessions.worktrees && viewItem =~ /^worktree(-main)?$/",
+          "when": "view == agentSessions.worktrees && viewItem =~ /^worktree(-main)?$/ && !agentSessions.phoneMode",
           "group": "inline"
         },
         {
@@ -471,7 +477,7 @@
         },
         {
           "command": "agentSessions.closeCodex",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/ && !agentSessions.phoneMode",
           "group": "inline@3"
         },
         {
@@ -481,7 +487,7 @@
         },
         {
           "command": "agentSessions.pin",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /-pinned-/) && !(viewItem =~ /subagent/)",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /-pinned-/) && !(viewItem =~ /subagent/) && !agentSessions.phoneMode",
           "group": "inline@4"
         },
         {
@@ -491,7 +497,7 @@
         },
         {
           "command": "agentSessions.unpin",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-pinned-/ && !(viewItem =~ /subagent/)",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-pinned-/ && !(viewItem =~ /subagent/) && !agentSessions.phoneMode",
           "group": "inline@4"
         },
         {
@@ -501,7 +507,7 @@
         },
         {
           "command": "agentSessions.worktree.delete",
-          "when": "view == agentSessions.worktrees && viewItem == worktree",
+          "when": "view == agentSessions.worktrees && viewItem == worktree && !agentSessions.phoneMode",
           "group": "inline@2"
         },
         {
@@ -521,7 +527,7 @@
         },
         {
           "command": "agentSessions.rename",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /subagent/)",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /subagent/) && !agentSessions.phoneMode",
           "group": "inline@0"
         },
         {
@@ -533,6 +539,11 @@
           "command": "agentSessions.reloadCodexPanel",
           "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/ && !(viewItem =~ /subagent/)",
           "group": "1_open@5"
+        },
+        {
+          "command": "agentSessions.rowActions",
+          "when": "agentSessions.phoneMode && view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^(session|worktree)/",
+          "group": "inline@9"
         }
       ],
       "commandPalette": [
@@ -614,6 +625,10 @@
         },
         {
           "command": "agentSessions.worktree.delete",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.rowActions",
           "when": "false"
         }
       ]
