@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.6.16",
+  "version": "0.7.0",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -708,6 +708,12 @@
           "type": "boolean",
           "default": false,
           "description": "One workbench part at a time, for a phone: the Sessions view fills the window until a session is opened, the session fills it until the Back button. Meant for the window served by `pnpm phone` (code serve-web); leave off in a desktop window."
+        },
+        "agentSessions.keepSessionsRunning": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Run Claude Code panel sessions under the Agent Sessions session host, so a turn keeps running when its window closes, the phone sleeps or the VS Code server restarts, and a session is never open in two windows at once. Sets `claudeCode.claudeProcessWrapper`; turn it on in every window that opens Claude sessions, the phone server included."
         },
         "agentSessions.usage.enabled": {
           "type": "boolean",

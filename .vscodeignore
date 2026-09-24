@@ -1,5 +1,7 @@
 **
 !dist/extension.cjs
+!dist/claude-wrapper.mjs
+!dist/session-host.mjs
 !resources/**
 !package.json
 !README.md

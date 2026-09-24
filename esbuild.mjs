@@ -17,9 +17,27 @@ const options = {
   logLevel: 'info',
 };
 
+/**
+ * The session host and the wrapper Claude Code starts in place of `claude` run as plain Node programs, outside the
+ * extension host (see src/host/protocol.ts).
+ */
+/** @type {esbuild.BuildOptions} */
+const hostOptions = {
+  entryPoints: { 'claude-wrapper': 'src/host/wrapper.ts', 'session-host': 'src/host/host-main.ts' },
+  bundle: true,
+  outdir: 'dist',
+  outExtension: { '.js': '.mjs' },
+  platform: 'node',
+  target: 'node22',
+  format: 'esm',
+  sourcemap: true,
+  logLevel: 'info',
+};
+
 if (watch) {
-  const ctx = await esbuild.context(options);
-  await ctx.watch();
+  await (await esbuild.context(options)).watch();
+  await (await esbuild.context(hostOptions)).watch();
 } else {
   await esbuild.build(options);
+  await esbuild.build(hostOptions);
 }

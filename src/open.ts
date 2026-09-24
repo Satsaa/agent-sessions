@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { Session, Tool } from './types.js';
 import { titleMatchesLabel } from './util.js';
+import { moveHereIfHeldElsewhere } from './session-host.js';
 
 const CLAUDE_EXTENSION = 'anthropic.claude-code';
 const CODEX_EXTENSION = 'openai.chatgpt';
@@ -121,6 +122,7 @@ export async function openSession(session: Session): Promise<void> {
       openInTerminal(session);
       return;
     }
+    if (!(await moveHereIfHeldElsewhere(session.id, session.title))) return;
     await openClaude(session.id);
     return;
   }

@@ -90,6 +90,8 @@ const MACHINE_SETTINGS = {
   'workbench.secondarySideBar.defaultVisibility': 'maximized',
   'terminal.integrated.enablePersistentSessions': false,
   'agentSessions.phoneMode': true,
+  // A turn started on the phone keeps running when the phone sleeps or this server restarts (src/host/protocol.ts).
+  'agentSessions.keepSessionsRunning': true,
   // The phone shows agent sessions and nothing else: no built-in chat/agent features, no
   // suggestions, no telemetry or experiments, and a fixed dark theme regardless of the browser.
   'chat.disableAIFeatures': true,
@@ -325,13 +327,19 @@ await ensureWebBuild();
 const secret = password();
 // serve-web listens on loopback behind the front, which takes the public address.
 const upstreamPort = String(Number(port) + 1);
-const serveArgs = ['--host', '127.0.0.1', '--port', upstreamPort, '--without-connection-token', '--accept-server-license-terms', '--server-data-dir', serverDir, '--disable-workspace-trust'];
+// A closed or sleeping page's window lingers for the grace time and holds its Claude sessions meanwhile, so another
+// window opening one is asked to move it. The session host keeps their turns running, so the default three hours
+// only lengthens that; five minutes still covers a phone waking up.
+const RECONNECTION_GRACE_SECONDS = 300;
+const serveArgs = ['--host', '127.0.0.1', '--port', upstreamPort, '--without-connection-token', '--accept-server-license-terms', '--server-data-dir', serverDir, '--disable-workspace-trust', '--reconnection-grace-time', String(RECONNECTION_GRACE_SECONDS)];
 trimBuiltins();
 front(secret, upstreamPort);
 
 let stopping = false;
 function serve() {
-  const child = spawn(webCodeServer(), serveArgs, { stdio: ['ignore', 'inherit', 'inherit'] });
+  // Names this server's windows in the session host's "running in …" messages.
+  const env = { ...process.env, AGENT_SESSIONS_CLIENT: 'the phone view' };
+  const child = spawn(webCodeServer(), serveArgs, { stdio: ['ignore', 'inherit', 'inherit'], env });
   child.on('exit', (status) => {
     if (stopping) return;
     console.log(`code-server exited (${status}); restarting in 2s.`);
