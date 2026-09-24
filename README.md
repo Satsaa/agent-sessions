@@ -120,6 +120,12 @@ load after installing writes it and the next one uses it.
   window, which says where it went. Without that (the panel's own history list, say) the open is refused with
   "This session is running in …", so the phone and the desktop never run two processes on one conversation.
 - Only panel conversations go through the host; `claude auth` and the like run directly.
+- A session keeps its permission mode across windows. Claude Code remembers a session's mode per VS Code install,
+  and with a process wrapper set it opens a session it has no mode for in Manual rather than the CLI's default. So
+  opening a Claude session from this view first gives that window's store (`anthropic.claude-code/session-permission-modes`)
+  the mode the session's last prompt ran in, unless the window recorded a choice since. Desktop windows publish
+  `claudeCode.allowDangerouslySkipPermissions` and `claudeCode.initialPermissionMode` to
+  `~/.agent-sessions/claude-settings.json` and the phone window applies them, so a session in bypass mode stays in it.
 
 **Codex** (`chatgpt.cliExecutable`) connects the panel to Codex's own app-server daemon (`codex app-server daemon`,
 started when it is not running) instead of a private `codex app-server` per window. The daemon already does the rest:

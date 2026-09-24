@@ -5,6 +5,15 @@ import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
 import { PhoneLayout, windowFolder } from './phone.js';
 import { rowActionsFor } from './row-actions.js';
 import { applyKeepSessionsRunning } from './session-host.js';
+import {
+  type ClaudePermissionSettings,
+  MIRRORED_CLAUDE_SETTINGS,
+  claudeModeStore,
+  claudeSettingsFile,
+  readClaudeSettings,
+  watchClaudeSettings,
+  writeClaudeSettings,
+} from './claude-modes.js';
 import { type PendingOpen, claimOpen, offerOpen, pendingOpenFile, watchOffers } from './pending-open.js';
 import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab } from './open.js';
 import { markThisWindow } from './window.js';
@@ -77,6 +86,33 @@ export function activate(context: vscode.ExtensionContext): void {
       output.appendLine(`keepSessionsRunning: ${err instanceof Error ? err.message : String(err)}`),
     );
   void keepSessionsRunning();
+  // Desktop windows publish Claude Code's permission settings; the phone, another install, takes them (claude-modes.ts).
+  const claudeSettingsPath = claudeSettingsFile();
+  const mirrorClaudeSettings = async () => {
+    if (!vscode.extensions.getExtension('anthropic.claude-code')) return;
+    const claude = vscode.workspace.getConfiguration('claudeCode');
+    if (!config.phoneMode) {
+      const own: ClaudePermissionSettings = {};
+      for (const key of MIRRORED_CLAUDE_SETTINGS) {
+        const value = claude.get(key);
+        if (value !== undefined) own[key] = value;
+      }
+      return writeClaudeSettings(claudeSettingsPath, own);
+    }
+    const published = await readClaudeSettings(claudeSettingsPath);
+    if (!published) return;
+    for (const key of MIRRORED_CLAUDE_SETTINGS) {
+      if (claude.get(key) === published[key]) continue;
+      await claude.update(key, published[key], vscode.ConfigurationTarget.Global);
+      output.appendLine(`phone: claudeCode.${key} follows the desktop: ${JSON.stringify(published[key])}`);
+    }
+  };
+  const syncClaudeSettings = () =>
+    mirrorClaudeSettings().catch((err: unknown) => output.appendLine(`claude settings: ${err instanceof Error ? err.message : String(err)}`));
+  void syncClaudeSettings();
+  context.subscriptions.push(watchClaudeSettings(claudeSettingsPath, () => {
+    if (config.phoneMode) void syncClaudeSettings();
+  }));
   // Filled from the shared marks file (see marks.ts); the sets are shared by reference with the views.
   const archived = new Set<string>();
   const pinned = new Set<string>();
@@ -199,6 +235,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // a window on that folder (see pending-open.ts): the phone reopens its one window there, the desktop opens or
   // focuses a window of its own. The receiving window claims the hand-off on activation, or live when already open.
   const install = context.globalStorageUri.fsPath;
+  const claudeModes = claudeModeStore(install);
   const pendingFile = pendingOpenFile();
   const folderUri = (folder: string) => vscode.workspace.workspaceFolders?.[0]?.uri.with({ path: folder }) ?? vscode.Uri.file(folder);
   const handOff = async (tool: Tool, id: string | undefined, folder: string) => {
@@ -219,7 +256,7 @@ export function activate(context: vscode.ExtensionContext): void {
     pendingOpen = Promise.resolve(undefined);
     output.appendLine(`hand-off: ${p.id ? 'resuming' : 'starting'} ${p.tool} ${p.id ?? ''} in ${p.folder}`);
     try {
-      await (s ? openSession(s) : newSession(p.tool));
+      await (s ? openSession(s, claudeModes) : newSession(p.tool));
       await phone.showSession();
     } catch (e) {
       output.appendLine(`hand-off ${p.tool} ${p.id ?? 'new'} failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -373,10 +410,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
+      if (MIRRORED_CLAUDE_SETTINGS.some((key) => e.affectsConfiguration(`claudeCode.${key}`)) && !config.phoneMode) void syncClaudeSettings();
       if (!e.affectsConfiguration('agentSessions')) return;
       const wasKeeping = config.keepSessionsRunning;
+      const wasPhone = config.phoneMode;
       config = readConfig();
       if (config.keepSessionsRunning !== wasKeeping) void keepSessionsRunning();
+      if (config.phoneMode !== wasPhone) void syncClaudeSettings();
       syncContexts();
       provider.setOptions(options());
       rewatch();
@@ -486,7 +526,7 @@ export function activate(context: vscode.ExtensionContext): void {
           await handOff(s.tool, s.id, s.cwd);
           return;
         }
-        await openSession(s);
+        await openSession(s, claudeModes);
         await phone.showSession();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -531,7 +571,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const claudeTab = s.tool === 'claude' ? existingClaudeTab(s) : undefined;
       if (claudeTab) {
         try {
-          await openSession(s);
+          await openSession(s, claudeModes);
           await vscode.commands.executeCommand('claude-vscode.renameSessionTab');
         } catch (err) {
           output.appendLine(`rename via Claude Code failed: ${err instanceof Error ? err.message : String(err)}`);

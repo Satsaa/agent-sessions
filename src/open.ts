@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { Session, Tool } from './types.js';
 import { titleMatchesLabel } from './util.js';
 import { moveHereIfHeldElsewhere } from './session-host.js';
+import { seedSessionMode } from './claude-modes.js';
 
 const CLAUDE_EXTENSION = 'anthropic.claude-code';
 const CODEX_EXTENSION = 'openai.chatgpt';
@@ -116,13 +117,16 @@ export function openInTerminal(session: Session): void {
   terminal.sendText(resumeCommand(session), true);
 }
 
-export async function openSession(session: Session): Promise<void> {
+/** `claudeModeStore` is this install's Claude Code session mode store (see claude-modes.ts). */
+export async function openSession(session: Session, claudeModeStore: string): Promise<void> {
   if (session.tool === 'claude') {
     if (!extensionInstalled(CLAUDE_EXTENSION)) {
       openInTerminal(session);
       return;
     }
     if (!(await moveHereIfHeldElsewhere(session.id, session.title))) return;
+    // Best effort: without it the panel opens the session in its own default mode, as it always did.
+    if (session.permissionMode) await seedSessionMode(claudeModeStore, session.id, session.permissionMode).catch(() => false);
     await openClaude(session.id);
     return;
   }

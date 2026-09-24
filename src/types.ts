@@ -49,6 +49,8 @@ export interface Session {
   pid: number | undefined;
   /** The process was started from the VS Code window this extension runs in (see window.ts). */
   inThisWindow: boolean;
+  /** The permission mode the session's last prompt ran in, and when (Claude records it on each prompt). */
+  permissionMode: { mode: string; at: number } | undefined;
 }
 
 

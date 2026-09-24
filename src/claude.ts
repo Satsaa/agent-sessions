@@ -80,10 +80,12 @@ interface TranscriptSummary {
   /** The last record is the person (or parent agent) cutting the turn off. */
   lastInterrupted: boolean;
   hasPrompt: boolean;
+  /** The permission mode the last prompt ran in, and that prompt's time. */
+  permissionMode: { mode: string; at: number } | undefined;
 }
 
 /** Bump when summarizeTranscript reads something new or reads it differently. */
-const transcriptCache = new FileCache<TranscriptSummary>('claude-transcripts', 1);
+const transcriptCache = new FileCache<TranscriptSummary>('claude-transcripts', 2);
 
 interface TranscriptLine {
   type?: string;
@@ -94,6 +96,8 @@ interface TranscriptLine {
   isMeta?: boolean;
   isSidechain?: boolean;
   timestamp?: string;
+  /** On a user record: the permission mode that prompt was sent in. */
+  permissionMode?: string;
   message?: { role?: string; content?: unknown };
   /** `worktree-state` records: the session's current worktree binding, null once it has exited. */
   worktreeSession?: { worktreePath?: string; worktreeName?: string; worktreeBranch?: string; originalCwd?: string } | null;
@@ -137,7 +141,7 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number, 
   const cached = transcriptCache.get(file, mtimeMs, size);
   if (cached) return cached;
 
-  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, workDir: undefined, lastAt: undefined, firstAt: undefined, lastRole: undefined, lastInterrupted: false, hasPrompt: false };
+  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, workDir: undefined, lastAt: undefined, firstAt: undefined, lastRole: undefined, lastInterrupted: false, hasPrompt: false, permissionMode: undefined };
   let customTitle: string | undefined;
   let aiTitle: string | undefined;
   let firstPrompt: string | undefined;
@@ -181,12 +185,11 @@ async function summarizeTranscript(file: string, mtimeMs: number, size: number, 
             for (const dir of toolCallDirs(d.message?.content)) if (inRepository(dir)) summary.workDir = dir;
           }
           if (d.gitBranch) summary.branch = d.gitBranch;
-          if (d.timestamp) {
-            const t = Date.parse(d.timestamp);
-            if (Number.isFinite(t)) {
-              summary.firstAt ??= t;
-              summary.lastAt = t;
-            }
+          const t = d.timestamp ? Date.parse(d.timestamp) : NaN;
+          if (Number.isFinite(t)) {
+            summary.firstAt ??= t;
+            summary.lastAt = t;
+            if (d.type === 'user' && d.permissionMode) summary.permissionMode = { mode: d.permissionMode, at: t };
           }
           const role = d.message?.role === 'assistant' || d.type === 'assistant' ? 'assistant' : 'user';
           summary.lastInterrupted = false;
@@ -300,6 +303,7 @@ async function listSubagents(parent: Session, parentLive: LiveInfo | undefined):
       transcriptPath: file,
       pid: undefined,
       inThisWindow: false,
+      permissionMode: summary.permissionMode,
     });
   }
   return out;
@@ -346,6 +350,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
         transcriptPath: file,
         pid: liveInfo?.pid,
         inThisWindow: false,
+        permissionMode: summary.permissionMode,
       };
       sessions.push(parent);
       sessions.push(...(await listSubagents(parent, liveInfo)));
@@ -373,6 +378,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
       transcriptPath: '',
       pid: info.pid,
       inThisWindow: false,
+      permissionMode: undefined,
     });
   }
 

@@ -314,6 +314,7 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
       transcriptPath: r.rollout_path,
       pid: locks.get(r.id),
       inThisWindow: false,
+      permissionMode: undefined,
     });
   }
   return sessions;
@@ -433,6 +434,7 @@ async function listFromRollouts(home: string, names: Map<string, string>, locks:
         transcriptPath: file,
         pid: locks.get(s.id),
         inThisWindow: false,
+        permissionMode: undefined,
       });
     }
   }
