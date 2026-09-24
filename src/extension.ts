@@ -577,7 +577,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const titles = new Map<string, string>(
         (context.extension.packageJSON as { contributes: { commands: { command: string; title: string }[] } }).contributes.commands.map((c) => [c.command, c.title]),
       );
-      const picks = rowActionsFor(arg.contextValue).map((command) => ({ label: titles.get(command) ?? command, command }));
+      const picks = rowActionsFor(arg.contextValue, config.phoneMode).map((command) => ({ label: titles.get(command) ?? command, command }));
       const label = typeof arg.label === 'string' ? arg.label : (arg.label?.label ?? '');
       const chosen = await vscode.window.showQuickPick(picks, { title: label });
       if (chosen) await vscode.commands.executeCommand(chosen.command, arg);

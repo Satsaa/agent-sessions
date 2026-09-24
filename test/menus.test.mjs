@@ -14,7 +14,7 @@ test('no menu when-clause compares a regex match with == or !=', () => {
   assert.deepEqual(offenders, [], 'a regex match is negated with !( … ), never compared with == false');
 });
 
-test('the phone’s row action picker covers every context-menu action', async () => {
+test('the row action picker covers every context-menu action', async () => {
   const { build } = await import('esbuild');
   const { mkdtemp, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
@@ -24,13 +24,14 @@ test('the phone’s row action picker covers every context-menu action', async (
   try {
     const out = join(dir, 'row-actions.cjs');
     await build({ entryPoints: ['src/row-actions.ts'], bundle: true, platform: 'node', format: 'cjs', outfile: out });
-    const { ROW_ACTIONS, PHONE_OMITTED, rowActionsFor } = createRequire(import.meta.url)(out);
-    const listed = new Set([...ROW_ACTIONS.map((a) => a.command), ...Object.keys(PHONE_OMITTED)]);
+    const { ROW_ACTIONS, rowActionsFor } = createRequire(import.meta.url)(out);
+    const listed = new Set(ROW_ACTIONS.map((a) => a.command));
     const contextMenu = new Set(contributes.menus['view/item/context'].filter((e) => !e.group?.startsWith('inline')).map((e) => e.command));
-    assert.deepEqual([...contextMenu].filter((c) => !listed.has(c)), [], 'a context-menu action is offered on the phone or omitted with a reason');
+    assert.deepEqual([...contextMenu].filter((c) => !listed.has(c)), [], 'every context-menu action is in the picker');
     assert.deepEqual([...listed].filter((c) => !contextMenu.has(c)), [], 'the picker offers nothing the context menu does not');
-    assert.deepEqual(rowActionsFor('group'), [], 'a group row has no actions');
-    assert.ok(rowActionsFor('session-claude-pinned-live').includes('agentSessions.unpin') && !rowActionsFor('session-claude-pinned-live').includes('agentSessions.pin'), 'a pinned session offers Unpin, not Pin');
+    assert.deepEqual(rowActionsFor('group', false), [], 'a group row has no actions');
+    assert.ok(rowActionsFor('session-claude-pinned-live', true).includes('agentSessions.unpin') && !rowActionsFor('session-claude-pinned-live', true).includes('agentSessions.pin'), 'a pinned session offers Unpin, not Pin');
+    assert.ok(rowActionsFor('session-claude-live', false).includes('agentSessions.openInTerminal') && !rowActionsFor('session-claude-live', true).includes('agentSessions.openInTerminal'), 'desktop-only actions are offered on the desktop and left out on the phone');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
