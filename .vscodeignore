@@ -2,6 +2,7 @@
 !dist/extension.cjs
 !dist/claude-wrapper.mjs
 !dist/session-host.mjs
+!dist/codex-wrapper.mjs
 !resources/**
 !package.json
 !README.md

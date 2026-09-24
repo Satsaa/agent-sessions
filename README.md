@@ -98,14 +98,18 @@ pnpm package      # agent-sessions-<version>.vsix
 | `agentSessions.claudeHome` | `""` | overrides `$CLAUDE_CONFIG_DIR` / `~/.claude` |
 | `agentSessions.codexHome` | `""` | overrides `$CODEX_HOME` / `~/.codex` |
 | `agentSessions.phoneMode` | `false` | one workbench part at a time, for the window served by `pnpm phone` |
-| `agentSessions.keepSessionsRunning` | `false` | run Claude Code panel sessions under the session host (below); on in the phone window |
+| `agentSessions.keepSessionsRunning` | `false` | keep Claude Code and Codex panel sessions running when their window closes (below); on in the phone window |
 
-## Keeping Claude sessions running
+## Keeping sessions running
 
-A Claude Code panel's process belongs to its window: closing the window, a phone's browser dropping the page, or a
-server restart ends the turn mid-tool. With `agentSessions.keepSessionsRunning` on, the extension points
-`claudeCode.claudeProcessWrapper` at `~/.agent-sessions/bin/claude-wrapper`, and the panel's `claude` runs under a
-session host (`~/.agent-sessions/host`, a systemd user unit where available) instead of under the window.
+A panel's process belongs to its window: closing the window, a phone's browser dropping the page, or a server restart
+ends the turn mid-tool. With `agentSessions.keepSessionsRunning` on, the extension points each installed tool at a
+launcher in `~/.agent-sessions/bin`, so its sessions run outside the window. A window opened before the setting took
+effect keeps its old process until it reloads; in the phone view the setting lives in the browser, so the first page
+load after installing writes it and the next one uses it.
+
+**Claude Code** (`claudeCode.claudeProcessWrapper`) runs the panel's `claude` under a session host
+(`~/.agent-sessions/host`, a systemd user unit where available).
 
 - A turn keeps running with no window attached. The next window to open the session joins the same process and sees
   the rest of the turn; a permission question asked meanwhile is asked again there. Hooks and the panel's own tools
@@ -115,9 +119,18 @@ session host (`~/.agent-sessions/host`, a systemd user unit where available) ins
 - One session, one process. Opening a session another window holds asks **Move Here**; moving it ends it in the other
   window, which says where it went. Without that (the panel's own history list, say) the open is refused with
   "This session is running in …", so the phone and the desktop never run two processes on one conversation.
-- Only Claude Code panel conversations go through the host; `claude auth` and the like run directly, and a wrapper
-  someone else configured is left alone. Codex sessions are not covered.
-- Turning the setting off takes the wrapper setting back; sessions already in the host run to their end.
+- Only panel conversations go through the host; `claude auth` and the like run directly.
+
+**Codex** (`chatgpt.cliExecutable`) connects the panel to Codex's own app-server daemon (`codex app-server daemon`,
+started when it is not running) instead of a private `codex app-server` per window. The daemon already does the rest:
+a turn carries on without a client, every window that opens a thread joins the same running thread, and a thread no
+one is subscribed to unloads after a few minutes. Other commands the extension runs (its LSP bridge) go to its bundled
+`codex`, and so does the panel when the daemon cannot start. **Close** on a thread the daemon holds stops its turn
+over the daemon's protocol rather than the process, which serves every window and the terminal. Commands run in the
+daemon's environment, not the window's; VS Code shows "Using a custom CLI executable" in the Codex composer.
+
+A wrapper someone else configured is left alone and reported. Turning the setting off takes the settings back;
+sessions already running carry on to their end.
 
 ## On a phone
 
@@ -152,8 +165,8 @@ pnpm phone --install-service --host 172.17.0.1 --port 8321   # systemd user unit
   proxy reaches the port. `--install-service` writes a systemd user unit with the same flags and enables lingering.
 - Phone mode moves the extension's views into a secondary side bar container and maximizes it, which is the workbench's
   own full-window layout for chat; opening or revealing a session closes the side bars; Back, or closing the last tab, restores the list. Back leaves the
-  tabs open behind the list, since closing a Codex panel ends that session's process (a Claude one's turn carries on in
-  the session host). The server keeps a closed page's extension host for five minutes, not VS Code's three hours, so
+  tabs open behind the list, since closing a panel ends that session's process unless `agentSessions.keepSessionsRunning`
+  keeps it running. The server keeps a closed page's extension host for five minutes, not VS Code's three hours, so
   a page left open elsewhere does not keep holding its sessions. Layout changes run
   one at a time, and a fresh window starts maximized (`workbench.secondarySideBar.defaultVisibility`), so the screen is
   never split between the list and a session.

@@ -5,32 +5,48 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CLIENT_LABEL_ENV, PROTOCOL, lineReader, socketPath, type HostMessage, type HostRequest, type HostedSession } from './host/protocol.js';
 
-const CLAUDE_SECTION = 'claudeCode';
-const WRAPPER_SETTING = 'claudeProcessWrapper';
 const REQUEST_TIMEOUT_MS = 2000;
 
 /**
- * The executable `claudeCode.claudeProcessWrapper` names. It is a fixed path so the setting survives extension and
- * VS Code updates, rewritten on every activation with this extension's wrapper and this server's Node. If either has
- * since been removed it runs `claude` directly: a stale launcher costs a session its host, never the panel itself.
+ * A tool whose sessions Agent Sessions keeps running: the setting that names the executable its extension starts, and
+ * what the launcher runs when our wrapper or Node has since gone (a stale launcher costs sessions their keep-alive,
+ * never the panel itself).
  */
-export function launcherPath(): string {
-  return path.join(os.homedir(), '.agent-sessions', 'bin', 'claude-wrapper');
+interface KeptTool {
+  extensionId: string;
+  section: string;
+  setting: string;
+  wrapper: string;
+  fallback: string;
 }
 
-function writeLauncher(extensionPath: string): void {
+const KEPT_TOOLS: readonly KeptTool[] = [
+  // Claude Code passes its own binary as the first argument.
+  { extensionId: 'anthropic.claude-code', section: 'claudeCode', setting: 'claudeProcessWrapper', wrapper: 'claude-wrapper', fallback: 'exec "$@"' },
+  { extensionId: 'openai.chatgpt', section: 'chatgpt', setting: 'cliExecutable', wrapper: 'codex-wrapper', fallback: 'exec codex "$@"' },
+];
+
+/**
+ * The executable a tool's setting names. It is a fixed path so the setting survives extension and VS Code updates,
+ * rewritten on every activation with this extension's wrapper and this server's Node.
+ */
+function launcherPath(tool: Pick<KeptTool, 'wrapper'>): string {
+  return path.join(os.homedir(), '.agent-sessions', 'bin', tool.wrapper);
+}
+
+function writeLauncher(tool: KeptTool, extensionPath: string): void {
   const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
   const script = [
     '#!/bin/sh',
-    '# Written by Agent Sessions: runs Claude Code panel sessions under its session host.',
+    '# Written by Agent Sessions: keeps this tool\'s panel sessions running when their window closes.',
     `node=${quote(process.execPath)}`,
-    `wrapper=${quote(path.join(extensionPath, 'dist', 'claude-wrapper.mjs'))}`,
+    `wrapper=${quote(path.join(extensionPath, 'dist', `${tool.wrapper}.mjs`))}`,
     '[ -x "$node" ] || node=$(command -v node)',
     'if [ -n "$node" ] && [ -f "$wrapper" ]; then ELECTRON_RUN_AS_NODE=1 exec "$node" "$wrapper" "$@"; fi',
-    'exec "$@"',
+    tool.fallback,
     '',
   ].join('\n');
-  const file = launcherPath();
+  const file = launcherPath(tool);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, script, { mode: 0o755 });
@@ -38,31 +54,32 @@ function writeLauncher(extensionPath: string): void {
 }
 
 /**
- * Points Claude Code at the launcher while `agentSessions.keepSessionsRunning` is on, and takes it back when it goes
- * off. A wrapper someone else configured is left alone and reported.
+ * Points each installed tool at its launcher while `agentSessions.keepSessionsRunning` is on, and takes it back when
+ * it goes off. An executable someone else configured is left alone and reported.
  */
 export async function applyKeepSessionsRunning(enabled: boolean, extensionPath: string, output: vscode.OutputChannel): Promise<void> {
-  const claude = vscode.workspace.getConfiguration(CLAUDE_SECTION);
-  const current = claude.get<string>(WRAPPER_SETTING) || undefined;
-  const ours = launcherPath();
-  if (!enabled) {
-    if (current === ours) await claude.update(WRAPPER_SETTING, undefined, vscode.ConfigurationTarget.Global);
-    return;
+  // The panels start their wrappers from this extension host, so they inherit the name; a server that knows better
+  // (the phone view) sets it in the environment first.
+  if (enabled) process.env[CLIENT_LABEL_ENV] ||= vscode.env.uiKind === vscode.UIKind.Web ? 'a VS Code browser tab' : 'the desktop VS Code';
+  for (const tool of KEPT_TOOLS) {
+    const config = vscode.workspace.getConfiguration(tool.section);
+    const current = config.get<string | null>(tool.setting) || undefined;
+    const ours = launcherPath(tool);
+    const name = `${tool.section}.${tool.setting}`;
+    if (!enabled || !vscode.extensions.getExtension(tool.extensionId)) {
+      if (current === ours) await config.update(tool.setting, undefined, vscode.ConfigurationTarget.Global);
+      continue;
+    }
+    writeLauncher(tool, extensionPath);
+    if (current === ours) continue;
+    if (current) {
+      output.appendLine(`keepSessionsRunning: ${name} is already ${current}; leaving it`);
+      void vscode.window.showWarningMessage(`Agent Sessions cannot keep these sessions running: ${name} is already ${current}.`);
+      continue;
+    }
+    await config.update(tool.setting, ours, vscode.ConfigurationTarget.Global);
+    output.appendLine(`keepSessionsRunning: ${name} now starts sessions through ${ours}; reload windows opened before this`);
   }
-  writeLauncher(extensionPath);
-  // The Claude panel starts the wrapper from this extension host, so it inherits the name; a server that knows
-  // better (the phone view) sets it in the environment first.
-  process.env[CLIENT_LABEL_ENV] ||= vscode.env.uiKind === vscode.UIKind.Web ? 'a VS Code browser tab' : 'the desktop VS Code';
-  if (current === ours) return;
-  if (current) {
-    output.appendLine(`keepSessionsRunning: claudeCode.claudeProcessWrapper is already ${current}; leaving it`);
-    void vscode.window.showWarningMessage(
-      `Agent Sessions cannot keep Claude sessions running: Claude Code already runs through ${current}.`,
-    );
-    return;
-  }
-  await claude.update(WRAPPER_SETTING, ours, vscode.ConfigurationTarget.Global);
-  output.appendLine(`keepSessionsRunning: Claude Code now starts sessions through ${ours}`);
 }
 
 function ask(request: HostRequest): Promise<HostMessage | undefined> {

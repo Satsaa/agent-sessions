@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -713,7 +713,7 @@
           "type": "boolean",
           "default": false,
           "scope": "machine",
-          "markdownDescription": "Run Claude Code panel sessions under the Agent Sessions session host, so a turn keeps running when its window closes, the phone sleeps or the VS Code server restarts, and a session is never open in two windows at once. Sets `claudeCode.claudeProcessWrapper`; turn it on in every window that opens Claude sessions, the phone server included."
+          "markdownDescription": "Keep panel sessions running when their window closes, the phone sleeps or the VS Code server restarts. Claude Code sessions run under the Agent Sessions session host, which also keeps a session to one window at a time (sets `claudeCode.claudeProcessWrapper`); Codex sessions run in Codex's own app-server daemon, which every window shares (sets `chatgpt.cliExecutable`). Turn it on in every server that opens sessions, the phone server included, and reload windows opened before."
         },
         "agentSessions.usage.enabled": {
           "type": "boolean",
@@ -769,12 +769,14 @@
     "@types/node": "^24.13.5",
     "@types/proper-lockfile": "^4.1.4",
     "@types/vscode": "1.105.0",
+    "@types/ws": "^8.18.1",
     "@vscode/vsce": "4.0.0",
     "esbuild": "0.28.2",
     "typescript": "^7.0.2"
   },
   "packageManager": "pnpm@11.18.0",
   "dependencies": {
-    "proper-lockfile": "^4.1.2"
+    "proper-lockfile": "^4.1.2",
+    "ws": "8.21.2"
   }
 }
