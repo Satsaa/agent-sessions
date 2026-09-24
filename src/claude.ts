@@ -233,7 +233,7 @@ function workingWorktree(summary: TranscriptSummary): Worktree | undefined {
   return worktreeFromCwd(summary.workDir, summary.workDir === summary.lastCwd ? summary.branch : undefined);
 }
 
-function stateFor(live: LiveInfo | undefined, lastRole: TranscriptSummary['lastRole']): SessionState {
+function stateFor(live: LiveInfo | undefined, last: Pick<TranscriptSummary, 'lastRole' | 'lastInterrupted'> | undefined): SessionState {
   if (!live) return 'stopped';
   switch (live.status) {
     case 'busy':
@@ -242,7 +242,8 @@ function stateFor(live: LiveInfo | undefined, lastRole: TranscriptSummary['lastR
     case 'waiting':
       return 'waiting';
     case 'idle':
-      return lastRole === 'user' ? 'running' : 'replied';
+      // A prompt not yet picked up is still running; an interruption is the turn ending.
+      return last?.lastRole === 'user' && !last.lastInterrupted ? 'running' : 'replied';
     default:
       return 'replied';
   }
@@ -336,7 +337,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
         worktree: workingWorktree(summary) ?? (summary.workDir ? undefined : worktreeFromCwd(cwd, undefined)),
         updatedAt: summary.lastAt ?? st.mtimeMs,
         startedAt: summary.firstAt ?? st.birthtimeMs,
-        state: stateFor(liveInfo, summary.lastRole),
+        state: stateFor(liveInfo, summary),
         archived: false,
         subagent: false,
         parentId: undefined,
