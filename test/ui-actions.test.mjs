@@ -47,12 +47,12 @@ test('429 preserves status-bar counts, severity, tooltip counts and sidebar plan
   const limited = { ...good, error: 'Usage endpoint answered 429; retry later' };
   assert.equal(usageStatusText([limited]), usageStatusText([good]));
   assert.equal(usageStatusColor([limited]).id, usageStatusColor([good]).id);
-  assert.match(usageStatusTooltip([limited]).value, /5% left/);
+  assert.match(usageStatusTooltip([limited]).value, /95% used/);
   const provider = new UsageProvider(Uri.file('/extension'));
   const view = { description: '', webview: { cspSource: 'test', postMessage: async () => {}, asWebviewUri: uri => uri, onDidReceiveMessage() {} }, onDidDispose() {}, onDidChangeVisibility() {} };
   provider.set([limited]);
   provider.resolveWebviewView(view);
-  assert.match(view.webview.html, /aria-valuenow="5"/);
+  assert.match(view.webview.html, /aria-valuenow="95"/, 'the bar fills with usage: 95% used, not 5% left');
   assert.match(view.webview.html, /<span class="plan">Max 20x<\/span>/);
   assert.doesNotMatch(view.webview.html, /<li class="message">/);
 });

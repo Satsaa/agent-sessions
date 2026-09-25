@@ -18,7 +18,8 @@ function windowHtml(w: UsageWindow): string {
     w.detail,
     w.severity && w.severity !== 'normal' ? `Severity: ${w.severity}` : '',
   ].filter(Boolean).join('\n');
-  const value = w.detail ? escapeHtml(w.detail) : `<span class="bar ${usageTone(w)}" role="meter" aria-label="${escapeHtml(w.label)} remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${left}">${progressBar(left)}</span> <span>${left}%</span>`;
+  const spent = used(w);
+  const value = w.detail ? escapeHtml(w.detail) : `<span class="bar ${usageTone(w)}" role="meter" aria-label="${escapeHtml(w.label)} used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${spent}">${progressBar(spent)}</span> <span>${spent}%</span>`;
   return `<li title="${escapeHtml(title)}"><span class="window-label">${escapeHtml(w.label)}</span><span class="value">${value}${escapeHtml(reset)}</span></li>`;
 }
 
@@ -130,9 +131,14 @@ export function isUsageStale(usage: ToolUsage): boolean {
   return usage.windows.length > 0 && Date.now() - usage.asOf > 10 * 60 * 1000;
 }
 
-/** Windows count down: 100% is a fresh window, 0% is exhausted. */
+/** Percent of a window left: 100% is a fresh window, 0% is exhausted. */
 export function remaining(w: UsageWindow): number {
   return Math.max(0, Math.min(100, 100 - w.percent));
+}
+
+/** Percent of a window used, which the bars fill with: empty is a fresh window, full is exhausted. */
+function used(w: UsageWindow): number {
+  return 100 - remaining(w);
 }
 
 function progressBar(percent: number, cells = 10): string {
@@ -186,7 +192,7 @@ export function usageStatusTooltip(usages: ToolUsage[]): vscode.MarkdownString {
       md.appendMarkdown(`${u.error}\n\n`);
     }
     for (const w of u.windows) {
-      md.appendMarkdown(`${progressBar(remaining(w))} ${remaining(w)}% left · ${w.label}${w.resetsAt ? ` · resets ${resetText(w.resetsAt)}` : ''}\n\n`);
+      md.appendMarkdown(`${progressBar(used(w))} ${used(w)}% used · ${w.label}${w.resetsAt ? ` · resets ${resetText(w.resetsAt)}` : ''}\n\n`);
     }
     if (u.windows.length) md.appendMarkdown(`${isUsageStale(u) ? '$(warning) Usage is more than 10 minutes old. ' : ''}_as of ${relativeTime(u.asOf)} (${new Date(u.asOf).toLocaleString()})_\n\n`);
   }
