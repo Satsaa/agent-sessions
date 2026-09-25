@@ -147,8 +147,21 @@ export function repoRootOf(dir: string | undefined): string | undefined {
 }
 
 /** The linked worktree a path lies in: its top directory (the one holding the `.git` file), or undefined for a main checkout. */
+const worktreeTopCache = new Map<string, string | undefined>();
+
+/**
+ * Cached like repoRootOf: every refresh asks it for every session, and each answer is a climb of synchronous stats.
+ * Only for a folder that exists, since a worktree may yet be created where a session is headed.
+ */
 export function worktreeTopOf(cwd: string | undefined): string | undefined {
   if (!cwd) return undefined;
+  if (worktreeTopCache.has(cwd)) return worktreeTopCache.get(cwd);
+  const top = findWorktreeTop(cwd);
+  if (fs.existsSync(cwd)) worktreeTopCache.set(cwd, top);
+  return top;
+}
+
+function findWorktreeTop(cwd: string): string | undefined {
   const root = repoRootOf(cwd);
   if (!root || path.resolve(root) === path.resolve(cwd)) return undefined;
   let cur = path.resolve(cwd);

@@ -2,7 +2,7 @@ import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Session, SessionState } from './types.js';
-import type { Worktree } from './types.js';
+import type { WatchSpec, Worktree } from './types.js';
 import { cleanTitle, expandHome, listDir, processAlive, readJsonFile, statOrUndefined } from './util.js';
 import { FileCache } from './file-cache.js';
 import { type Scan, scanAppended } from './appended.js';
@@ -278,6 +278,11 @@ function subagentState(parentLive: LiveInfo | undefined, summary: TranscriptSumm
  */
 async function listSubagents(parent: Session, parentLive: LiveInfo | undefined): Promise<Session[]> {
   const dir = path.join(path.dirname(parent.transcriptPath), parent.id, 'subagents');
+  // Subagents run only while their session does, so a stopped session's list holds until a file is added or removed.
+  const dirMtime = parentLive ? undefined : (await statOrUndefined(dir))?.mtimeMs;
+  const key = dirMtime === undefined ? undefined : `${dirMtime}:${parent.updatedAt}`;
+  const known = stoppedSubagents.get(parent.transcriptPath);
+  if (key !== undefined && known?.key === key) return known.sessions;
   const out: Session[] = [];
   for (const e of await listDir(dir)) {
     if (!e.isFile() || !e.name.startsWith('agent-') || !e.name.endsWith('.jsonl')) continue;
@@ -310,8 +315,12 @@ async function listSubagents(parent: Session, parentLive: LiveInfo | undefined):
       permissionMode: summary.permissionMode,
     });
   }
+  if (key !== undefined) stoppedSubagents.set(parent.transcriptPath, { key, sessions: out });
+  else stoppedSubagents.delete(parent.transcriptPath);
   return out;
 }
+
+const stoppedSubagents = new Map<string, { key: string; sessions: Session[] }>();
 
 export async function listClaudeSessions(home: string): Promise<Session[]> {
   const projectsDir = path.join(home, 'projects');
@@ -323,7 +332,10 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
   for (const project of await listDir(projectsDir)) {
     if (!project.isDirectory()) continue;
     const dir = path.join(projectsDir, project.name);
-    for (const e of await listDir(dir)) {
+    const entries = await listDir(dir);
+    // A session's title sidecar and subagents live in a folder named after it, which most sessions never get.
+    const sessionDirs = new Set(entries.filter((e) => e.isDirectory()).map((e) => e.name));
+    for (const e of entries) {
       if (!e.isFile() || !e.name.endsWith('.jsonl')) continue;
       const id = e.name.slice(0, -'.jsonl'.length);
       const file = path.join(dir, e.name);
@@ -331,7 +343,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
       if (!st) continue;
       const summary = await summarizeTranscript(file, st.mtimeMs, st.size);
       // Claude Code keeps a renamed title beside the transcript too (`<id>/custom-title.json`) and reads that first.
-      const sidecar = await readJsonFile<{ customTitle?: string }>(customTitleFile(file, id));
+      const sidecar = sessionDirs.has(id) ? await readJsonFile<{ customTitle?: string }>(customTitleFile(file, id)) : undefined;
       const customTitle = typeof sidecar?.customTitle === 'string' && sidecar.customTitle.trim() ? sidecar.customTitle.trim() : undefined;
       const liveInfo = live.get(id);
       const cwd = summary.cwd ?? liveInfo?.cwd;
@@ -357,7 +369,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
         permissionMode: summary.permissionMode,
       };
       sessions.push(parent);
-      sessions.push(...(await listSubagents(parent, liveInfo)));
+      if (sessionDirs.has(id)) sessions.push(...(await listSubagents(parent, liveInfo)));
     }
   }
 
@@ -390,8 +402,13 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
 }
 
 /** Directories whose change should trigger a refresh. */
-export function claudeWatchPaths(home: string): string[] {
-  return [path.join(home, 'sessions'), path.join(home, 'projects')];
+export function claudeWatchPaths(home: string): WatchSpec[] {
+  return [
+    // `<pid>.json` says what a live session is doing; the key files beside it change without meaning anything here.
+    { path: path.join(home, 'sessions'), recursive: false, accept: (name) => name.endsWith('.json') },
+    // Transcripts, subagent transcripts, their meta files and title sidecars; not tool results or file backups.
+    { path: path.join(home, 'projects'), recursive: true, accept: (name) => name.endsWith('.jsonl') || name.endsWith('.json') },
+  ];
 }
 
 export async function claudeAvailable(home: string): Promise<boolean> {

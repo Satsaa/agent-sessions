@@ -61,3 +61,10 @@ export function isLive(state: SessionState): boolean {
 export function toolLabel(tool: Tool): string {
   return tool === 'claude' ? 'Claude' : 'Codex';
 }
+
+/** A folder whose changes may change a session list; `accept` sees a changed file's name and says whether it can. */
+export interface WatchSpec {
+  path: string;
+  recursive: boolean;
+  accept?: (name: string) => boolean;
+}

@@ -60,12 +60,48 @@ export interface WorktreeStats {
   asOf: number;
 }
 
-const TTL_MS = 10_000;
-const statsCache = new Map<string, WorktreeStats>();
+/** How long stats hold for a worktree a live session works in: its agent may be editing files right now. */
+const LIVE_TTL_MS = 10_000;
+/**
+ * Elsewhere stats are recomputed when the worktree's git metadata changes (a commit, checkout, add, fetch), and at
+ * least this often, for edits made outside any session that git has not seen yet.
+ */
+const IDLE_TTL_MS = 5 * 60_000;
+const statsCache = new Map<string, WorktreeStats & { signature: string }>();
 
+/** The worktree's own git directory and the repository's common one. */
+async function gitDirs(worktreePath: string): Promise<{ own: string; common: string } | undefined> {
+  const dotGit = path.join(worktreePath, '.git');
+  const st = await statOrUndefined(dotGit);
+  if (!st) return undefined;
+  if (st.isDirectory()) return { own: dotGit, common: dotGit };
+  try {
+    const own = path.resolve(worktreePath, /^gitdir:\s*(.+)$/m.exec(await fsp.readFile(dotGit, 'utf8'))?.[1]?.trim() ?? '');
+    const common = await fsp.readFile(path.join(own, 'commondir'), 'utf8').then((c) => path.resolve(own, c.trim()), () => own);
+    return { own, common };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The files git rewrites when this worktree's state moves: its index and HEAD (both replaced by renaming a lock file
+ * into place), its HEAD log (appended on every commit, checkout and reset), and the repository's fetched refs. Not the
+ * git directories themselves: every worktree shares the common one, so any git command anywhere in the repository
+ * would count as a change to all of them.
+ */
+async function metadataSignature(worktreePath: string): Promise<string> {
+  const dirs = await gitDirs(worktreePath);
+  if (!dirs) return '';
+  const files = [path.join(dirs.own, 'index'), path.join(dirs.own, 'HEAD'), path.join(dirs.own, 'logs', 'HEAD'), path.join(dirs.common, 'packed-refs'), path.join(dirs.common, 'FETCH_HEAD')];
+  return (await Promise.all(files.map(async (f) => (await statOrUndefined(f))?.mtimeMs ?? 0))).join(',');
+}
+
+// Read-only: `status` would otherwise rewrite the index to refresh its stat cache, taking `index.lock` from under an
+// agent's own git command and moving the metadata the stats are keyed on.
 function git(cwd: string, args: string[]): Promise<string | undefined> {
   return new Promise((resolve) => {
-    execFile('git', ['-C', cwd, ...args], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+    execFile('git', ['--no-optional-locks', '-C', cwd, ...args], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
       resolve(err ? undefined : stdout);
     });
   });
@@ -213,18 +249,27 @@ async function computeStats(wt: Worktree, isMain: boolean): Promise<WorktreeStat
 }
 
 /**
- * Refresh git stats for the given worktrees (deduplicated by path). Results are cached briefly, since the
- * same worktree appears on several sessions and refreshes come every few seconds.
+ * Git stats for the given worktrees (deduplicated by path), recomputed only when they may have changed: every
+ * `LIVE_TTL_MS` for the paths in `live`, otherwise when git's metadata moves or after `IDLE_TTL_MS`.
  */
-export async function loadWorktreeStats(worktrees: Iterable<Worktree>, mainCheckouts: ReadonlySet<string> = new Set(), force = false): Promise<Map<string, WorktreeStats>> {
+export async function loadWorktreeStats(
+  worktrees: Iterable<Worktree>,
+  mainCheckouts: ReadonlySet<string> = new Set(),
+  live: ReadonlySet<string> = new Set(),
+  force = false,
+): Promise<Map<string, WorktreeStats>> {
   const distinct = new Map<string, Worktree>();
   for (const wt of worktrees) distinct.set(wt.path, wt);
   const now = Date.now();
   await Promise.all(
     [...distinct.values()].map(async (wt) => {
       const cached = statsCache.get(wt.path);
-      if (!force && cached && now - cached.asOf < TTL_MS) return;
-      statsCache.set(wt.path, await computeStats(wt, mainCheckouts.has(wt.path)));
+      const age = cached ? now - cached.asOf : Infinity;
+      if (!force && cached && age < LIVE_TTL_MS) return;
+      // Taken before the stats, so a change made while they are computed is caught next time.
+      const signature = await metadataSignature(wt.path);
+      if (!force && cached && !live.has(wt.path) && age < IDLE_TTL_MS && cached.signature === signature) return;
+      statsCache.set(wt.path, { ...(await computeStats(wt, mainCheckouts.has(wt.path))), signature });
     }),
   );
   const out = new Map<string, WorktreeStats>();

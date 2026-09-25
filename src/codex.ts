@@ -9,7 +9,7 @@ import { FileCache } from './file-cache.js';
 import { type Scan, scanAppended } from './appended.js';
 import { commandDirs, inRepository, worktreeFromCwd } from './worktree.js';
 import { holdersOfFilesIn } from './window.js';
-import type { Worktree } from './types.js';
+import type { WatchSpec, Worktree } from './types.js';
 
 export function codexHome(configured: string): string {
   if (configured) return expandHome(configured);
@@ -266,18 +266,21 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
     return undefined;
   }
 
-  const historyFile = await newestDb(home, 'thread_history');
+  // Only a locked thread's last turn says anything: an unlocked one is stopped whatever its turns say.
+  const historyFile = locks.size ? await newestDb(home, 'thread_history') : undefined;
   if (historyFile) {
     try {
       const db = new mod.DatabaseSync(historyFile, { readOnly: true });
       try {
+        const ids = [...locks.keys()];
         const turns = db
           .prepare(
             `SELECT t.thread_id AS thread_id, t.status AS status
              FROM thread_turns t
-             WHERE t.rollout_ordinal = (SELECT MAX(rollout_ordinal) FROM thread_turns u WHERE u.thread_id = t.thread_id)`,
+             WHERE t.thread_id IN (${ids.map(() => '?').join(', ')})
+               AND t.rollout_ordinal = (SELECT MAX(rollout_ordinal) FROM thread_turns u WHERE u.thread_id = t.thread_id)`,
           )
-          .all() as { thread_id: string; status: string }[];
+          .all(...ids) as { thread_id: string; status: string }[];
         for (const t of turns) lastTurn.set(t.thread_id, t.status);
       } finally {
         db.close();
@@ -288,19 +291,20 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
   }
 
   const sessions: Session[] = [];
+  const now = Date.now();
   for (const r of rows) {
-    const st = await statOrUndefined(r.rollout_path);
     // Codex's own clock for the thread; the rollout's mtime also moves on maintenance rewrites.
-    const updatedAt = r.updated_at_ms ?? (r.updated_at ? r.updated_at * 1000 : undefined) ?? st?.mtimeMs ?? 0;
+    const recorded = r.updated_at_ms ?? (r.updated_at ? r.updated_at * 1000 : undefined);
     const locked = locks.has(r.id);
-    const worktree = st ? await worktreeForThread(r.cwd || undefined, r.git_branch ?? undefined, r.rollout_path, locked, st.mtimeMs, st.size) : undefined;
-    const prompt = r.first_user_message ? cleanTitle(r.first_user_message) : '';
-    const title = names.get(r.id) ?? (r.title ? cleanTitle(r.title) : '') ?? prompt;
-    const spawn = spawnOf(r.source, r.agent_path);
+    // The rollout is looked at only where it can tell something: where a live or recent thread works, or the time.
+    const st = locked || recorded === undefined || now - recorded <= STREAM_SCAN_AGE_MS ? await statOrUndefined(r.rollout_path) : undefined;
+    const updatedAt = recorded ?? st?.mtimeMs ?? 0;
+    const worktree = st ? await worktreeForThread(r.cwd || undefined, r.git_branch ?? undefined, r.rollout_path, locked, st.mtimeMs, st.size) : worktreeFromCwd(r.cwd || undefined, r.git_branch ?? undefined);
+    const { title, spawn } = rowText(r, names.get(r.id));
     sessions.push({
       tool: 'codex',
       id: r.id,
-      title: title || spawn.label || prompt || (isSubagentSource(r.source) ? '(subagent)' : '(no prompt yet)'),
+      title,
       cwd: r.cwd || undefined,
       branch: r.git_branch ?? undefined,
       worktree,
@@ -319,6 +323,21 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
     });
   }
   return sessions;
+}
+
+/** A row's title and spawn, worked out again only when the row or its name changes: a first message can be long. */
+const rowTexts = new Map<string, { key: string; text: { title: string; spawn: ReturnType<typeof spawnOf>; prompt: string } }>();
+
+function rowText(r: ThreadRow, name: string | undefined) {
+  const key = JSON.stringify([r.updated_at_ms, r.updated_at, r.title, r.first_user_message?.length, r.source, r.agent_path, name]);
+  const known = rowTexts.get(r.id);
+  if (known?.key === key) return known.text;
+  const prompt = r.first_user_message ? cleanTitle(r.first_user_message) : '';
+  const spawn = spawnOf(r.source, r.agent_path);
+  const title = (name ?? (r.title ? cleanTitle(r.title) : '') ?? prompt) || spawn.label || prompt || (isSubagentSource(r.source) ? '(subagent)' : '(no prompt yet)');
+  const text = { title, spawn, prompt };
+  rowTexts.set(r.id, { key, text });
+  return text;
 }
 
 // ---- Fallback: read the rollout files directly ----
@@ -441,6 +460,13 @@ export async function listCodexSessions(home: string): Promise<Session[]> {
   return (await listFromSqlite(home, names, locks)) ?? (await listFromRollouts(home, names, locks));
 }
 
-export function codexWatchPaths(home: string): string[] {
-  return [home, path.join(home, 'sessions'), path.join(home, 'archived_sessions'), path.join(home, 'thread-writer-locks')];
+export function codexWatchPaths(home: string): WatchSpec[] {
+  return [
+    // Only what the list reads from the top folder: Codex's log and history databases there change several times a
+    // second while nothing happens to any thread, and everything below it (packages, logs, caches) is gigabytes.
+    { path: home, recursive: false, accept: (name) => name === 'session_index.jsonl' || /^state_\d+\.sqlite(-wal)?$/.test(name) },
+    { path: path.join(home, 'sessions'), recursive: true },
+    { path: path.join(home, 'archived_sessions'), recursive: true },
+    { path: path.join(home, 'thread-writer-locks'), recursive: false },
+  ];
 }

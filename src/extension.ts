@@ -147,6 +147,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const worktreesProvider = new WorktreesProvider();
   const worktreesView = vscode.window.createTreeView('agentSessions.worktrees', { treeDataProvider: worktreesProvider, showCollapseAll: true });
   context.subscriptions.push(output, view, statusBar, usageView, usageBar, worktreesView);
+  // Its rows get git stats only while it shows (see refresh).
+  context.subscriptions.push(worktreesView.onDidChangeVisibility((e) => e.visible && void refresh([])));
 
   // The row of the chat in the active editor tab is kept selected, the way the Explorer follows the active file.
   let latestSessions: Session[] = [];
@@ -294,7 +296,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   let refreshing: Promise<void> | undefined;
   let pending = false;
-  const refresh = (): Promise<void> => {
+  // Each tool's list is read again only when something of that tool may have changed; the other's is reused.
+  const lists: Record<Tool, Session[]> = { claude: [], codex: [] };
+  const stale = new Set<Tool>();
+  // Set by the Refresh button: git stats are recomputed even where nothing says they changed.
+  let forceStats = false;
+  const listTool = (tool: Tool): Promise<Session[]> =>
+    (tool === 'claude' ? listClaudeSessions(config.claudeHome) : listCodexSessions(config.codexHome)).catch((e) => fail(tool, e));
+  /** Reads the lists of `tools` again (every tool unless told) and redraws; a call during a refresh joins the next one. */
+  const refresh = (tools: readonly Tool[] = config.tools): Promise<void> => {
+    for (const t of tools) stale.add(t);
     if (refreshing) {
       pending = true;
       return refreshing;
@@ -302,11 +313,10 @@ export function activate(context: vscode.ExtensionContext): void {
     refreshing = (async () => {
       try {
         await marksReady;
-        const lists = await Promise.all([
-          config.tools.includes('claude') ? listClaudeSessions(config.claudeHome).catch((e) => fail('claude', e)) : [],
-          config.tools.includes('codex') ? listCodexSessions(config.codexHome).catch((e) => fail('codex', e)) : [],
-        ]);
-        const sessions: Session[] = lists.flat();
+        const reading = config.tools.filter((t) => stale.has(t));
+        stale.clear();
+        await Promise.all(reading.map(async (t) => (lists[t] = await listTool(t))));
+        const sessions: Session[] = config.tools.flatMap((t) => lists[t]);
         latestSessions = sessions;
         scanned();
         void finishPendingOpen(sessions);
@@ -317,7 +327,11 @@ export function activate(context: vscode.ExtensionContext): void {
         // Git is a second pass so the list itself never waits on it.
         const worktrees = await collectWorktrees(sessions);
         const mains = new Set(worktrees.filter((w) => w.isMain).map((w) => w.path));
-        const stats = await loadWorktreeStats([...sessionWorktrees(provider.visible()), ...worktrees], mains);
+        // The Worktrees view's rows need stats only while it shows; it refreshes as it opens.
+        const live = new Set(sessions.filter((x) => isLive(x.state)).flatMap((x) => (x.worktree ? [x.worktree.path] : x.cwd ? [repoRootOf(x.cwd) ?? x.cwd] : [])));
+        const force = forceStats;
+        forceStats = false;
+        const stats = await loadWorktreeStats([...sessionWorktrees(provider.visible()), ...(worktreesView.visible ? worktrees : [])], mains, live, force);
         provider.setWorktreeStats(stats);
         worktreesProvider.set(worktrees, stats, sessions, archived, pinned, config.view.showSubagents);
         const linked = worktrees.filter((w) => !w.isMain).length;
@@ -326,7 +340,7 @@ export function activate(context: vscode.ExtensionContext): void {
         refreshing = undefined;
         if (pending) {
           pending = false;
-          void refresh();
+          void refresh([]);
         }
       }
     })();
@@ -374,39 +388,64 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // A live session's process can die without touching any file, so poll while one exists.
   let pollTimer: NodeJS.Timeout | undefined;
+  // Only a tool with a live session can change unseen; the slow poll rereads everything, in case a change was missed.
   const schedulePoll = (anyLive: boolean) => {
     if (pollTimer) clearTimeout(pollTimer);
-    pollTimer = setTimeout(() => void refresh(), (anyLive ? config.pollInterval : config.pollInterval * 12) * 1000);
+    pollTimer = setTimeout(
+      () => void refresh(anyLive ? config.tools.filter((t) => lists[t].some((x) => isLive(x.state))) : config.tools),
+      (anyLive ? config.pollInterval : config.pollInterval * 12) * 1000,
+    );
   };
   context.subscriptions.push({ dispose: () => pollTimer && clearTimeout(pollTimer) });
 
-  // File watchers, debounced: transcripts are appended constantly while an agent works.
+  // File watchers, debounced: transcripts are appended constantly while an agent works. A steady stream of changes
+  // would put a plain debounce off for as long as it lasts, so a refresh waits at most WATCH_MAX_WAIT_MS.
+  const WATCH_QUIET_MS = 400;
+  const WATCH_MAX_WAIT_MS = 2000;
   let debounce: NodeJS.Timeout | undefined;
-  const kick = () => {
+  let firstChange: number | undefined;
+  const changed = new Set<Tool>();
+  const kick = (tool: Tool) => {
+    changed.add(tool);
+    const now = Date.now();
+    firstChange ??= now;
     if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(() => void refresh(), 400);
+    debounce = setTimeout(() => {
+      firstChange = undefined;
+      const tools = [...changed];
+      changed.clear();
+      void refresh(tools);
+    }, Math.max(0, Math.min(WATCH_QUIET_MS, firstChange + WATCH_MAX_WAIT_MS - now)));
   };
   let watchers: fs.FSWatcher[] = [];
   const rewatch = () => {
     for (const w of watchers) w.close();
     watchers = [];
-    const paths = [
-      ...(config.tools.includes('claude') ? claudeWatchPaths(config.claudeHome) : []),
-      ...(config.tools.includes('codex') ? codexWatchPaths(config.codexHome) : []),
+    const specs = [
+      ...(config.tools.includes('claude') ? claudeWatchPaths(config.claudeHome).map((spec) => ({ tool: 'claude' as const, spec })) : []),
+      ...(config.tools.includes('codex') ? codexWatchPaths(config.codexHome).map((spec) => ({ tool: 'codex' as const, spec })) : []),
     ];
-    for (const p of paths) {
+    for (const { tool, spec } of specs) {
       try {
-        if (!fs.existsSync(p)) continue;
-        const w = fs.watch(p, { recursive: true, persistent: false }, kick);
+        if (!fs.existsSync(spec.path)) continue;
+        const w = fs.watch(spec.path, { recursive: spec.recursive, persistent: false }, (_event, name) => {
+          // No name means the platform could not say which file changed.
+          if (!spec.accept || !name || spec.accept(path.basename(String(name)))) kick(tool);
+        });
         w.on('error', () => undefined);
         watchers.push(w);
       } catch (e) {
-        output.appendLine(`watch ${p}: ${String(e)}`);
+        output.appendLine(`watch ${spec.path}: ${String(e)}`);
       }
     }
   };
   rewatch();
-  context.subscriptions.push({ dispose: () => watchers.forEach((w) => w.close()) });
+  context.subscriptions.push({
+    dispose: () => {
+      watchers.forEach((w) => w.close());
+      if (debounce) clearTimeout(debounce);
+    },
+  });
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -438,7 +477,8 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(watchMarks(marksPath, (m) => {
     takeMarks(m);
     provider.setOptions(options());
-    void refresh();
+    // Marks change what is shown, not what the sessions are: a redraw, no rereading.
+    void refresh([]);
   }));
 
   context.subscriptions.push(
@@ -485,7 +525,10 @@ export function activate(context: vscode.ExtensionContext): void {
       t.show();
       t.sendText('codex', true);
     }),
-    vscode.commands.registerCommand('agentSessions.refresh', () => refresh()),
+    vscode.commands.registerCommand('agentSessions.refresh', () => {
+      forceStats = true;
+      return refresh();
+    }),
     vscode.commands.registerCommand('agentSessions.refreshUsage', () => refreshUsage()),
     vscode.commands.registerCommand('agentSessions.switchCodexAccount', async () => {
       try {

@@ -61,42 +61,49 @@ export async function windowKeyOfPid(pid: number): Promise<string | undefined> {
   return key;
 }
 
+/** A file's device and inode as `/proc/locks` writes them: `<major hex>:<minor hex>:<inode>`. */
+function lockKey(dev: bigint, ino: bigint): string {
+  const major = ((dev >> 8n) & 0xfffn) | ((dev >> 32n) & ~0xfffn);
+  const minor = (dev & 0xffn) | ((dev >> 12n) & ~0xffn);
+  return `${major.toString(16).padStart(2, '0')}:${minor.toString(16).padStart(2, '0')}:${ino}`;
+}
+
 /**
- * Pids of the named executable holding a writer flock under `dir`, keyed by basename.
- * An open descriptor alone is not ownership (see codex-close.test.mjs).
+ * Pids of the named executable holding a writer flock under `dir`, keyed by basename. An open descriptor alone is
+ * not ownership (see codex-close.test.mjs). The kernel lists every held lock with its holder in `/proc/locks`, so this
+ * reads one file instead of every process's descriptors.
  */
 export async function holdersOfFilesIn(dir: string, needle: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
-  const prefix = path.resolve(dir) + path.sep;
-  let pids: string[];
+  const locks = await read('/proc/locks');
+  if (!locks) return out;
+  const writers = new Map<string, number>();
+  // A waiter's line reads `N: -> FLOCK …`, so only granted locks match.
+  for (const m of locks.matchAll(/^\d+:\s+FLOCK\s+ADVISORY\s+WRITE\s+(\d+)\s+([0-9a-f]+:[0-9a-f]+:\d+)\s/gm)) writers.set(m[2]!, Number(m[1]));
+  if (!writers.size) return out;
+  let names: string[];
   try {
-    pids = (await fsp.readdir('/proc')).filter((n) => /^\d+$/.test(n));
+    names = await fsp.readdir(dir);
   } catch {
     return out;
   }
+  const exeMatches = new Map<number, Promise<boolean>>();
+  const isNeedle = (pid: number) => {
+    let known = exeMatches.get(pid);
+    if (!known) {
+      known = fsp.readlink(`/proc/${pid}/exe`).then((exe) => path.basename(exe).replace(/ \(deleted\)$/, '') === needle, () => false);
+      exeMatches.set(pid, known);
+    }
+    return known;
+  };
   await Promise.all(
-    pids.map(async (p) => {
+    names.map(async (name) => {
       try {
-        const executable = await fsp.readlink(`/proc/${p}/exe`);
-        if (path.basename(executable).replace(/ \(deleted\)$/, '') !== needle) return;
+        const st = await fsp.stat(path.join(dir, name), { bigint: true });
+        const pid = writers.get(lockKey(st.dev, st.ino));
+        if (pid !== undefined && (await isNeedle(pid))) out.set(name, pid);
       } catch {
-        return;
-      }
-      let fds: string[];
-      try {
-        fds = await fsp.readdir(`/proc/${p}/fd`);
-      } catch {
-        return;
-      }
-      for (const fd of fds) {
-        try {
-          const target = await fsp.readlink(`/proc/${p}/fd/${fd}`);
-          if (!target.startsWith(prefix) || path.dirname(target) !== path.resolve(dir)) continue;
-          const info = await read(`/proc/${p}/fdinfo/${fd}`);
-          if (info && /^lock:\s+\d+: FLOCK\s+ADVISORY\s+WRITE\s/m.test(info)) out.set(path.basename(target), Number(p));
-        } catch {
-          // fd closed meanwhile
-        }
+        // removed meanwhile
       }
     }),
   );
