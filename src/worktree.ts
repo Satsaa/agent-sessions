@@ -1,6 +1,6 @@
-import { execFile } from 'node:child_process';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
+import { run } from './runner.js';
 import type { Session, Worktree } from './types.js';
 import { expandHome, repoRootOf, statOrUndefined, worktreeTopOf } from './util.js';
 
@@ -100,11 +100,7 @@ async function metadataSignature(worktreePath: string): Promise<string> {
 // Read-only: `status` would otherwise rewrite the index to refresh its stat cache, taking `index.lock` from under an
 // agent's own git command and moving the metadata the stats are keyed on.
 function git(cwd: string, args: string[]): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    execFile('git', ['--no-optional-locks', '-C', cwd, ...args], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
-      resolve(err ? undefined : stdout);
-    });
-  });
+  return run('git', ['--no-optional-locks', '-C', cwd, ...args]);
 }
 
 function parseCount(out: string | undefined): number | undefined {

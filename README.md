@@ -59,6 +59,7 @@ Session discovery is read-only. The explicit Close and Switch Account actions se
 - Codex threads come from `state_*.sqlite` via `node:sqlite` (read-only), turn status from `thread_history_*.sqlite`, liveness from `thread-writer-locks/` (on Linux, only locks the kernel lists in `/proc/locks` as held by a Codex process count; leftover unlocked files are ignored). On a host without `node:sqlite` it falls back to scanning the rollout files.
 - The files the lists are built from are watched with `fs.watch` (not Codex's log and history databases, which change constantly on their own), and a change rereads only that tool's list, at most two seconds after the first change of a burst. Transcripts are read on from where the last read stopped. While a session is live its tool is also polled every few seconds, because a process can die without touching a file.
 - Git stats come from read-only git commands (`--no-optional-locks`, so they never take `index.lock` from an agent). A worktree a live session works in is rechecked every 10 seconds; any other when its index, HEAD or fetched refs change, and at least every five minutes. The Worktrees view's rows get stats only while it is open; **Refresh** rechecks them all.
+- Those commands are started by a small runner process, never by the extension host: forking the extension host, which is large and on a busy machine partly swapped out, freezes it — and Claude Code and Codex, which share it — for as long as the copy takes.
 
 ## Install
 

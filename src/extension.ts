@@ -31,6 +31,7 @@ import { initIcons } from './icons.js';
 import { listRepoWorktrees, loadWorktreeStats, sessionWorktrees, type RepoWorktree } from './worktree.js';
 import { WorktreeItem, WorktreesProvider } from './worktrees-tree.js';
 import { repoRootOf } from './util.js';
+import { stopRunner } from './runner.js';
 import { type MarkList, type SessionMarks, marksFile, mergeMarks, readMarks, setMark, watchMarks } from './marks.js';
 import * as path from 'node:path';
 
@@ -146,7 +147,7 @@ export function activate(context: vscode.ExtensionContext): void {
   usageBar.command = 'agentSessions.usage.focus';
   const worktreesProvider = new WorktreesProvider();
   const worktreesView = vscode.window.createTreeView('agentSessions.worktrees', { treeDataProvider: worktreesProvider, showCollapseAll: true });
-  context.subscriptions.push(output, view, statusBar, usageView, usageBar, worktreesView);
+  context.subscriptions.push(output, view, statusBar, usageView, usageBar, worktreesView, { dispose: stopRunner });
   // Its rows get git stats only while it shows (see refresh).
   context.subscriptions.push(worktreesView.onDidChangeVisibility((e) => e.visible && void refresh([])));
 
