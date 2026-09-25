@@ -6,6 +6,7 @@ import * as fsp from 'node:fs/promises';
 import type { Session, SessionState } from './types.js';
 import { cleanTitle, expandHome, listDir, statOrUndefined, walkFiles } from './util.js';
 import { FileCache } from './file-cache.js';
+import { type Scan, scanAppended } from './appended.js';
 import { commandDirs, inRepository, worktreeFromCwd } from './worktree.js';
 import { holdersOfFilesIn } from './window.js';
 import type { Worktree } from './types.js';
@@ -346,55 +347,49 @@ interface RolloutSummary {
 }
 
 /** Bump when summarizeRollout reads something new or reads it differently. */
-const rolloutCache = new FileCache<RolloutSummary>('codex-rollouts', 1);
+const rolloutCache = new FileCache<RolloutSummary & Scan>('codex-rollouts', 2);
 
 async function summarizeRollout(file: string, mtimeMs: number, size: number): Promise<RolloutSummary> {
   const cached = rolloutCache.get(file, mtimeMs, size);
   if (cached) return cached;
-  const summary: RolloutSummary = { id: undefined, cwd: undefined, branch: undefined, subagent: false, parentId: undefined, agentRole: undefined, agentLabel: undefined, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined, firstAt: undefined };
-  const rl = readline.createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
-  try {
-    for await (const line of rl) {
-      if (!line) continue;
-      let d: { type?: string; timestamp?: string; payload?: Record<string, unknown> };
-      try {
-        d = JSON.parse(line) as typeof d;
-      } catch {
-        continue;
-      }
-      const p = d.payload ?? {};
-      if (d.timestamp) {
-        const t = Date.parse(d.timestamp);
-        if (Number.isFinite(t)) {
-          summary.firstAt ??= t;
-          summary.lastAt = t;
-        }
-      }
-      if (d.type === 'session_meta') {
-        const meta = p as RolloutMeta;
-        summary.id ??= meta.id;
-        summary.cwd ??= meta.cwd;
-        summary.branch ??= meta.git?.branch;
-        if (meta.thread_source === 'subagent' || (meta.source && typeof meta.source === 'object')) {
-          summary.subagent = true;
-          const spawn = spawnOf(meta.source, meta.agent_path);
-          summary.parentId = spawn.parentId;
-          summary.agentRole = spawn.role;
-          summary.agentLabel = spawn.label;
-        }
-      } else if (d.type === 'event_msg') {
-        const kind = p.type;
-        if (kind === 'user_message' && !summary.firstPrompt) {
-          const t = cleanTitle(String(p.message ?? ''));
-          if (t) summary.firstPrompt = t;
-        }
-        if (kind === 'task_started') summary.lastTurnInProgress = true;
-        else if (kind === 'task_complete' || kind === 'turn_aborted' || kind === 'error') summary.lastTurnInProgress = false;
+  const fresh = (): RolloutSummary & Scan => ({ id: undefined, cwd: undefined, branch: undefined, subagent: false, parentId: undefined, agentRole: undefined, agentLabel: undefined, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined, firstAt: undefined, offset: 0, tail: '' });
+  const summary = await scanAppended(file, size, rolloutCache.previous(file)?.value, fresh, (summary, line) => {
+    let d: { type?: string; timestamp?: string; payload?: Record<string, unknown> };
+    try {
+      d = JSON.parse(line) as typeof d;
+    } catch {
+      return;
+    }
+    const p = d.payload ?? {};
+    if (d.timestamp) {
+      const t = Date.parse(d.timestamp);
+      if (Number.isFinite(t)) {
+        summary.firstAt ??= t;
+        summary.lastAt = t;
       }
     }
-  } finally {
-    rl.close();
-  }
+    if (d.type === 'session_meta') {
+      const meta = p as RolloutMeta;
+      summary.id ??= meta.id;
+      summary.cwd ??= meta.cwd;
+      summary.branch ??= meta.git?.branch;
+      if (meta.thread_source === 'subagent' || (meta.source && typeof meta.source === 'object')) {
+        summary.subagent = true;
+        const spawn = spawnOf(meta.source, meta.agent_path);
+        summary.parentId = spawn.parentId;
+        summary.agentRole = spawn.role;
+        summary.agentLabel = spawn.label;
+      }
+    } else if (d.type === 'event_msg') {
+      const kind = p.type;
+      if (kind === 'user_message' && !summary.firstPrompt) {
+        const t = cleanTitle(String(p.message ?? ''));
+        if (t) summary.firstPrompt = t;
+      }
+      if (kind === 'task_started') summary.lastTurnInProgress = true;
+      else if (kind === 'task_complete' || kind === 'turn_aborted' || kind === 'error') summary.lastTurnInProgress = false;
+    }
+  });
   if (!summary.id) {
     const m = /rollout-.*?-([0-9a-f]{8}-[0-9a-f-]{27,})\.jsonl$/.exec(path.basename(file));
     summary.id = m?.[1];

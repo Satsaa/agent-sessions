@@ -1,12 +1,11 @@
 import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import * as readline from 'node:readline';
-import { createReadStream } from 'node:fs';
 import type { Session, SessionState } from './types.js';
 import type { Worktree } from './types.js';
 import { cleanTitle, expandHome, listDir, processAlive, readJsonFile, statOrUndefined } from './util.js';
 import { FileCache } from './file-cache.js';
+import { type Scan, scanAppended } from './appended.js';
 import { commandDirs, inRepository, worktreeFromCwd, worktreeFromPath } from './worktree.js';
 
 export function claudeHome(configured: string): string {
@@ -84,8 +83,15 @@ interface TranscriptSummary {
   permissionMode: { mode: string; at: number } | undefined;
 }
 
+/** A summary as far as the transcript was read (see appended.ts). */
+interface TranscriptScan extends TranscriptSummary, Scan {
+  customTitle: string | undefined;
+  aiTitle: string | undefined;
+  firstPrompt: string | undefined;
+}
+
 /** Bump when summarizeTranscript reads something new or reads it differently. */
-const transcriptCache = new FileCache<TranscriptSummary>('claude-transcripts', 2);
+const transcriptCache = new FileCache<TranscriptScan>('claude-transcripts', 3);
 
 interface TranscriptLine {
   type?: string;
@@ -137,92 +143,90 @@ interface SubagentMeta {
   taskKind?: string;
 }
 
+function freshScan(): TranscriptScan {
+  return {
+    title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, workDir: undefined, lastAt: undefined, firstAt: undefined,
+    lastRole: undefined, lastInterrupted: false, hasPrompt: false, permissionMode: undefined,
+    customTitle: undefined, aiTitle: undefined, firstPrompt: undefined, offset: 0, tail: '',
+  };
+}
+
 async function summarizeTranscript(file: string, mtimeMs: number, size: number, sidechain = false): Promise<TranscriptSummary> {
   const cached = transcriptCache.get(file, mtimeMs, size);
   if (cached) return cached;
 
-  const summary: TranscriptSummary = { title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, workDir: undefined, lastAt: undefined, firstAt: undefined, lastRole: undefined, lastInterrupted: false, hasPrompt: false, permissionMode: undefined };
-  let customTitle: string | undefined;
-  let aiTitle: string | undefined;
-  let firstPrompt: string | undefined;
+  const scan = await scanAppended(file, size, transcriptCache.previous(file)?.value, freshScan, (scan, line) => readRecord(scan, line, sidechain));
+  scan.title = scan.customTitle ?? scan.aiTitle ?? scan.firstPrompt;
+  transcriptCache.set(file, mtimeMs, size, scan);
+  return scan;
+}
 
-  const rl = readline.createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
+function readRecord(scan: TranscriptScan, line: string, sidechain: boolean): void {
+  let d: TranscriptLine;
   try {
-    for await (const line of rl) {
-      if (!line) continue;
-      let d: TranscriptLine;
-      try {
-        d = JSON.parse(line) as TranscriptLine;
-      } catch {
-        continue;
-      }
-      switch (d.type) {
-        case 'custom-title':
-          if (d.customTitle) customTitle = d.customTitle;
-          break;
-        case 'ai-title':
-          if (d.aiTitle) aiTitle = d.aiTitle;
-          break;
-        case 'worktree-state': {
-          // The record's cwd fields track the shell, hopping into subfolders and other worktrees;
-          // only this record says which worktree the session itself is bound to.
-          const ws = d.worktreeSession;
-          summary.worktree = ws?.worktreePath ? worktreeFromPath(ws.worktreePath, ws.worktreeName, ws.worktreeBranch) : null;
-          if (ws?.originalCwd) summary.cwd = ws.originalCwd;
-          break;
-        }
-        case 'user':
-        case 'assistant': {
-          // A subagent's own transcript is all sidechain; in a main transcript sidechain records are another agent's.
-          if (Boolean(d.isSidechain) !== sidechain) break;
-          // The first cwd is the directory the session was started in; later ones follow the shell.
-          if (d.cwd) {
-            summary.cwd ??= d.cwd;
-            if (d.cwd !== summary.lastCwd && inRepository(d.cwd)) summary.workDir = d.cwd;
-            summary.lastCwd = d.cwd;
-          }
-          if (d.type === 'assistant') {
-            for (const dir of toolCallDirs(d.message?.content)) if (inRepository(dir)) summary.workDir = dir;
-          }
-          if (d.gitBranch) summary.branch = d.gitBranch;
-          const t = d.timestamp ? Date.parse(d.timestamp) : NaN;
-          if (Number.isFinite(t)) {
-            summary.firstAt ??= t;
-            summary.lastAt = t;
-            if (d.type === 'user' && d.permissionMode) summary.permissionMode = { mode: d.permissionMode, at: t };
-          }
-          const role = d.message?.role === 'assistant' || d.type === 'assistant' ? 'assistant' : 'user';
-          summary.lastInterrupted = false;
-          if (role === 'user') {
-            if (d.isMeta) break;
-            const text = textOf(d.message?.content);
-            if (/^\[Request interrupted by user/.test(text.trim())) {
-              summary.lastInterrupted = true;
-              summary.lastRole = role;
-              break;
-            }
-            // Tool results are user-role records too; only free text counts as a prompt.
-            if (!text.trim()) break;
-            summary.hasPrompt = true;
-            if (!firstPrompt) {
-              const cleaned = cleanTitle(text);
-              if (cleaned) firstPrompt = cleaned;
-            }
-          }
-          summary.lastRole = role;
-          break;
-        }
-        default:
-          break;
-      }
-    }
-  } finally {
-    rl.close();
+    d = JSON.parse(line) as TranscriptLine;
+  } catch {
+    return;
   }
-
-  summary.title = customTitle ?? aiTitle ?? firstPrompt;
-  transcriptCache.set(file, mtimeMs, size, summary);
-  return summary;
+  switch (d.type) {
+    case 'custom-title':
+      if (d.customTitle) scan.customTitle = d.customTitle;
+      break;
+    case 'ai-title':
+      if (d.aiTitle) scan.aiTitle = d.aiTitle;
+      break;
+    case 'worktree-state': {
+      // The record's cwd fields track the shell, hopping into subfolders and other worktrees;
+      // only this record says which worktree the session itself is bound to.
+      const ws = d.worktreeSession;
+      scan.worktree = ws?.worktreePath ? worktreeFromPath(ws.worktreePath, ws.worktreeName, ws.worktreeBranch) : null;
+      if (ws?.originalCwd) scan.cwd = ws.originalCwd;
+      break;
+    }
+    case 'user':
+    case 'assistant': {
+      // A subagent's own transcript is all sidechain; in a main transcript sidechain records are another agent's.
+      if (Boolean(d.isSidechain) !== sidechain) break;
+      // The first cwd is the directory the session was started in; later ones follow the shell.
+      if (d.cwd) {
+        scan.cwd ??= d.cwd;
+        if (d.cwd !== scan.lastCwd && inRepository(d.cwd)) scan.workDir = d.cwd;
+        scan.lastCwd = d.cwd;
+      }
+      if (d.type === 'assistant') {
+        for (const dir of toolCallDirs(d.message?.content)) if (inRepository(dir)) scan.workDir = dir;
+      }
+      if (d.gitBranch) scan.branch = d.gitBranch;
+      const t = d.timestamp ? Date.parse(d.timestamp) : NaN;
+      if (Number.isFinite(t)) {
+        scan.firstAt ??= t;
+        scan.lastAt = t;
+        if (d.type === 'user' && d.permissionMode) scan.permissionMode = { mode: d.permissionMode, at: t };
+      }
+      const role = d.message?.role === 'assistant' || d.type === 'assistant' ? 'assistant' : 'user';
+      scan.lastInterrupted = false;
+      if (role === 'user') {
+        if (d.isMeta) break;
+        const text = textOf(d.message?.content);
+        if (/^\[Request interrupted by user/.test(text.trim())) {
+          scan.lastInterrupted = true;
+          scan.lastRole = role;
+          break;
+        }
+        // Tool results are user-role records too; only free text counts as a prompt.
+        if (!text.trim()) break;
+        scan.hasPrompt = true;
+        if (!scan.firstPrompt) {
+          const cleaned = cleanTitle(text);
+          if (cleaned) scan.firstPrompt = cleaned;
+        }
+      }
+      scan.lastRole = role;
+      break;
+    }
+    default:
+      break;
+  }
 }
 
 /**
