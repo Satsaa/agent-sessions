@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -117,5 +117,41 @@ test('a writer flock held by a real process is found through /proc/locks', { ski
     assert.deepEqual([...holders], [['held.lock', holder.pid]], 'only the locked file is held, by the process that took the lock');
   } finally {
     holder.kill();
+  }
+});
+
+test('a thread the app-server daemon runs shows as working from its rollout, with no turns in thread_history', { skip: process.platform !== 'linux' }, async () => {
+  const { spawn, spawnSync } = require('node:child_process');
+  const flock = spawnSync('sh', ['-c', 'command -v flock']).stdout?.toString().trim();
+  const { DatabaseSync } = require('node:sqlite');
+  if (!flock) return;
+  const home = join(directory, 'daemon-home');
+  await mkdir(join(home, 'thread-writer-locks'), { recursive: true });
+  const rollout = (id) => join(home, `rollout-${id}.jsonl`);
+  const line = (type, payload) => JSON.stringify({ type, timestamp: new Date().toISOString(), payload }) + '\n';
+  await writeFile(rollout('busy'), line('session_meta', { id: 'busy' }) + line('event_msg', { type: 'task_started' }) + line('event_msg', { type: 'task_complete' }) + line('event_msg', { type: 'task_started' }));
+  await writeFile(rollout('done'), line('session_meta', { id: 'done' }) + line('event_msg', { type: 'task_started' }) + line('event_msg', { type: 'task_complete' }));
+  const db = new DatabaseSync(join(home, 'state_5.sqlite'));
+  db.exec('CREATE TABLE threads (id TEXT, title TEXT, first_user_message TEXT, cwd TEXT, git_branch TEXT, updated_at INTEGER, updated_at_ms INTEGER, created_at INTEGER, archived INTEGER, source TEXT, rollout_path TEXT, agent_nickname TEXT, agent_path TEXT)');
+  const now = Math.floor(Date.now() / 1000);
+  for (const id of ['busy', 'done']) db.prepare("INSERT INTO threads VALUES (?, ?, 'hi', '', NULL, ?, NULL, ?, 0, 'vscode', ?, NULL, NULL)").run(id, id, now, now, rollout(id));
+  db.close();
+  // The daemon writes no turns; an old database with none for these threads is what it leaves.
+  new DatabaseSync(join(home, 'thread_history_1.sqlite')).exec('CREATE TABLE thread_turns (thread_id TEXT, status TEXT, rollout_ordinal INTEGER)');
+  // Liveness counts only a lock held by a process whose executable is named codex.
+  await copyFile(flock, join(home, 'codex'));
+  await chmod(join(home, 'codex'), 0o755);
+  const holders = ['busy', 'done'].map((id) => spawn(join(home, 'codex'), ['--exclusive', join(home, 'thread-writer-locks', `${id}.lock`), 'sleep', '30'], { stdio: 'ignore' }));
+  try {
+    let sessions = [];
+    for (let i = 0; i < 50; i++) {
+      await new Promise(r => setTimeout(r, 20));
+      sessions = await listCodexSessions(home);
+      if (sessions.length === 2 && sessions.every(s => s.state !== 'stopped')) break;
+    }
+    const state = Object.fromEntries(sessions.map(s => [s.id, s.state]));
+    assert.deepEqual(state, { busy: 'running', done: 'replied' }, 'a live thread whose rollout has an open turn is working; one whose last turn completed has replied');
+  } finally {
+    for (const h of holders) h.kill();
   }
 });

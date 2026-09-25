@@ -148,9 +148,9 @@ function isSubagentSource(source: string): boolean {
   return source.trimStart().startsWith('{');
 }
 
-function stateFor(locked: boolean, lastTurn: string | undefined): SessionState {
+function stateFor(locked: boolean, turnInProgress: boolean): SessionState {
   if (!locked) return 'stopped';
-  if (lastTurn === 'inProgress') return 'running';
+  if (turnInProgress) return 'running';
   return 'replied';
 }
 
@@ -241,7 +241,6 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
   if (!stateFile) return undefined;
 
   let rows: ThreadRow[];
-  const lastTurn = new Map<string, string>();
   const parents = new Map<string, string>();
   try {
     const db = new mod.DatabaseSync(stateFile, { readOnly: true });
@@ -266,30 +265,6 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
     return undefined;
   }
 
-  // Only a locked thread's last turn says anything: an unlocked one is stopped whatever its turns say.
-  const historyFile = locks.size ? await newestDb(home, 'thread_history') : undefined;
-  if (historyFile) {
-    try {
-      const db = new mod.DatabaseSync(historyFile, { readOnly: true });
-      try {
-        const ids = [...locks.keys()];
-        const turns = db
-          .prepare(
-            `SELECT t.thread_id AS thread_id, t.status AS status
-             FROM thread_turns t
-             WHERE t.thread_id IN (${ids.map(() => '?').join(', ')})
-               AND t.rollout_ordinal = (SELECT MAX(rollout_ordinal) FROM thread_turns u WHERE u.thread_id = t.thread_id)`,
-          )
-          .all(...ids) as { thread_id: string; status: string }[];
-        for (const t of turns) lastTurn.set(t.thread_id, t.status);
-      } finally {
-        db.close();
-      }
-    } catch {
-      // Status detail is optional; locks alone still tell live from stopped.
-    }
-  }
-
   const sessions: Session[] = [];
   const now = Date.now();
   for (const r of rows) {
@@ -301,6 +276,9 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
     const updatedAt = recorded ?? st?.mtimeMs ?? 0;
     const worktree = st ? await worktreeForThread(r.cwd || undefined, r.git_branch ?? undefined, r.rollout_path, locked, st.mtimeMs, st.size) : worktreeFromCwd(r.cwd || undefined, r.git_branch ?? undefined);
     const { title, spawn } = rowText(r, names.get(r.id));
+    // Only a locked thread's last turn says anything, and only its rollout says it: the app-server daemon does not
+    // record turns in thread_history, so a thread it runs never showed as working when that database was read.
+    const turnInProgress = locked && st ? (await summarizeRollout(r.rollout_path, st.mtimeMs, st.size)).lastTurnInProgress : false;
     sessions.push({
       tool: 'codex',
       id: r.id,
@@ -310,7 +288,7 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
       worktree,
       updatedAt,
       startedAt: r.created_at ? r.created_at * 1000 : updatedAt,
-      state: stateFor(locked, lastTurn.get(r.id)),
+      state: stateFor(locked, turnInProgress),
       archived: r.archived === 1,
       subagent: isSubagentSource(r.source),
       parentId: parents.get(r.id) ?? spawn.parentId,
@@ -439,7 +417,7 @@ async function listFromRollouts(home: string, names: Map<string, string>, locks:
         worktree: await worktreeForThread(s.cwd, s.branch, file, locked, st.mtimeMs, st.size),
         updatedAt: s.lastAt ?? st.mtimeMs,
         startedAt: s.firstAt ?? st.birthtimeMs,
-        state: stateFor(locked, s.lastTurnInProgress ? 'inProgress' : undefined),
+        state: stateFor(locked, s.lastTurnInProgress),
         archived,
         subagent: s.subagent,
         parentId: s.parentId,
