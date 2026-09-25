@@ -68,14 +68,11 @@ function existingCodexTab(threadId: string, title: string): vscode.Uri | undefin
 }
 
 /**
- * Reload the open Codex tab showing this session. VS Code has no per-webview reload and swapping the editor in place
- * keeps Codex's retained webview alive, so the tab is closed and its route reopened in the same group, then moved back
- * to the slot it had. Returns false when no tab shows the session.
+ * Replace a Codex tab with `uri` in the same slot. VS Code has no per-webview reload and swapping the editor in place
+ * keeps Codex's retained webview alive, so the tab is closed and the route opened in its group, then moved back to
+ * the slot it had.
  */
-export async function reloadCodexTab(session: Session): Promise<boolean> {
-  const entry = existingCodexTabEntry(session.id, session.title);
-  if (!entry) return false;
-  const { tab, uri, group } = entry;
+async function replaceCodexTab(tab: vscode.Tab, group: vscode.TabGroup, uri: vscode.Uri): Promise<void> {
   const index = group.tabs.indexOf(tab);
   const wasActive = tab.isActive;
   await vscode.window.tabGroups.close(tab);
@@ -86,7 +83,52 @@ export async function reloadCodexTab(session: Session): Promise<boolean> {
   });
   // The reopened tab lands at the end of the group; `moveActiveEditor` positions are 1-based.
   if (index >= 0) await vscode.commands.executeCommand('moveActiveEditor', { to: 'position', by: 'tab', value: index + 1 });
+}
+
+/** Reload the open Codex tab showing this session. Returns false when no tab shows the session. */
+export async function reloadCodexTab(session: Session): Promise<boolean> {
+  const entry = existingCodexTabEntry(session.id, session.title);
+  if (!entry) return false;
+  await replaceCodexTab(entry.tab, entry.group, entry.uri);
   return true;
+}
+
+/**
+ * A Codex tab started fresh ("New Codex Agent") keeps `/extension/panel/new` after its thread exists, and Codex
+ * rebuilds a restored tab from its URI alone, so a reload brings it back as a blank new thread. Which thread each such
+ * tab showed is remembered by its slot, and after a reload the tab in that slot is reopened on the thread.
+ */
+export interface FreshCodexTab {
+  column: number;
+  index: number;
+  threadId: string;
+}
+
+function isFreshCodexTab(tab: vscode.Tab): boolean {
+  return tab.input instanceof vscode.TabInputCustom && tab.input.uri.scheme === 'openai-codex' && !/^\/(local|remote)\//.test(tab.input.uri.path);
+}
+
+/** The fresh Codex tabs whose thread is known, by the title Codex gave the tab. */
+export function freshCodexTabs(sessions: readonly Session[]): FreshCodexTab[] {
+  const out: FreshCodexTab[] = [];
+  for (const group of vscode.window.tabGroups.all) {
+    group.tabs.forEach((tab, index) => {
+      if (!isFreshCodexTab(tab)) return;
+      const s = sessions.find((x) => x.tool === 'codex' && titleMatchesLabel(x.title, tab.label));
+      if (s) out.push({ column: group.viewColumn, index, threadId: s.id });
+    });
+  }
+  return out;
+}
+
+/** Reopens each remembered fresh tab that came back from a reload in its slot on its thread. */
+export async function restoreFreshCodexTabs(saved: readonly FreshCodexTab[]): Promise<void> {
+  for (const entry of saved) {
+    const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === entry.column);
+    const tab = group?.tabs[entry.index];
+    if (!group || !tab || !isFreshCodexTab(tab)) continue;
+    await replaceCodexTab(tab, group, codexRouteUri(`/local/${entry.threadId}`));
+  }
 }
 
 async function openCodex(uri: vscode.Uri): Promise<void> {

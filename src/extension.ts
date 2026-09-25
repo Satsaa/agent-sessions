@@ -15,7 +15,7 @@ import {
   writeClaudeSettings,
 } from './claude-modes.js';
 import { type PendingOpen, claimOpen, offerOpen, pendingOpenFile, watchOffers } from './pending-open.js';
-import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab } from './open.js';
+import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab, type FreshCodexTab, freshCodexTabs, restoreFreshCodexTabs } from './open.js';
 import { markThisWindow } from './window.js';
 import { formatTranscript, readTranscript } from './transcript.js';
 import { listCodexAccounts } from './codex-accounts.js';
@@ -177,8 +177,27 @@ export function activate(context: vscode.ExtensionContext): void {
     revealedKey = key;
     void view.reveal(item, { select: true, focus: false, expand: false }).then(undefined, () => undefined);
   };
+  // Fresh Codex tabs lose their thread in a reload (see open.ts): the slots saved by the last window are reopened on
+  // their threads first, and only then is the record kept current, so the restored blank tabs cannot overwrite it.
+  const FRESH_CODEX_TABS = 'freshCodexTabs';
+  const freshTabsRestored = restoreFreshCodexTabs(context.workspaceState.get<FreshCodexTab[]>(FRESH_CODEX_TABS) ?? []).catch((e) =>
+    output.appendLine(`reopening Codex tabs after a reload failed: ${e instanceof Error ? e.message : String(e)}`),
+  );
+  let savedFreshTabs = '';
+  const saveFreshCodexTabs = (): void => {
+    void freshTabsRestored.then(() => {
+      const tabs = freshCodexTabs(latestSessions);
+      const json = JSON.stringify(tabs);
+      if (json === savedFreshTabs) return;
+      savedFreshTabs = json;
+      void context.workspaceState.update(FRESH_CODEX_TABS, tabs);
+    });
+  };
   context.subscriptions.push(
-    vscode.window.tabGroups.onDidChangeTabs(() => selectActiveTabSession()),
+    vscode.window.tabGroups.onDidChangeTabs(() => {
+      selectActiveTabSession();
+      saveFreshCodexTabs();
+    }),
     vscode.window.tabGroups.onDidChangeTabGroups(() => selectActiveTabSession()),
     view.onDidChangeVisibility((e) => e.visible && selectActiveTabSession()),
   );
@@ -325,6 +344,7 @@ export function activate(context: vscode.ExtensionContext): void {
         provider.setSessions(sessions);
         updateIndicators(provider.visible());
         selectActiveTabSession();
+        saveFreshCodexTabs();
         // Git is a second pass so the list itself never waits on it.
         const worktrees = await collectWorktrees(sessions);
         const mains = new Set(worktrees.filter((w) => w.isMain).map((w) => w.path));
