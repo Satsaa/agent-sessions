@@ -196,9 +196,18 @@ export async function newSession(tool: Tool): Promise<void> {
     t.sendText('codex', true);
     return;
   }
-  // The Codex extension's own "New Codex Agent" command: it owns the panel route and whatever its landing state is,
-  // so our button cannot drift from the + button in its sidebar.
-  await vscode.commands.executeCommand('chatgpt.newCodexPanel');
+  await openCodex(newCodexPanelUri());
+}
+
+let newPanels = 0;
+
+/**
+ * The route of Codex's "New Codex Agent" panel, made unique. Codex's own command opens `/extension/panel/new` itself,
+ * and VS Code dedupes custom editors by URI, so it reveals a fresh tab already open instead of starting another. Codex
+ * passes the query on to its router as part of the route, where it is ignored.
+ */
+export function newCodexPanelUri(): vscode.Uri {
+  return codexRouteUri('/extension/panel/new').with({ query: `tab=${Date.now()}-${++newPanels}` });
 }
 
 /** Labels of every open tab, for matching sessions to the panels that show them (the vendor extensions title panels with the session title). */

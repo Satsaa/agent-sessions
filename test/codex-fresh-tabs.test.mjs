@@ -56,7 +56,7 @@ await build({
     b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'module.exports = globalThis.__agentSessionsVSCode;' }));
   } }],
 });
-const { freshCodexTabs, restoreFreshCodexTabs } = createRequire(import.meta.url)(bundle);
+const { freshCodexTabs, restoreFreshCodexTabs, newCodexPanelUri } = createRequire(import.meta.url)(bundle);
 after(() => rm(directory, { recursive: true, force: true }));
 
 const session = (id, title) => ({ tool: 'codex', id, title });
@@ -85,4 +85,13 @@ test('a remembered slot that no longer holds a fresh tab is not replaced', async
   groups.splice(0, groups.length, { viewColumn: 1, tabs: [codexTab('/local/ccc', 'Other')] });
   await restoreFreshCodexTabs([{ column: 1, index: 0, threadId: 'bbb' }, { column: 2, index: 0, threadId: 'ddd' }]);
   assert.deepEqual(groups[0].tabs.map((t) => t.input.uri.path), ['/local/ccc'], 'a tab opened by id, or a missing slot, is never swapped');
+});
+
+test('each new Codex panel gets its own tab, which is still remembered as a fresh one', async () => {
+  const first = newCodexPanelUri();
+  const second = newCodexPanelUri();
+  assert.notEqual(first.query, second.query, 'VS Code reveals an open tab with the same URI, so a new panel must not reuse one');
+  assert.equal(first.path, '/extension/panel/new', 'the route stays Codex’s new-thread panel');
+  groups.splice(0, groups.length, { viewColumn: 1, tabs: [{ input: new TabInputCustom(first, 'chatgpt.conversationEditor'), label: 'Fix the build' }] });
+  assert.deepEqual(freshCodexTabs([session('bbb', 'Fix the build')]), [{ column: 1, index: 0, threadId: 'bbb' }], 'a new panel’s thread comes back after a reload');
 });
