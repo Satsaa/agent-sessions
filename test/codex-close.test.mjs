@@ -155,3 +155,25 @@ test('a thread the app-server daemon runs shows as working from its rollout, wit
     for (const h of holders) h.kill();
   }
 });
+
+test('Codex’s approval reviews are not listed, from its state database or from rollouts alone', async () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const review = { subagent: { other: 'guardian' } };
+  const line = (payload) => JSON.stringify({ type: 'session_meta', timestamp: new Date().toISOString(), payload }) + '\n';
+  const rolloutsOnly = join(directory, 'review-rollouts');
+  await mkdir(join(rolloutsOnly, 'sessions'), { recursive: true });
+  await writeFile(join(rolloutsOnly, 'sessions', 'rollout-work.jsonl'), line({ id: 'work', source: 'vscode' }));
+  await writeFile(join(rolloutsOnly, 'sessions', 'rollout-review.jsonl'), line({ id: 'review', source: review, thread_source: 'guardian_review', parent_thread_id: 'work' }));
+  assert.deepEqual((await listCodexSessions(rolloutsOnly)).map(s => s.id), ['work'], 'a review read from its rollout is hidden');
+
+  const withState = join(directory, 'review-state');
+  await mkdir(withState, { recursive: true });
+  const db = new DatabaseSync(join(withState, 'state_5.sqlite'));
+  db.exec('CREATE TABLE threads (id TEXT, title TEXT, first_user_message TEXT, cwd TEXT, git_branch TEXT, updated_at INTEGER, updated_at_ms INTEGER, created_at INTEGER, archived INTEGER, source TEXT, rollout_path TEXT, agent_nickname TEXT, agent_path TEXT)');
+  const insert = db.prepare("INSERT INTO threads VALUES (?, ?, 'hi', '', NULL, 1, NULL, 1, 0, ?, '', NULL, NULL)");
+  insert.run('work', 'Work', 'vscode');
+  insert.run('review', 'Guardian review', JSON.stringify(review));
+  insert.run('spawned', 'Helper', JSON.stringify({ subagent: { thread_spawn: { parent_thread_id: 'work' } } }));
+  db.close();
+  assert.deepEqual((await listCodexSessions(withState)).map(s => s.id).sort(), ['spawned', 'work'], 'a review is hidden; an agent a session spawned is not');
+});

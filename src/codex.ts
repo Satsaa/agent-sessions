@@ -77,13 +77,15 @@ interface SpawnSource {
 }
 
 interface Spawn {
+  /** Codex's approval reviewer ("Auto-review"): one short thread per judged action, never a session of anyone's. */
+  review: boolean;
   parentId: string | undefined;
   role: string | undefined;
   /** The task label the parent gave the agent, read from its `agent_path` (`/root/review_dev_integration`). */
   label: string | undefined;
 }
 
-const NO_SPAWN: Spawn = { parentId: undefined, role: undefined, label: undefined };
+const NO_SPAWN: Spawn = { review: false, parentId: undefined, role: undefined, label: undefined };
 
 /** `/root/review_dev_integration` → "Review dev integration": the name the parent shows for the agent. */
 export function agentLabel(agentPath: string | null | undefined): string | undefined {
@@ -97,12 +99,13 @@ function spawnOf(source: unknown, agentPath?: string | null): Spawn {
   try {
     const parsed = (typeof raw === 'string' ? JSON.parse(raw) : raw) as SpawnSource;
     const spawn = parsed.subagent?.thread_spawn;
-    // Codex's own review threads (`{"subagent":{"other":"guardian"}}`) have no parent and no path; name them by kind.
+    // Codex's own threads of other kinds (`{"subagent":{"other":"guardian"}}`) have no parent and no path; name them by kind.
     const other = parsed.subagent?.other;
     return {
+      review: other === 'guardian',
       parentId: spawn?.parent_thread_id || undefined,
       role: spawn?.agent_nickname || spawn?.agent_role || undefined,
-      label: agentLabel(agentPath ?? spawn?.agent_path) ?? (other ? `${agentLabel(other)} review` : undefined),
+      label: agentLabel(agentPath ?? spawn?.agent_path) ?? (other ? agentLabel(other) : undefined),
     };
   } catch {
     return NO_SPAWN;
@@ -268,6 +271,7 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
   const sessions: Session[] = [];
   const now = Date.now();
   for (const r of rows) {
+    if (rowText(r, names.get(r.id)).spawn.review) continue;
     // Codex's own clock for the thread; the rollout's mtime also moves on maintenance rewrites.
     const recorded = r.updated_at_ms ?? (r.updated_at ? r.updated_at * 1000 : undefined);
     const locked = locks.has(r.id);
@@ -334,6 +338,7 @@ interface RolloutSummary {
   cwd: string | undefined;
   branch: string | undefined;
   subagent: boolean;
+  review: boolean;
   parentId: string | undefined;
   agentRole: string | undefined;
   agentLabel: string | undefined;
@@ -344,12 +349,12 @@ interface RolloutSummary {
 }
 
 /** Bump when summarizeRollout reads something new or reads it differently. */
-const rolloutCache = new FileCache<RolloutSummary & Scan>('codex-rollouts', 2);
+const rolloutCache = new FileCache<RolloutSummary & Scan>('codex-rollouts', 3);
 
 async function summarizeRollout(file: string, mtimeMs: number, size: number): Promise<RolloutSummary> {
   const cached = rolloutCache.get(file, mtimeMs, size);
   if (cached) return cached;
-  const fresh = (): RolloutSummary & Scan => ({ id: undefined, cwd: undefined, branch: undefined, subagent: false, parentId: undefined, agentRole: undefined, agentLabel: undefined, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined, firstAt: undefined, offset: 0, tail: '' });
+  const fresh = (): RolloutSummary & Scan => ({ id: undefined, cwd: undefined, branch: undefined, subagent: false, review: false, parentId: undefined, agentRole: undefined, agentLabel: undefined, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined, firstAt: undefined, offset: 0, tail: '' });
   const summary = await scanAppended(file, size, rolloutCache.previous(file)?.value, fresh, (summary, line) => {
     let d: { type?: string; timestamp?: string; payload?: Record<string, unknown> };
     try {
@@ -373,6 +378,7 @@ async function summarizeRollout(file: string, mtimeMs: number, size: number): Pr
       if (meta.thread_source === 'subagent' || (meta.source && typeof meta.source === 'object')) {
         summary.subagent = true;
         const spawn = spawnOf(meta.source, meta.agent_path);
+        summary.review = spawn.review;
         summary.parentId = spawn.parentId;
         summary.agentRole = spawn.role;
         summary.agentLabel = spawn.label;
@@ -406,7 +412,7 @@ async function listFromRollouts(home: string, names: Map<string, string>, locks:
       const st = await statOrUndefined(file);
       if (!st) continue;
       const s = await summarizeRollout(file, st.mtimeMs, st.size);
-      if (!s.id) continue;
+      if (!s.id || s.review) continue;
       const locked = locks.has(s.id);
       sessions.push({
         tool: 'codex',
