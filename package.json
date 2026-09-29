@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.10",
+  "version": "0.8.11",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -205,6 +205,16 @@
         "title": "Unarchive",
         "category": "Agent Sessions",
         "icon": "$(inbox)"
+      },
+      {
+        "command": "agentSessions.moveToCodex",
+        "title": "Move to Codex",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.moveToClaude",
+        "title": "Move to Claude",
+        "category": "Agent Sessions"
       },
       {
         "command": "agentSessions.showWorktrees",
@@ -446,6 +456,16 @@
           "group": "3_archive@1"
         },
         {
+          "command": "agentSessions.moveToCodex",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-claude/ && !(viewItem =~ /subagent/)",
+          "group": "3_archive@2"
+        },
+        {
+          "command": "agentSessions.moveToClaude",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/ && !(viewItem =~ /subagent/)",
+          "group": "3_archive@2"
+        },
+        {
           "command": "agentSessions.worktree.openFolder",
           "when": "view == agentSessions.worktrees && viewItem =~ /^worktree(-main)?$/ && !agentSessions.phoneMode",
           "group": "inline"
@@ -589,6 +609,14 @@
         },
         {
           "command": "agentSessions.unarchive",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.moveToCodex",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.moveToClaude",
           "when": "false"
         },
         {

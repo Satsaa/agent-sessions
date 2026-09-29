@@ -25,6 +25,8 @@ export const ROW_ACTIONS: RowAction[] = [
   { command: 'agentSessions.unpin', applies: (cv) => mainThread(cv) && cv.includes('-pinned-') },
   { command: 'agentSessions.archive', applies: (cv) => mainThread(cv) && !cv.includes('archived') },
   { command: 'agentSessions.unarchive', applies: (cv) => cv.includes('archived') },
+  { command: 'agentSessions.moveToCodex', applies: (cv) => mainThread(cv) && cv.startsWith('session-claude') },
+  { command: 'agentSessions.moveToClaude', applies: (cv) => mainThread(cv) && cv.startsWith('session-codex') },
   { command: 'agentSessions.closeCodex', applies: (cv) => cv.startsWith('session-codex') },
   { command: 'agentSessions.reloadCodexPanel', applies: (cv) => cv.startsWith('session-codex') && !cv.includes('subagent') },
   { command: 'agentSessions.copyResumeCommand', applies: mainThread, notOnPhone: 'for pasting into a desktop terminal' },

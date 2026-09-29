@@ -15,7 +15,7 @@ import {
   writeClaudeSettings,
 } from './claude-modes.js';
 import { type PendingOpen, claimOpen, offerOpen, pendingOpenFile, watchOffers } from './pending-open.js';
-import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab, type FreshCodexTab, freshCodexTabs, restoreFreshCodexTabs } from './open.js';
+import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, newSessionFrom, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab, type FreshCodexTab, freshCodexTabs, restoreFreshCodexTabs } from './open.js';
 import { markThisWindow } from './window.js';
 import { formatTranscript, readTranscript } from './transcript.js';
 import { listCodexAccounts } from './codex-accounts.js';
@@ -32,6 +32,7 @@ import { listRepoWorktrees, loadWorktreeStats, sessionWorktrees, type RepoWorktr
 import { WorktreeItem, WorktreesProvider } from './worktrees-tree.js';
 import { repoRootOf } from './util.js';
 import { stopRunner } from './runner.js';
+import { handoverNote, handoverTarget, writeHandoverNote } from './handover.js';
 import { type MarkList, type SessionMarks, marksFile, mergeMarks, readMarks, setMark, watchMarks } from './marks.js';
 import * as path from 'node:path';
 
@@ -494,6 +495,13 @@ export function activate(context: vscode.ExtensionContext): void {
     await vscode.workspace.getConfiguration('agentSessions').update(key, value, vscode.ConfigurationTarget.Global);
   };
   const mark = async (list: MarkList, s: Session, present: boolean) => takeMarks(await setMark(marksPath, list, `${s.tool}:${s.id}`, present));
+  const archive = async (s: Session) => {
+    await mark('archived', s, true);
+    // Archiving puts the session away, so its tab goes too; the agent keeps running.
+    await closeSessionTab(s).catch((err: unknown) => output.appendLine(`close tab for ${s.tool} ${s.id} failed: ${err instanceof Error ? err.message : String(err)}`));
+    provider.setOptions(options());
+    updateIndicators(provider.visible());
+  };
   // Another window (the phone, or a second desktop window) archived or pinned something.
   context.subscriptions.push(watchMarks(marksPath, (m) => {
     takeMarks(m);
@@ -715,13 +723,29 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('agentSessions.archive', async (arg: unknown) => {
       const s = sessionOf(arg);
-      if (!s) return;
-      await mark('archived', s, true);
-      // Archiving puts the session away, so its tab goes too; the agent keeps running.
-      await closeSessionTab(s).catch((err: unknown) => output.appendLine(`close tab for ${s.tool} ${s.id} failed: ${err instanceof Error ? err.message : String(err)}`));
-      provider.setOptions(options());
-      updateIndicators(provider.visible());
+      if (s) await archive(s);
     }),
+    ...(['claude', 'codex'] as const).map((target) => vscode.commands.registerCommand(target === 'codex' ? 'agentSessions.moveToCodex' : 'agentSessions.moveToClaude', async (arg: unknown) => {
+      const s = sessionOf(arg);
+      if (!s || handoverTarget(s) !== target) return;
+      const { transcriptPath } = s;
+      if (!transcriptPath) {
+        void vscode.window.showWarningMessage(`This ${toolLabel(s.tool)} session has no transcript on disk to move.`);
+        return;
+      }
+      try {
+        const from = { ...s, transcriptPath };
+        await newSessionFrom(target, handoverNote(from), await writeHandoverNote(from));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        output.appendLine(`move ${s.tool} ${s.id} to ${target} failed: ${message}`);
+        void vscode.window.showErrorMessage(`Could not start the ${toolLabel(target)} session: ${message}`);
+        return;
+      }
+      // After the new session opens: archiving closes the old tab, and Codex attaches the note to the focused panel.
+      await archive(s);
+      if (target === 'codex') void vscode.window.showInformationMessage('The handover note is attached to the new Codex thread; send a message to start it.');
+    })),
     ...(['pin', 'unpin'] as const).map((action) => vscode.commands.registerCommand(`agentSessions.${action}`, async (arg: unknown) => {
       const s = sessionOf(arg);
       if (!s) return;

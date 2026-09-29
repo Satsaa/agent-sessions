@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { Session, Tool } from './types.js';
+import { toolLabel, type Session, type Tool } from './types.js';
 import { titleMatchesLabel } from './util.js';
 import { moveHereIfHeldElsewhere } from './session-host.js';
 import { seedSessionMode } from './claude-modes.js';
@@ -28,9 +28,9 @@ function codexRouteUri(routePath: string): vscode.Uri {
  * a panel — and without an explicit column it picks a Claude-only column and locks that group, so the active
  * group's concrete column is passed to land the tab beside the ordinary editors.
  */
-async function openClaude(sessionId: string | undefined): Promise<void> {
+async function openClaude(sessionId: string | undefined, initialPrompt?: string): Promise<void> {
   const column = vscode.window.tabGroups.activeTabGroup.viewColumn;
-  await vscode.commands.executeCommand('claude-vscode.editor.open', sessionId, undefined, column, undefined, true, {
+  await vscode.commands.executeCommand('claude-vscode.editor.open', sessionId, initialPrompt, column, undefined, true, {
     programmatic: 'honor-preferred-location',
   });
 }
@@ -197,6 +197,29 @@ export async function newSession(tool: Tool): Promise<void> {
     return;
   }
   await openCodex(newCodexPanelUri());
+}
+
+/**
+ * A new session in `tool` that starts from `note`: Claude Code takes it as the first prompt, ready to send. Codex's
+ * panel takes no text from outside, so a new one is opened and `noteFile` attached to it with Codex's own "Add File
+ * to Codex Thread" command, which adds to the focused panel. Without either extension the CLI gets it as its prompt.
+ */
+export async function newSessionFrom(tool: Tool, note: string, noteFile: string): Promise<void> {
+  const installed = extensionInstalled(tool === 'claude' ? CLAUDE_EXTENSION : CODEX_EXTENSION);
+  if (!installed) {
+    const t = vscode.window.createTerminal({ name: toolLabel(tool) });
+    t.show();
+    t.sendText(`${tool} '${note.replace(/'/g, `'\\''`)}'`, true);
+    return;
+  }
+  if (tool === 'claude') {
+    await openClaude(undefined, note);
+    return;
+  }
+  await openCodex(newCodexPanelUri());
+  // Codex learns which panel has focus from the panel's view-state event, which follows the tab opening.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(noteFile));
 }
 
 let newPanels = 0;
