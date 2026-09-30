@@ -101,7 +101,7 @@ test('worktree rows retain pinned stopped sessions beyond the recent-session lim
   assert.match(rows[0].contextValue, /-pinned-/);
 });
 
-test('grouping unused worktrees ignores archived sessions but counts stopped ones', () => {
+test('inactive worktrees are grouped last, ignoring archived sessions but counts stopped ones', () => {
   const wt = (name) => ({ path: `/repo-wt/${name}`, repoRoot: '/repo', name, isMain: false });
   const main = { path: '/repo', repoRoot: '/repo', name: 'repo', isMain: true };
   const trees = [main, wt('stopped'), wt('archived'), wt('local'), wt('none')];
@@ -111,12 +111,10 @@ test('grouping unused worktrees ignores archived sessions but counts stopped one
     session('l', { cwd: '/repo-wt/local' }),
   ];
   const provider = new WorktreesProvider();
-  provider.set(trees, new Map(), sessions, new Set(['codex:l']), new Set(), false, true);
+  provider.set(trees, new Map(), sessions, new Set(['codex:l']), new Set(), false);
   const roots = provider.getChildren();
-  assert.deepEqual(roots.map(r => r.worktree?.name ?? r.label), ['repo', 'stopped', 'Unused'], 'a stopped session keeps its worktree in use and the main checkout is never grouped');
+  assert.deepEqual(roots.map(r => r.worktree?.name ?? r.label), ['repo', 'stopped', 'Inactive'], 'a stopped session keeps its worktree in use, the main checkout is never grouped, and the group comes last');
   assert.deepEqual(roots[2].children.map(r => r.worktree.name), ['archived', 'local', 'none'], 'natively and locally archived sessions do not count as a use');
-  provider.set(trees, new Map(), sessions, new Set(['codex:l']), new Set(), false, false);
-  assert.equal(provider.getChildren().length, 5, 'without the option every worktree is its own row');
 });
 
 test('worktree delete delegates the selected path to the exact native repositories command', async t => {

@@ -31,14 +31,14 @@ export class WorktreeItem extends vscode.TreeItem {
   readonly children: SessionItem[];
 }
 
-/** A repository's linked worktrees that no session uses, collapsed out of the way. */
-class UnusedItem extends vscode.TreeItem {
+/** A repository's linked worktrees that no session uses, collapsed as its last row. */
+class InactiveItem extends vscode.TreeItem {
   constructor(
     root: string,
     public readonly children: WorktreeItem[],
   ) {
-    super('Unused', vscode.TreeItemCollapsibleState.Collapsed);
-    this.id = `worktree-unused:${root}`;
+    super('Inactive', vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = `worktree-inactive:${root}`;
     this.contextValue = 'worktree-group';
     this.iconPath = new vscode.ThemeIcon('folder');
     this.description = `${children.length}`;
@@ -49,7 +49,7 @@ class UnusedItem extends vscode.TreeItem {
 class RepoItem extends vscode.TreeItem {
   constructor(
     public readonly root: string,
-    public readonly children: (WorktreeItem | UnusedItem)[],
+    public readonly children: (WorktreeItem | InactiveItem)[],
     linked: number,
   ) {
     super(path.basename(root) || root, vscode.TreeItemCollapsibleState.Expanded);
@@ -61,7 +61,7 @@ class RepoItem extends vscode.TreeItem {
   }
 }
 
-type Node = RepoItem | UnusedItem | WorktreeItem | SessionItem;
+type Node = RepoItem | InactiveItem | WorktreeItem | SessionItem;
 
 function iconFor(wt: RepoWorktree, stats: WorktreeStats | undefined, sessions: Session[]): vscode.ThemeIcon {
   if (stats?.gone || wt.prunable) return new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.orange'));
@@ -128,7 +128,7 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
   private roots: Node[] = [];
 
   /** Every worktree found, with stats and the sessions bound to it. */
-  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>, showAllSubagents: boolean, groupUnused = false): void {
+  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>, showAllSubagents: boolean): void {
     // Spawned sessions nest under their parent wherever that parent is shown; they are never rows of their own here.
     const childrenOf = new Map<string, Session[]>();
     const now = Date.now();
@@ -168,11 +168,10 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
       list.push(new WorktreeItem(wt, stats.get(wt.path), assigned(wt), locallyArchived, pinned, childrenOf));
       byRepo.set(wt.repoRoot, list);
     }
-    const rows = (root: string, items: WorktreeItem[]): (WorktreeItem | UnusedItem)[] => {
-      if (!groupUnused) return items;
-      const unused = items.filter((i) => !i.worktree.isMain && !used(i.worktree));
-      if (!unused.length) return items;
-      return [...items.filter((i) => !unused.includes(i)), new UnusedItem(root, unused)];
+    const rows = (root: string, items: WorktreeItem[]): (WorktreeItem | InactiveItem)[] => {
+      const inactive = items.filter((i) => !i.worktree.isMain && !used(i.worktree));
+      if (!inactive.length) return items;
+      return [...items.filter((i) => !inactive.includes(i)), new InactiveItem(root, inactive)];
     };
     const repos = [...byRepo.entries()];
     this.roots = repos.length === 1

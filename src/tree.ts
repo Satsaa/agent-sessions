@@ -21,8 +21,6 @@ export interface ViewOptions {
   showArchived: boolean;
   showSubagents: boolean;
   showEmpty: boolean;
-  /** Worktrees view: linked worktrees no unarchived session uses go under one Unused row. */
-  groupUnusedWorktrees: boolean;
   historyLimit: number;
   /** Sessions archived from this view (kept in this extension's own state). */
   locallyArchived: ReadonlySet<string>;
