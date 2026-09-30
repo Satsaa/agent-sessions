@@ -74,6 +74,7 @@ function readConfig(): Config {
       showArchived: c.get<boolean>('showArchived', false),
       showSubagents: c.get<boolean>('showSubagents', false),
       showEmpty: c.get<boolean>('showEmpty', false),
+      groupUnusedWorktrees: c.get<boolean>('groupUnusedWorktrees', false),
       historyLimit: c.get<number>('historyLimit', 200),
     },
   };
@@ -251,6 +252,7 @@ export function activate(context: vscode.ExtensionContext): void {
     void vscode.commands.executeCommand('setContext', 'agentSessions.showArchived', config.view.showArchived);
     void vscode.commands.executeCommand('setContext', 'agentSessions.showSubagents', config.view.showSubagents);
     void vscode.commands.executeCommand('setContext', 'agentSessions.scope', config.view.scope);
+    void vscode.commands.executeCommand('setContext', 'agentSessions.groupUnusedWorktrees', config.view.groupUnusedWorktrees);
     void vscode.commands.executeCommand('setContext', 'agentSessions.phoneMode', config.phoneMode);
     phone.setEnabled(config.phoneMode);
   };
@@ -358,7 +360,7 @@ export function activate(context: vscode.ExtensionContext): void {
         forceStats = false;
         const stats = await loadWorktreeStats([...sessionWorktrees(provider.visible()), ...(worktreesView.visible ? worktrees : [])], mains, live, force);
         provider.setWorktreeStats(stats);
-        worktreesProvider.set(worktrees, stats, sessions, archived, pinned, config.view.showSubagents);
+        worktreesProvider.set(worktrees, stats, sessions, archived, pinned, config.view.showSubagents, config.view.groupUnusedWorktrees);
         const linked = worktrees.filter((w) => !w.isMain).length;
         worktreesView.description = linked ? `${linked}` : '';
       } finally {
@@ -582,6 +584,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('agentSessions.hideSubagents', () => setting('showSubagents', false)),
     vscode.commands.registerCommand('agentSessions.scopeWorkspace', () => setting('scope', 'workspace')),
     vscode.commands.registerCommand('agentSessions.scopeAll', () => setting('scope', 'all')),
+    vscode.commands.registerCommand('agentSessions.groupUnusedWorktrees', () => setting('groupUnusedWorktrees', true)),
+    vscode.commands.registerCommand('agentSessions.ungroupUnusedWorktrees', () => setting('groupUnusedWorktrees', false)),
     vscode.commands.registerCommand('agentSessions.groupBy', async () => {
       const picks: { label: string; description: string; value: GroupBy }[] = [
         { label: 'Activity', description: 'Active and pinned sessions first, then history', value: 'activity' },

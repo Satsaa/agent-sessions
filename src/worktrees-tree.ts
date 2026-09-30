@@ -31,21 +31,37 @@ export class WorktreeItem extends vscode.TreeItem {
   readonly children: SessionItem[];
 }
 
+/** A repository's linked worktrees that no session uses, collapsed out of the way. */
+class UnusedItem extends vscode.TreeItem {
+  constructor(
+    root: string,
+    public readonly children: WorktreeItem[],
+  ) {
+    super('Unused', vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = `worktree-unused:${root}`;
+    this.contextValue = 'worktree-group';
+    this.iconPath = new vscode.ThemeIcon('folder');
+    this.description = `${children.length}`;
+    this.tooltip = 'Worktrees no session is bound to. Archived sessions do not count; stopped ones do.';
+  }
+}
+
 class RepoItem extends vscode.TreeItem {
   constructor(
     public readonly root: string,
-    public readonly children: WorktreeItem[],
+    public readonly children: (WorktreeItem | UnusedItem)[],
+    linked: number,
   ) {
     super(path.basename(root) || root, vscode.TreeItemCollapsibleState.Expanded);
     this.id = `worktree-repo:${root}`;
     this.contextValue = 'worktree-repo';
     this.iconPath = new vscode.ThemeIcon('repo');
-    this.description = `${children.length - 1} worktree${children.length === 2 ? '' : 's'}`;
+    this.description = `${linked} worktree${linked === 1 ? '' : 's'}`;
     this.tooltip = root;
   }
 }
 
-type Node = RepoItem | WorktreeItem | SessionItem;
+type Node = RepoItem | UnusedItem | WorktreeItem | SessionItem;
 
 function iconFor(wt: RepoWorktree, stats: WorktreeStats | undefined, sessions: Session[]): vscode.ThemeIcon {
   if (stats?.gone || wt.prunable) return new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.orange'));
@@ -112,7 +128,7 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
   private roots: Node[] = [];
 
   /** Every worktree found, with stats and the sessions bound to it. */
-  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>, showAllSubagents: boolean): void {
+  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>, showAllSubagents: boolean, groupUnused = false): void {
     // Spawned sessions nest under their parent wherever that parent is shown; they are never rows of their own here.
     const childrenOf = new Map<string, Session[]>();
     const now = Date.now();
@@ -142,14 +158,26 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
       const stopped = all.filter((s) => !working(s) && !isPinned(s) && !s.empty).slice(0, RECENT_STOPPED);
       return [...active, ...stopped];
     };
+    // Any session not archived keeps its worktree in use, a stopped one included; one that never got a prompt
+    // is not a use unless it is live.
+    const used = (wt: RepoWorktree): boolean => (byPath.get(wt.path) ?? [])
+      .some((s) => !s.archived && !locallyArchived.has(`${s.tool}:${s.id}`) && (!s.empty || isLive(s.state)));
     const byRepo = new Map<string, WorktreeItem[]>();
     for (const wt of worktrees) {
       const list = byRepo.get(wt.repoRoot) ?? [];
       list.push(new WorktreeItem(wt, stats.get(wt.path), assigned(wt), locallyArchived, pinned, childrenOf));
       byRepo.set(wt.repoRoot, list);
     }
+    const rows = (root: string, items: WorktreeItem[]): (WorktreeItem | UnusedItem)[] => {
+      if (!groupUnused) return items;
+      const unused = items.filter((i) => !i.worktree.isMain && !used(i.worktree));
+      if (!unused.length) return items;
+      return [...items.filter((i) => !unused.includes(i)), new UnusedItem(root, unused)];
+    };
     const repos = [...byRepo.entries()];
-    this.roots = repos.length === 1 ? repos[0]![1] : repos.map(([root, items]) => new RepoItem(root, items));
+    this.roots = repos.length === 1
+      ? rows(repos[0]![0], repos[0]![1])
+      : repos.map(([root, items]) => new RepoItem(root, rows(root, items), items.filter((i) => !i.worktree.isMain).length));
     this.changed.fire(undefined);
   }
 

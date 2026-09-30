@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.12",
+  "version": "0.8.13",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -161,6 +161,18 @@
         "title": "Show All Repositories",
         "category": "Agent Sessions",
         "icon": "$(filter-filled)"
+      },
+      {
+        "command": "agentSessions.groupUnusedWorktrees",
+        "title": "Group Unused Worktrees",
+        "category": "Agent Sessions",
+        "icon": "$(folder)"
+      },
+      {
+        "command": "agentSessions.ungroupUnusedWorktrees",
+        "title": "Show Unused Worktrees Inline",
+        "category": "Agent Sessions",
+        "icon": "$(folder-opened)"
       },
       {
         "command": "agentSessions.groupBy",
@@ -392,6 +404,16 @@
           "command": "agentSessions.refresh",
           "when": "view == agentSessions.worktrees",
           "group": "navigation"
+        },
+        {
+          "command": "agentSessions.groupUnusedWorktrees",
+          "when": "view == agentSessions.worktrees && !agentSessions.groupUnusedWorktrees",
+          "group": "1_filters@1"
+        },
+        {
+          "command": "agentSessions.ungroupUnusedWorktrees",
+          "when": "view == agentSessions.worktrees && agentSessions.groupUnusedWorktrees",
+          "group": "1_filters@1"
         },
         {
           "command": "agentSessions.switchCodexAccount",
@@ -714,6 +736,11 @@
           "type": "boolean",
           "default": false,
           "description": "Show every spawned subagent and teammate: nested under its session, or as a row of its own when the parent is not listed. Off: only those working or finished within the last five minutes appear."
+        },
+        "agentSessions.groupUnusedWorktrees": {
+          "type": "boolean",
+          "default": false,
+          "description": "In the Worktrees view, collect each repository's linked worktrees that no session is bound to under one collapsed Unused row. Archived sessions do not count as a use; stopped ones do. The main checkout is never grouped."
         },
         "agentSessions.parentSessionMarker": {
           "type": "string",
