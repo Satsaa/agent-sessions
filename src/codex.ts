@@ -4,6 +4,7 @@ import * as readline from 'node:readline';
 import { createReadStream } from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import type { Session, SessionState } from './types.js';
+import { PROMPT_HEAD } from './markers.js';
 import { cleanTitle, expandHome, listDir, statOrUndefined, walkFiles } from './util.js';
 import { FileCache } from './file-cache.js';
 import { type Scan, scanAppended } from './appended.js';
@@ -302,6 +303,7 @@ async function listFromSqlite(home: string, names: Map<string, string>, locks: M
       pid: locks.get(r.id),
       inThisWindow: false,
       permissionMode: undefined,
+      promptHead: r.first_user_message?.slice(0, PROMPT_HEAD) || undefined,
     });
   }
   return sessions;
@@ -343,18 +345,20 @@ interface RolloutSummary {
   agentRole: string | undefined;
   agentLabel: string | undefined;
   firstPrompt: string | undefined;
+  /** The first prompt's start as sent, before cleaning. */
+  promptHead: string | undefined;
   lastTurnInProgress: boolean;
   lastAt: number | undefined;
   firstAt: number | undefined;
 }
 
 /** Bump when summarizeRollout reads something new or reads it differently. */
-const rolloutCache = new FileCache<RolloutSummary & Scan>('codex-rollouts', 3);
+const rolloutCache = new FileCache<RolloutSummary & Scan>('codex-rollouts', 4);
 
 async function summarizeRollout(file: string, mtimeMs: number, size: number): Promise<RolloutSummary> {
   const cached = rolloutCache.get(file, mtimeMs, size);
   if (cached) return cached;
-  const fresh = (): RolloutSummary & Scan => ({ id: undefined, cwd: undefined, branch: undefined, subagent: false, review: false, parentId: undefined, agentRole: undefined, agentLabel: undefined, firstPrompt: undefined, lastTurnInProgress: false, lastAt: undefined, firstAt: undefined, offset: 0, tail: '' });
+  const fresh = (): RolloutSummary & Scan => ({ id: undefined, cwd: undefined, branch: undefined, subagent: false, review: false, parentId: undefined, agentRole: undefined, agentLabel: undefined, firstPrompt: undefined, promptHead: undefined, lastTurnInProgress: false, lastAt: undefined, firstAt: undefined, offset: 0, tail: '' });
   const summary = await scanAppended(file, size, rolloutCache.previous(file)?.value, fresh, (summary, line) => {
     let d: { type?: string; timestamp?: string; payload?: Record<string, unknown> };
     try {
@@ -386,8 +390,12 @@ async function summarizeRollout(file: string, mtimeMs: number, size: number): Pr
     } else if (d.type === 'event_msg') {
       const kind = p.type;
       if (kind === 'user_message' && !summary.firstPrompt) {
-        const t = cleanTitle(String(p.message ?? ''));
-        if (t) summary.firstPrompt = t;
+        const message = String(p.message ?? '');
+        const t = cleanTitle(message);
+        if (t) {
+          summary.firstPrompt = t;
+          summary.promptHead = message.slice(0, PROMPT_HEAD);
+        }
       }
       if (kind === 'task_started') summary.lastTurnInProgress = true;
       else if (kind === 'task_complete' || kind === 'turn_aborted' || kind === 'error') summary.lastTurnInProgress = false;
@@ -433,6 +441,7 @@ async function listFromRollouts(home: string, names: Map<string, string>, locks:
         pid: locks.get(s.id),
         inThisWindow: false,
         permissionMode: undefined,
+        promptHead: s.promptHead,
       });
     }
   }

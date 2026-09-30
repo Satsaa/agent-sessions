@@ -203,7 +203,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     const all: Session[] = [];
     const now = Date.now();
     for (const s of sessions) {
-      const parentKey = s.subagent && s.parentId ? `${s.tool}:${s.parentId}` : undefined;
+      const parentKey = s.subagent && s.parentId ? `${s.parentTool ?? s.tool}:${s.parentId}` : undefined;
       if (parentKey && rows.has(parentKey)) {
         if (!this.options.showSubagents && !recentSubagent(s, now)) continue;
         const list = childrenOf.get(parentKey) ?? [];
@@ -279,7 +279,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     const archivedWithAncestors = (s: Session): boolean => {
       for (let at: Session | undefined = s, depth = 0; at && depth < 32; depth++) {
         if (at.archived || o.locallyArchived.has(`${at.tool}:${at.id}`)) return true;
-        at = at.subagent && at.parentId ? byKey.get(`${at.tool}:${at.parentId}`) : undefined;
+        at = at.subagent && at.parentId ? byKey.get(`${at.parentTool ?? at.tool}:${at.parentId}`) : undefined;
       }
       return false;
     };
@@ -299,8 +299,10 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     const o = this.options;
     const { all, childrenOf } = this.topLevel(this.filtered());
     const isPinned = (s: Session) => o.pinned.has(`${s.tool}:${s.id}`);
-    const active = all.filter((s) => isLive(s.state) || isPinned(s)).sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || byStart(a, b));
-    const history = all.filter((s) => !isLive(s.state) && !isPinned(s)).sort(byRecency).slice(0, o.historyLimit);
+    // A session another agent was handed keeps working after its parent stops; the parent stays with it in Active.
+    const working = (s: Session) => isLive(s.state) || (childrenOf.get(`${s.tool}:${s.id}`) ?? []).some((c) => isLive(c.state));
+    const active = all.filter((s) => working(s) || isPinned(s)).sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || byStart(a, b));
+    const history = all.filter((s) => !working(s) && !isPinned(s)).sort(byRecency).slice(0, o.historyLimit);
     const shown = [...active, ...history];
     const item = (s: Session, showTool = true): SessionItem =>
       new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), showTool, s.worktree ? this.stats.get(s.worktree.path) : undefined, '', isPinned(s), retiredSuffix(s),

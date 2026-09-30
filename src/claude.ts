@@ -5,6 +5,7 @@ import type { Session, SessionState } from './types.js';
 import type { WatchSpec, Worktree } from './types.js';
 import { cleanTitle, expandHome, listDir, processAlive, readJsonFile, statOrUndefined } from './util.js';
 import { FileCache } from './file-cache.js';
+import { PROMPT_HEAD } from './markers.js';
 import { type Scan, scanAppended } from './appended.js';
 import { commandDirs, inRepository, worktreeFromCwd, worktreeFromPath } from './worktree.js';
 
@@ -81,6 +82,8 @@ interface TranscriptSummary {
   hasPrompt: boolean;
   /** The permission mode the last prompt ran in, and that prompt's time. */
   permissionMode: { mode: string; at: number } | undefined;
+  /** The first prompt's start as sent, before cleaning. */
+  promptHead: string | undefined;
 }
 
 /** A summary as far as the transcript was read (see appended.ts). */
@@ -91,7 +94,7 @@ interface TranscriptScan extends TranscriptSummary, Scan {
 }
 
 /** Bump when summarizeTranscript reads something new or reads it differently. */
-const transcriptCache = new FileCache<TranscriptScan>('claude-transcripts', 3);
+const transcriptCache = new FileCache<TranscriptScan>('claude-transcripts', 4);
 
 interface TranscriptLine {
   type?: string;
@@ -147,7 +150,7 @@ function freshScan(): TranscriptScan {
   return {
     title: undefined, cwd: undefined, branch: undefined, worktree: undefined, lastCwd: undefined, workDir: undefined, lastAt: undefined, firstAt: undefined,
     lastRole: undefined, lastInterrupted: false, hasPrompt: false, permissionMode: undefined,
-    customTitle: undefined, aiTitle: undefined, firstPrompt: undefined, offset: 0, tail: '',
+    customTitle: undefined, aiTitle: undefined, firstPrompt: undefined, promptHead: undefined, offset: 0, tail: '',
   };
 }
 
@@ -218,7 +221,10 @@ function readRecord(scan: TranscriptScan, line: string, sidechain: boolean): voi
         scan.hasPrompt = true;
         if (!scan.firstPrompt) {
           const cleaned = cleanTitle(text);
-          if (cleaned) scan.firstPrompt = cleaned;
+          if (cleaned) {
+            scan.firstPrompt = cleaned;
+            scan.promptHead = text.slice(0, PROMPT_HEAD);
+          }
         }
       }
       scan.lastRole = role;
@@ -367,6 +373,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
         pid: liveInfo?.pid,
         inThisWindow: false,
         permissionMode: summary.permissionMode,
+        promptHead: summary.promptHead,
       };
       sessions.push(parent);
       if (sessionDirs.has(id)) sessions.push(...(await listSubagents(parent, liveInfo)));

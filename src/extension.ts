@@ -32,6 +32,7 @@ import { listRepoWorktrees, loadWorktreeStats, sessionWorktrees, type RepoWorktr
 import { WorktreeItem, WorktreesProvider } from './worktrees-tree.js';
 import { repoRootOf } from './util.js';
 import { stopRunner } from './runner.js';
+import { parentMarker, withMarkedParents } from './markers.js';
 import { handoverNote, handoverTarget, writeHandoverNote } from './handover.js';
 import { type MarkList, type SessionMarks, marksFile, mergeMarks, readMarks, setMark, watchMarks } from './marks.js';
 import * as path from 'node:path';
@@ -44,6 +45,7 @@ interface Config {
   claudeHome: string;
   codexHome: string;
   pollInterval: number;
+  parentMarker: RegExp | undefined;
   phoneMode: boolean;
   keepSessionsRunning: boolean;
   usage: { enabled: boolean; claudeNetwork: boolean; codexNetwork: boolean; refreshInterval: number };
@@ -57,6 +59,7 @@ function readConfig(): Config {
     claudeHome: claudeHome(c.get<string>('claudeHome', '')),
     codexHome: codexHome(c.get<string>('codexHome', '')),
     pollInterval: Math.max(1, c.get<number>('pollInterval', 5)),
+    parentMarker: parentMarker(c.get<string>('parentSessionMarker', '')),
     phoneMode: c.get<boolean>('phoneMode', false),
     keepSessionsRunning: c.get<boolean>('keepSessionsRunning', false),
     usage: {
@@ -337,7 +340,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const reading = config.tools.filter((t) => stale.has(t));
         stale.clear();
         await Promise.all(reading.map(async (t) => (lists[t] = await listTool(t))));
-        const sessions: Session[] = config.tools.flatMap((t) => lists[t]);
+        const sessions = withMarkedParents(config.tools.flatMap((t) => lists[t]), config.parentMarker);
         latestSessions = sessions;
         scanned();
         void finishPendingOpen(sessions);

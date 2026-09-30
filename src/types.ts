@@ -37,8 +37,15 @@ export interface Session {
   archived: boolean;
   /** Spawned by another session rather than started by a person. */
   subagent: boolean;
-  /** The session that spawned this one (same tool), when the tool records it; a spawned session with no parent stands alone. */
+  /** The session that spawned this one, when the tool records it or a marker names it; a spawned session with no parent stands alone. */
   parentId: string | undefined;
+  /**
+   * The parent's tool, set only when the first prompt's marker named the parent (markers.ts): it may be the other
+   * tool, and the session's transcript is its own rather than a sidechain of the parent's. Absent: the session's tool.
+   */
+  parentTool?: Tool;
+  /** The start of the first prompt as sent, marker included (markers.ts). */
+  promptHead?: string | undefined;
   /** What the spawning session called this agent: a teammate's name, an agent type, a Codex nickname. */
   agentRole: string | undefined;
   /** No prompt was ever sent. */

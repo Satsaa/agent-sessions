@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.11",
+  "version": "0.8.12",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -714,6 +714,11 @@
           "type": "boolean",
           "default": false,
           "description": "Show every spawned subagent and teammate: nested under its session, or as a row of its own when the parent is not listed. Off: only those working or finished within the last five minutes appear."
+        },
+        "agentSessions.parentSessionMarker": {
+          "type": "string",
+          "default": "<parent-session>(?<tool>claude|codex):(?<id>[\\w.-]+)</parent-session>",
+          "markdownDescription": "A regular expression matched against the start of a session's first prompt (its first 1000 characters). A session whose first prompt matches was started by another agent, and is listed as a subagent of the session the `id` group names — in the tool the optional `tool` group names (`claude` or `codex`), the session's own tool without it. An optional `role` group labels it. A tool that starts sessions for an agent puts the marker in the prompt it sends, e.g. `<parent-session>codex:019a…</parent-session>`; the default pattern recognises that form, and a tag-wrapped marker stays out of the session's title. Empty turns detection off."
         },
         "agentSessions.showEmpty": {
           "type": "boolean",

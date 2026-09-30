@@ -119,9 +119,10 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
     for (const s of sessions) {
       if (!s.subagent || !s.parentId) continue;
       if (!showAllSubagents && !recentSubagent(s, now)) continue;
-      const list = childrenOf.get(`${s.tool}:${s.parentId}`) ?? [];
+      const parentKey = `${s.parentTool ?? s.tool}:${s.parentId}`;
+      const list = childrenOf.get(parentKey) ?? [];
       list.push(s);
-      childrenOf.set(`${s.tool}:${s.parentId}`, list);
+      childrenOf.set(parentKey, list);
     }
     for (const list of childrenOf.values()) list.sort((a, b) => b.startedAt - a.startedAt);
     const byPath = new Map<string, Session[]>();
@@ -136,8 +137,9 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
       const isPinned = (s: Session) => pinned.has(`${s.tool}:${s.id}`);
       const all = (byPath.get(wt.path) ?? []).filter((s) => !s.archived && !locallyArchived.has(`${s.tool}:${s.id}`) && !s.subagent)
         .sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || byLiveThenTime(a, b));
-      const active = all.filter((s) => isLive(s.state) || isPinned(s));
-      const stopped = all.filter((s) => !isLive(s.state) && !isPinned(s) && !s.empty).slice(0, RECENT_STOPPED);
+      const working = (s: Session) => isLive(s.state) || (childrenOf.get(`${s.tool}:${s.id}`) ?? []).some((c) => isLive(c.state));
+      const active = all.filter((s) => working(s) || isPinned(s));
+      const stopped = all.filter((s) => !working(s) && !isPinned(s) && !s.empty).slice(0, RECENT_STOPPED);
       return [...active, ...stopped];
     };
     const byRepo = new Map<string, WorktreeItem[]>();

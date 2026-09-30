@@ -50,6 +50,18 @@ Claude Code resumes only sessions started in the window's first folder, so openi
 
 - **Archived** sessions are hidden. Codex's own archive flag is honoured; sessions archived or pinned from this view are kept in `~/.agent-sessions/state.json`, shared live by every window running as the same user (desktop remote windows and the phone server alike). Marks from earlier versions move there on first start.
 - **Subagent threads** (Codex threads spawned by another thread) are hidden.
+
+### Sessions another agent started
+
+A session one agent starts for another through the CLI (`claude -p`, `codex exec`) is an ordinary session to its tool, so it would list as a person's. When the first prompt it is sent begins with a marker naming the parent, it is listed as that session's subagent instead — across tools, a Codex worker under a Claude session or the reverse — and its parent stays in Active while it works:
+
+```
+<parent-session>claude:71c0ac70-b954-42f2-80f2-fdd44455d951</parent-session>
+
+The task…
+```
+
+`agentSessions.parentSessionMarker` is the pattern: its `id` group names the parent, the optional `tool` group its tool (the child's own without it), an optional `role` group labels the row. Empty turns it off. The tag-wrapped default stays out of the title.
 - **Empty** stopped sessions where no prompt was ever sent are hidden.
 - History is capped at 200 sessions (`agentSessions.historyLimit`).
 
@@ -92,6 +104,7 @@ pnpm package      # agent-sessions-<version>.vsix
 | `agentSessions.scope` | `all` | `workspace` limits to the current repo and its worktrees |
 | `agentSessions.showArchived` | `false` | |
 | `agentSessions.showSubagents` | `false` | |
+| `agentSessions.parentSessionMarker` | `<parent-session>(?<tool>claude\|codex):(?<id>[\w.-]+)</parent-session>` | first-prompt marker of a session another agent started; empty turns it off |
 | `agentSessions.showEmpty` | `false` | stopped sessions with no prompt |
 | `agentSessions.historyLimit` | `200` | |
 | `agentSessions.pollInterval` | `5` | seconds, while any session is live |

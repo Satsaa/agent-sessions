@@ -116,7 +116,7 @@ async function readCodex(file: string): Promise<TranscriptMessage[]> {
 
 export async function readTranscript(session: Session): Promise<TranscriptMessage[]> {
   if (!session.transcriptPath) return [];
-  return session.tool === 'claude' ? readClaude(session.transcriptPath, session.subagent) : readCodex(session.transcriptPath);
+  return session.tool === 'claude' ? readClaude(session.transcriptPath, session.subagent && !session.parentTool) : readCodex(session.transcriptPath);
 }
 
 /** Consecutive assistant records (one reply streamed as several messages) merge into one block. */
