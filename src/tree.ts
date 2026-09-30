@@ -366,8 +366,13 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   }
 }
 
+/** A tree row with the rows nested under it. */
+export interface Row extends vscode.TreeItem {
+  readonly children: readonly Row[];
+}
+
 /** Everything a row shows, so equal keys mean an equal picture. */
-function renderKey(node: Node): unknown {
+export function renderKey(node: Row): unknown {
   const icon = node.iconPath;
   const iconKey =
     icon instanceof vscode.ThemeIcon ? `${icon.id}:${icon.color?.id ?? ''}`

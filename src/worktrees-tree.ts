@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { SessionItem, recentSubagent } from './tree.js';
+import { SessionItem, recentSubagent, renderKey } from './tree.js';
 import { isLive, type Session } from './types.js';
 import { statsInline, type RepoWorktree, type WorktreeStats } from './worktree.js';
 
@@ -126,6 +126,8 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
   private readonly changed = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
   private roots: Node[] = [];
+  /** What the view last rendered; as in the Sessions view, a rebuild that changes nothing visible fires no event. */
+  private rendered = '';
 
   /** Every worktree found, with stats and the sessions bound to it. */
   set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>, showAllSubagents: boolean): void {
@@ -177,6 +179,9 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
     this.roots = repos.length === 1
       ? rows(repos[0]![0], repos[0]![1])
       : repos.map(([root, items]) => new RepoItem(root, rows(root, items), items.filter((i) => !i.worktree.isMain).length));
+    const rendered = JSON.stringify(this.roots.map(renderKey));
+    if (rendered === this.rendered) return;
+    this.rendered = rendered;
     this.changed.fire(undefined);
   }
 

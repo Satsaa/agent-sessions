@@ -150,3 +150,16 @@ test('archiving a session hides its subagents instead of promoting them to rows'
   provider.setOptions(options({ pinned: new Set(), locallyArchived: new Set(['codex:parent']), showArchived: true }));
   assert.deepEqual(provider.getChildren()[0].children.filter(row => row.session.id !== 'grandchild').map(row => row.session.id), ['parent'], 'showing archived brings the parent back with its subagent nested again');
 });
+
+test('the Worktrees view redraws only when a row it shows changes', () => {
+  let fired = 0;
+  const provider = new WorktreesProvider();
+  provider.changed.fire = () => { fired++; };
+  const trees = [{ path: '/repo', repoRoot: '/repo', name: 'repo', isMain: true }, { path: '/repo-wt/a', repoRoot: '/repo', name: 'a', isMain: false }];
+  const sessions = [session('s', { cwd: '/repo-wt/a' })];
+  provider.set(trees, new Map(), sessions, new Set(), new Set(), false);
+  provider.set(trees, new Map(), sessions.map((s) => ({ ...s })), new Set(), new Set(), false);
+  assert.equal(fired, 1, 'VS Code shows a progress bar on every change event, so an identical rebuild must not fire one');
+  provider.set(trees, new Map(), [], new Set(), new Set(), false);
+  assert.equal(fired, 2, 'a worktree losing its session is a visible change');
+});
