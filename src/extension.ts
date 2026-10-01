@@ -22,7 +22,7 @@ import { listCodexAccounts } from './codex-accounts.js';
 import { closeCodexSession } from './close.js';
 import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
-import { SessionItem, SessionsProvider, type GroupBy, type ViewOptions } from './tree.js';
+import { SessionItem, SessionsProvider, type GroupBy, type SubagentLayout, type ViewOptions } from './tree.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
 import { switchCodexAccount } from './codex-accounts-ui.js';
 import { fetchClaudeUsage, readCodexUsage, type ToolUsage, readInactiveCodexUsage } from './usage.js';
@@ -73,6 +73,7 @@ function readConfig(): Config {
       scope: c.get<'all' | 'workspace'>('scope', 'all'),
       showArchived: c.get<boolean>('showArchived', false),
       showSubagents: c.get<boolean>('showSubagents', false),
+      subagentLayout: c.get<SubagentLayout>('subagentLayout', 'nested'),
       showEmpty: c.get<boolean>('showEmpty', false),
       historyLimit: c.get<number>('historyLimit', 200),
     },
@@ -360,7 +361,7 @@ export function activate(context: vscode.ExtensionContext): void {
         forceStats = false;
         const stats = await loadWorktreeStats([...sessionWorktrees(provider.visible()), ...(worktreesView.visible ? worktrees : [])], mains, live, force);
         provider.setWorktreeStats(stats);
-        worktreesProvider.set(worktrees, stats, sessions, archived, pinned, config.view.showSubagents);
+        worktreesProvider.set(worktrees, stats, sessions, archived, pinned, config.view.showSubagents, config.view.subagentLayout);
         const linked = worktrees.filter((w) => !w.isMain).length;
         worktreesView.description = linked ? `${linked}` : '';
       } finally {
@@ -593,6 +594,15 @@ export function activate(context: vscode.ExtensionContext): void {
       ];
       const chosen = await vscode.window.showQuickPick(picks, { placeHolder: 'Group sessions by' });
       if (chosen) await setting('groupBy', chosen.value);
+    }),
+    vscode.commands.registerCommand('agentSessions.subagentLayout', async () => {
+      const picks: { label: string; description: string; value: SubagentLayout }[] = [
+        { label: 'Under parent (nested)', description: 'A tree: each subagent under the session that spawned it', value: 'nested' },
+        { label: 'Under parent (flat)', description: 'Every spawned session directly under the top thread', value: 'flat' },
+        { label: 'At root', description: 'A row of its own, like any session', value: 'root' },
+      ];
+      const chosen = await vscode.window.showQuickPick(picks, { placeHolder: 'Show subagents' });
+      if (chosen) await setting('subagentLayout', chosen.value);
     }),
     vscode.commands.registerCommand('agentSessions.open', async (arg: unknown) => {
       const s = sessionOf(arg);

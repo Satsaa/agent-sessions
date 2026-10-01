@@ -43,6 +43,7 @@ Two status bar items mirror this: working / waiting / replied counts on the left
 - **⋯ More Actions…** on each row lists everything its right-click menu offers: Resume in Terminal (`claude --resume` / `codex resume` in the session's cwd), Copy Resume Command, Open Transcript File, Open Working Directory in New Window, Archive / Unarchive, and the rest. Archive also has its own button on every session row, running or not.
 - **Move to Codex / Move to Claude** starts a new session in the other tool and archives the old one. Neither tool can import the other's history, so the new session starts from a handover note that points at the old transcript (and its folder) for the agent to read. Claude Code gets the note as its first prompt, ready to send. Codex's panel takes no text from outside, so the note is attached to a new Codex thread as a file (`~/.agent-sessions/handovers/`), and you send a message to start it.
 - View menu: show/hide archived sessions, show/hide subagent threads, only this repository (worktrees of the workspace's repo included), group by Activity / Repository / Tool / None.
+- **Subagent Layout…** (view menu, `agentSessions.subagentLayout`): spawned sessions — subagents, teammates, and sessions another agent started — go *under their parent* as a tree (the default: a subagent's own subagents under it, at any depth and across tools, the thread opening collapsed and everything inside it expanded), *under the parent flat* (every descendant directly under the top session's thread), or *at root* as rows of their own. In the tree an older spawned session stays while one under it still works, so the chain to it is never cut.
 
 Claude Code resumes only sessions started in the window's first folder, so opening a Claude session from another folder hands it to a window on that folder, which opens it: a new window, or the one already open there. Codex sessions open in any window. If the Claude Code or Codex extension is not installed, opening falls back to a terminal.
 
@@ -104,6 +105,7 @@ pnpm package      # agent-sessions-<version>.vsix
 | `agentSessions.scope` | `all` | `workspace` limits to the current repo and its worktrees |
 | `agentSessions.showArchived` | `false` | |
 | `agentSessions.showSubagents` | `false` | |
+| `agentSessions.subagentLayout` | `nested` | `nested` tree under the parent, `flat` under the top thread, `root` as rows |
 | `agentSessions.parentSessionMarker` | `<parent-session>(?<tool>claude\|codex):(?<id>[\w.-]+)</parent-session>` | first-prompt marker of a session another agent started; empty turns it off |
 | `agentSessions.showEmpty` | `false` | stopped sessions with no prompt |
 | `agentSessions.historyLimit` | `200` | |

@@ -11,8 +11,78 @@ export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
 export const SUBAGENT_LINGER_MS = 5 * 60_000;
 
 /** A spawned session worth a row by default: still working, or finished within the linger window. */
-export function recentSubagent(s: Session, now = Date.now()): boolean {
+function recentSubagent(s: Session, now = Date.now()): boolean {
   return isLive(s.state) || now - s.updatedAt < SUBAGENT_LINGER_MS;
+}
+
+/** Where a spawned session is shown: under its own parent, under its top session's thread directly, or as a row. */
+export type SubagentLayout = 'nested' | 'flat' | 'root';
+
+const sessionKey = (s: Session): string => `${s.tool}:${s.id}`;
+const parentKeyOf = (s: Session): string | undefined => (s.subagent && s.parentId ? `${s.parentTool ?? s.tool}:${s.parentId}` : undefined);
+
+/**
+ * Rows, and per session key the spawned sessions shown under it. A spawned session is kept while it is recent (or
+ * always, with `showAll`); in the nested layout so is an older one whose own descendants are kept, so the chain to
+ * them stays whole. A spawned session whose parent is not among `sessions` is a row of its own.
+ */
+export function arrangeSubagents(sessions: Session[], layout: SubagentLayout, showAll: boolean, now = Date.now()): { rows: Session[]; childrenOf: Map<string, Session[]> } {
+  const byKey = new Map(sessions.map((s) => [sessionKey(s), s]));
+  const parentOf = (s: Session): Session | undefined => {
+    const key = parentKeyOf(s);
+    const parent = key ? byKey.get(key) : undefined;
+    return parent === s ? undefined : parent;
+  };
+  const spawned = new Map<string, Session[]>();
+  for (const s of sessions) {
+    const parent = parentOf(s);
+    if (!parent) continue;
+    const list = spawned.get(sessionKey(parent)) ?? [];
+    list.push(s);
+    spawned.set(sessionKey(parent), list);
+  }
+  const recent = (s: Session) => showAll || recentSubagent(s, now);
+  // Memoised, with the in-progress mark doubling as a guard against a cycle in bad data.
+  const kept = new Map<string, boolean>();
+  const keep = (s: Session): boolean => {
+    const key = sessionKey(s);
+    const known = kept.get(key);
+    if (known !== undefined) return known;
+    kept.set(key, false);
+    const result = recent(s) || (layout === 'nested' && (spawned.get(key) ?? []).some(keep));
+    kept.set(key, result);
+    return result;
+  };
+  const top = (s: Session): Session => {
+    let at = s;
+    for (let depth = 0, up = parentOf(at); up && depth < 32; depth++, up = parentOf(at)) at = up;
+    return at;
+  };
+  const rows: Session[] = [];
+  const childrenOf = new Map<string, Session[]>();
+  const add = (under: Session, s: Session) => {
+    const list = childrenOf.get(sessionKey(under)) ?? [];
+    list.push(s);
+    childrenOf.set(sessionKey(under), list);
+  };
+  for (const s of sessions) {
+    if (!s.subagent) {
+      rows.push(s);
+      continue;
+    }
+    if (!keep(s)) continue;
+    const parent = parentOf(s);
+    if (!parent || layout === 'root') rows.push(s);
+    else if (layout === 'nested') add(parent, s);
+    else {
+      // A flat thread hangs off its top session; a top session that is itself spawned and not kept has no row.
+      const head = top(s);
+      if (head.subagent && !keep(head)) rows.push(s);
+      else add(head, s);
+    }
+  }
+  for (const list of childrenOf.values()) list.sort(byStart);
+  return { rows, childrenOf };
 }
 
 export interface ViewOptions {
@@ -20,6 +90,7 @@ export interface ViewOptions {
   scope: 'all' | 'workspace';
   showArchived: boolean;
   showSubagents: boolean;
+  subagentLayout: SubagentLayout;
   showEmpty: boolean;
   historyLimit: number;
   /** Sessions archived from this view (kept in this extension's own state). */
@@ -39,7 +110,8 @@ export class SessionItem extends vscode.TreeItem {
     /** Subagents and teammates this session spawned, shown under it. */
     public readonly children: SessionItem[] = [],
   ) {
-    super(session.title, children.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
+    // A session's thread opens collapsed; inside it, every spawned session's own subtree is already open.
+    super(session.title, !children.length ? vscode.TreeItemCollapsibleState.None : session.subagent ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     const archived = session.archived || archivedHere;
     this.id = `${idPrefix}${session.tool}:${session.id}${idSuffix}`;
     this.iconPath = stateIcon(session.tool, session.state, archived);
@@ -192,29 +264,10 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     return this.topLevel(this.filtered()).all;
   }
 
-  /**
-   * Split the filtered sessions into rows and the spawned sessions nested under a shown row. By default a child is
-   * shown only while active or for a few minutes after, and a spawned session whose parent is not a row stands alone
-   * under the same rule; "show all subagents" lifts the limit for both.
-   */
+  /** Split the filtered sessions into rows and the spawned sessions shown under them (see `arrangeSubagents`). */
   private topLevel(sessions: Session[]): { all: Session[]; childrenOf: Map<string, Session[]> } {
-    const rows = new Set(sessions.filter((s) => !s.subagent).map((s) => `${s.tool}:${s.id}`));
-    const childrenOf = new Map<string, Session[]>();
-    const all: Session[] = [];
-    const now = Date.now();
-    for (const s of sessions) {
-      const parentKey = s.subagent && s.parentId ? `${s.parentTool ?? s.tool}:${s.parentId}` : undefined;
-      if (parentKey && rows.has(parentKey)) {
-        if (!this.options.showSubagents && !recentSubagent(s, now)) continue;
-        const list = childrenOf.get(parentKey) ?? [];
-        list.push(s);
-        childrenOf.set(parentKey, list);
-      } else if (!s.subagent || this.options.showSubagents || recentSubagent(s, now)) {
-        all.push(s);
-      }
-    }
-    for (const list of childrenOf.values()) list.sort(byStart);
-    return { all, childrenOf };
+    const { rows, childrenOf } = arrangeSubagents(sessions, this.options.subagentLayout, this.options.showSubagents);
+    return { all: rows, childrenOf };
   }
 
   getTreeItem(element: Node): vscode.TreeItem {

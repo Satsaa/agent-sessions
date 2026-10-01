@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { SessionItem, recentSubagent, renderKey } from './tree.js';
+import { SessionItem, arrangeSubagents, renderKey, type SubagentLayout } from './tree.js';
 import { isLive, type Session } from './types.js';
 import { statsInline, type RepoWorktree, type WorktreeStats } from './worktree.js';
 
@@ -130,19 +130,10 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
   private rendered = '';
 
   /** Every worktree found, with stats and the sessions bound to it. */
-  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>, showAllSubagents: boolean): void {
-    // Spawned sessions nest under their parent wherever that parent is shown; they are never rows of their own here.
-    const childrenOf = new Map<string, Session[]>();
-    const now = Date.now();
-    for (const s of sessions) {
-      if (!s.subagent || !s.parentId) continue;
-      if (!showAllSubagents && !recentSubagent(s, now)) continue;
-      const parentKey = `${s.parentTool ?? s.tool}:${s.parentId}`;
-      const list = childrenOf.get(parentKey) ?? [];
-      list.push(s);
-      childrenOf.set(parentKey, list);
-    }
-    for (const list of childrenOf.values()) list.sort((a, b) => b.startedAt - a.startedAt);
+  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>, showAllSubagents: boolean, layout: SubagentLayout = 'nested'): void {
+    // Spawned sessions sit under their parent as in the Sessions view; only the root layout makes them rows of a worktree.
+    const { rows: sessionRows, childrenOf } = arrangeSubagents(sessions, layout, showAllSubagents);
+    const rowKeys = new Set(sessionRows.filter((s) => !s.subagent || layout === 'root').map((s) => `${s.tool}:${s.id}`));
     const byPath = new Map<string, Session[]>();
     for (const s of sessions) {
       const key = s.worktree?.path ?? (s.cwd ? path.resolve(s.cwd) : undefined);
@@ -153,7 +144,7 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
     }
     const assigned = (wt: RepoWorktree): Session[] => {
       const isPinned = (s: Session) => pinned.has(`${s.tool}:${s.id}`);
-      const all = (byPath.get(wt.path) ?? []).filter((s) => !s.archived && !locallyArchived.has(`${s.tool}:${s.id}`) && !s.subagent)
+      const all = (byPath.get(wt.path) ?? []).filter((s) => !s.archived && !locallyArchived.has(`${s.tool}:${s.id}`) && rowKeys.has(`${s.tool}:${s.id}`))
         .sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || byLiveThenTime(a, b));
       const working = (s: Session) => isLive(s.state) || (childrenOf.get(`${s.tool}:${s.id}`) ?? []).some((c) => isLive(c.state));
       const active = all.filter((s) => working(s) || isPinned(s));

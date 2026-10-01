@@ -69,7 +69,7 @@ test('age warning begins after ten minutes and clears on a successful fresh read
 });
 
 const session = (id, overrides = {}) => ({ tool: 'codex', id, title: id, state: 'stopped', startedAt: 1, updatedAt: 1, archived: false, subagent: false, empty: false, ...overrides });
-const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), ...overrides });
+const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, subagentLayout: 'nested', showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), ...overrides });
 
 test('pinned stopped sessions stay in Active outside the history cap without becoming live', () => {
   const provider = new SessionsProvider(options(), () => {});
@@ -148,7 +148,8 @@ test('archiving a session hides its subagents instead of promoting them to rows'
   provider.setOptions(options({ pinned: new Set(), locallyArchived: new Set(['codex:parent']) }));
   assert.deepEqual(provider.getChildren(), [], 'an archived session takes its subagents, however deep, out of the list with it');
   provider.setOptions(options({ pinned: new Set(), locallyArchived: new Set(['codex:parent']), showArchived: true }));
-  assert.deepEqual(provider.getChildren()[0].children.filter(row => row.session.id !== 'grandchild').map(row => row.session.id), ['parent'], 'showing archived brings the parent back with its subagent nested again');
+  const [row] = provider.getChildren()[0].children;
+  assert.deepEqual([row.session.id, row.children.map(c => c.session.id), row.children[0].children.map(c => c.session.id)], ['parent', ['child'], ['grandchild']], 'showing archived brings the parent back with its subagents nested again');
 });
 
 test('the Worktrees view redraws only when a row it shows changes', () => {
@@ -162,4 +163,25 @@ test('the Worktrees view redraws only when a row it shows changes', () => {
   assert.equal(fired, 1, 'VS Code shows a progress bar on every change event, so an identical rebuild must not fire one');
   provider.set(trees, new Map(), [], new Set(), new Set(), false);
   assert.equal(fired, 2, 'a worktree losing its session is a visible change');
+});
+
+test('a subagent of another agent’s session nests under that session, in the chosen layout', () => {
+  const now = Date.now();
+  const main = session('main', { tool: 'claude', state: 'running', updatedAt: now });
+  // A Codex session the Claude thread started, finished long ago, whose own spawned agent is still working.
+  const handed = session('handed', { subagent: true, parentId: 'main', parentTool: 'claude', updatedAt: now - 3_600_000, startedAt: 2 });
+  const spawned = session('spawned', { subagent: true, parentId: 'handed', state: 'running', updatedAt: now, startedAt: 3 });
+  const shown = (layout) => {
+    const provider = new SessionsProvider(options({ pinned: new Set(), subagentLayout: layout }), () => {});
+    provider.setSessions([main, handed, spawned]);
+    const tree = (row) => row.children.length ? { [row.session.id]: row.children.map(tree) } : row.session.id;
+    return provider.getChildren()[0].children.map(tree);
+  };
+  assert.deepEqual(shown('nested'), [{ main: [{ handed: ['spawned'] }] }], 'nested keeps the chain whole: an old session stays while its subagent works');
+  assert.deepEqual(shown('flat'), [{ main: ['spawned'] }], 'flat lists the working descendant directly under the top thread, without the stopped one between');
+  assert.deepEqual(shown('root'), ['spawned', 'main'], 'root makes every kept subagent a row of its own');
+  const provider = new SessionsProvider(options({ pinned: new Set() }), () => {});
+  provider.setSessions([main, handed, spawned]);
+  const [row] = provider.getChildren()[0].children;
+  assert.deepEqual([row.collapsibleState, row.children[0].collapsibleState], [1, 2], 'the thread opens collapsed, and everything inside it is expanded');
 });

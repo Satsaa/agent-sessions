@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.16",
+  "version": "0.8.17",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -167,6 +167,12 @@
         "title": "Group Sessions By…",
         "category": "Agent Sessions",
         "icon": "$(list-tree)"
+      },
+      {
+        "command": "agentSessions.subagentLayout",
+        "title": "Subagent Layout…",
+        "category": "Agent Sessions",
+        "icon": "$(type-hierarchy-sub)"
       },
       {
         "command": "agentSessions.open",
@@ -382,6 +388,11 @@
           "command": "agentSessions.groupBy",
           "when": "view == agentSessions.list",
           "group": "2_layout@1"
+        },
+        {
+          "command": "agentSessions.subagentLayout",
+          "when": "view == agentSessions.list",
+          "group": "2_layout@2"
         },
         {
           "command": "agentSessions.refreshUsage",
@@ -714,6 +725,21 @@
           "type": "boolean",
           "default": false,
           "description": "Show every spawned subagent and teammate: nested under its session, or as a row of its own when the parent is not listed. Off: only those working or finished within the last five minutes appear."
+        },
+        "agentSessions.subagentLayout": {
+          "type": "string",
+          "enum": [
+            "nested",
+            "flat",
+            "root"
+          ],
+          "enumDescriptions": [
+            "Under its own parent, as a tree: a subagent's subagents under it, expanded",
+            "Under the top session's thread, every spawned session at one level",
+            "As a row of its own, like any session"
+          ],
+          "default": "nested",
+          "description": "Where spawned subagents, teammates and sessions another agent started are shown."
         },
         "agentSessions.parentSessionMarker": {
           "type": "string",
