@@ -253,6 +253,8 @@ export function activate(context: vscode.ExtensionContext): void {
     void vscode.commands.executeCommand('setContext', 'agentSessions.scope', config.view.scope);
     void vscode.commands.executeCommand('setContext', 'agentSessions.phoneMode', config.phoneMode);
     phone.setEnabled(config.phoneMode);
+    // A filter switched off its default changes what every row shows, so the view's header says which ones are.
+    view.description = [config.view.showSubagents ? 'all subagents' : '', config.view.showArchived ? 'archived shown' : ''].filter(Boolean).join(' · ');
   };
   const phone = new PhoneLayout();
   context.subscriptions.push(phone);
