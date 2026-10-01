@@ -21,7 +21,8 @@ const linked = join(directory, 'repo-feature');
 const scratch = join(directory, 'scratch');
 const git = (...args) => execFileSync('git', ['-C', main, ...args], { stdio: 'ignore' });
 await mkdir(main, { recursive: true });
-await mkdir(scratch, { recursive: true });
+// An empty `.git` folder, as a stray mkdir leaves one, is not a repository: git itself needs a HEAD.
+await mkdir(join(scratch, '.git'), { recursive: true });
 git('init', '-q');
 git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
 git('worktree', 'add', '-q', '-b', 'feature', linked);

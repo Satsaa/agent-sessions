@@ -118,7 +118,8 @@ export function repoRootOf(dir: string | undefined): string | undefined {
     } catch {
       st = undefined;
     }
-    if (st?.isDirectory()) {
+    // Git itself needs a HEAD: an empty `.git` folder (a tool's stray mkdir) does not make a repository.
+    if (st?.isDirectory() && fs.existsSync(path.join(dotGit, 'HEAD'))) {
       result = cur;
       break;
     }
