@@ -151,7 +151,9 @@ started when it is not running) instead of a private `codex app-server` per wind
 a turn carries on without a client, every window that opens a thread joins the same running thread, and a thread no
 one is subscribed to unloads after a few minutes. Other commands the extension runs (its LSP bridge) go to its bundled
 `codex`, and so does the panel when the daemon cannot start. **Close** on a thread the daemon holds stops its turn
-over the daemon's protocol rather than the process, which serves every window and the terminal. Commands run in the
+over the daemon's protocol rather than the process, which serves every window and the terminal. When the daemon restarts (an update, say), the panel's connection is re-established and its threads rejoined, since
+the Codex extension never starts a second app-server and would otherwise show "Codex process is not available" until
+the window reloads; a turn that was running when the daemon stopped is lost with it. Commands run in the
 daemon's environment, not the window's; VS Code shows "Using a custom CLI executable" in the Codex composer.
 
 A wrapper someone else configured is left alone and reported. Turning the setting off takes the settings back;

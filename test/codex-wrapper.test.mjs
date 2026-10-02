@@ -31,7 +31,7 @@ before(async () => {
 
 after(() => rm(dir, { recursive: true, force: true }));
 
-/** A Codex daemon under its own CODEX_HOME, answering each request with its name. */
+/** A Codex daemon under its own CODEX_HOME, answering each request but `slow` with its name; `received` logs every message. */
 async function daemon(home) {
   await mkdir(join(home, 'app-server-control'), { recursive: true });
   const server = new WebSocketServer({ noServer: true });
@@ -39,15 +39,18 @@ async function daemon(home) {
   const http = createServer();
   http.on('upgrade', (req, socket, head) => server.handleUpgrade(req, socket, head, (ws) => server.emit('connection', ws)));
   const clients = [];
+  const received = [];
   server.on('connection', (ws) => {
     clients.push(ws);
     ws.on('message', (data) => {
       const m = JSON.parse(data.toString());
-      ws.send(JSON.stringify({ id: m.id, result: { from: 'daemon' } }));
+      received.push(m);
+      if (m.id === undefined || m.method === 'slow') return;
+      ws.send(JSON.stringify({ id: m.id, result: m.method === 'thread/start' ? { thread: { id: 'started' } } : { from: 'daemon' } }));
     });
   });
   await new Promise((resolve) => http.listen(join(home, 'app-server-control', 'app-server-control.sock'), resolve));
-  return { clients, close: () => new Promise((resolve) => (clients.forEach((c) => c.terminate()), http.close(resolve))) };
+  return { clients, received, close: () => new Promise((resolve) => (clients.forEach((c) => c.terminate()), http.close(resolve))) };
 }
 
 function run(home, args) {
@@ -67,7 +70,7 @@ function run(home, args) {
       child.stdout.on('data', check);
       check();
     });
-  return { child, exited, reply, stderr: () => err, send: (m) => child.stdin.write(`${JSON.stringify(m)}\n`) };
+  return { child, exited, reply, stderr: () => err, stdout: () => out, send: (m) => child.stdin.write(`${JSON.stringify(m)}\n`) };
 }
 
 const calls = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean);
@@ -85,15 +88,38 @@ test('the panel’s app-server talks to the Codex daemon, and the bundled binary
   await d.close();
 });
 
-test('the daemon going away ends the panel’s connection with an error', async () => {
+test('a daemon restart is survived: the panel’s setup is replayed on the new daemon and its lost request fails', async () => {
   const home = join(dir, 'home-restart');
   const d = await daemon(home);
   const w = run(home, PANEL_ARGS);
-  w.send({ id: 1, method: 'initialize', params: {} });
+  w.send({ id: 1, method: 'initialize', params: { clientInfo: { name: 'codex_vscode' } } });
   await w.reply(1);
+  w.send({ method: 'initialized' });
+  w.send({ id: 2, method: 'thread/resume', params: { threadId: 'resumed', model: 'm' } });
+  w.send({ id: 3, method: 'thread/start', params: {} });
+  w.send({ id: 4, method: 'thread/resume', params: { threadId: 'left' } });
+  await Promise.all([w.reply(2), w.reply(3), w.reply(4)]);
+  w.send({ id: 5, method: 'thread/unsubscribe', params: { threadId: 'left' } });
+  await w.reply(5);
+  w.send({ id: 6, method: 'slow', params: {} });
+  await new Promise((r) => setTimeout(r, 100));
   await d.close();
-  assert.equal(await w.exited, 1, 'the extension reports a failed app-server and starts a new one');
-  assert.match(w.stderr(), /daemon closed the connection/);
+  assert.match((await w.reply(6)).error.message, /restarted/, 'a request the old daemon took with it is answered, so the panel does not hang');
+
+  const again = await daemon(home);
+  w.send({ id: 7, method: 'thread/list', params: {} });
+  assert.equal((await w.reply(7)).result.from, 'daemon', 'the panel carries on through the new daemon; the extension never starts a second app-server');
+  const replayed = again.received.filter((m) => m.method !== 'thread/list');
+  assert.deepEqual(replayed.map((m) => [m.method, m.params]), [
+    ['initialize', { clientInfo: { name: 'codex_vscode' } }],
+    ['initialized', undefined],
+    ['thread/resume', { threadId: 'resumed', model: 'm' }],
+    ['thread/resume', { threadId: 'started' }],
+  ], 'the new connection is initialized as the panel did it and rejoins every thread it still follows');
+  assert.ok(!w.stdout().includes('agent-sessions-replay'), 'the replayed answers are not shown to the panel, which had them already');
+  w.child.stdin.end();
+  assert.equal(await w.exited, 0);
+  await again.close();
 });
 
 test('without a daemon that starts, the panel gets the bundled app-server with its own arguments', async () => {
