@@ -3,6 +3,9 @@ import { toolLabel, type Session, type Tool } from './types.js';
 import { titleMatchesLabel } from './util.js';
 import { moveHereIfHeldElsewhere } from './session-host.js';
 import { seedSessionMode } from './claude-modes.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { ensureDaemon, startDaemonThread } from './host/codex-daemon.js';
 
 const CLAUDE_EXTENSION = 'anthropic.claude-code';
 const CODEX_EXTENSION = 'openai.chatgpt';
@@ -196,7 +199,75 @@ export async function newSession(tool: Tool): Promise<void> {
     t.sendText('codex', true);
     return;
   }
+  const first = await askFirstCodexMessage();
+  if (first === undefined) return;
+  if (first && (await startCodexWith(first))) return;
   await openCodex(newCodexPanelUri());
+}
+
+/**
+ * How a new Codex session starts: from a first message typed here, or empty. A panel opened empty shows Codex's
+ * onboarding and stays untitled until its first turn; one opened on a thread already running its first turn has
+ * neither. The message is one line (Enter sends); undefined when the picker is dismissed, '' for an empty session.
+ */
+async function askFirstCodexMessage(): Promise<string | undefined> {
+  type Pick = vscode.QuickPickItem & { message: string };
+  const empty: Pick = { label: '$(add) Empty session', description: 'Codex’s own new panel', alwaysShow: true, message: '' };
+  const picker = vscode.window.createQuickPick<Pick>();
+  picker.title = 'New Codex session';
+  picker.placeholder = 'Type the first message and press Enter, or pick Empty session';
+  picker.items = [empty];
+  picker.onDidChangeValue((value) => {
+    const message = value.trim();
+    picker.items = message ? [{ label: `$(send) ${message}`, description: 'Start with this message', alwaysShow: true, message }, empty] : [empty];
+  });
+  return new Promise((resolve) => {
+    let chosen: string | undefined;
+    picker.onDidAccept(() => {
+      chosen = picker.selectedItems[0]?.message ?? picker.value.trim();
+      picker.hide();
+    });
+    picker.onDidHide(() => {
+      picker.dispose();
+      resolve(chosen);
+    });
+    picker.show();
+  });
+}
+
+/**
+ * Starts a thread on Codex's app-server daemon with `message` as its first turn and opens the panel on it. Only with
+ * Keep Sessions Running: without it each panel runs a private app-server, which cannot join a thread the daemon
+ * holds. False when the thread could not be started, after saying why; the caller then opens an empty panel.
+ */
+async function startCodexWith(message: string): Promise<boolean> {
+  if (!vscode.workspace.getConfiguration('agentSessions').get<boolean>('keepSessionsRunning', false)) {
+    void vscode.window.showWarningMessage('Starting Codex with a message needs Agent Sessions: Keep Sessions Running; opened an empty session instead.');
+    return false;
+  }
+  const codex = bundledCodex();
+  const id = codex && (await ensureDaemon(codex)) ? await startDaemonThread(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, message).catch(() => undefined) : undefined;
+  if (!id) {
+    void vscode.window.showWarningMessage('Codex’s app-server daemon did not start the thread; opened an empty session instead.');
+    return false;
+  }
+  await openCodex(codexRouteUri(`/local/${id}`));
+  return true;
+}
+
+/** The `codex` the Codex extension ships, the version its panel was built against. */
+function bundledCodex(): string | undefined {
+  const root = vscode.extensions.getExtension(CODEX_EXTENSION)?.extensionPath;
+  if (!root) return undefined;
+  try {
+    for (const dir of fs.readdirSync(path.join(root, 'bin'))) {
+      const file = path.join(root, 'bin', dir, 'codex');
+      if (fs.existsSync(file)) return file;
+    }
+  } catch {
+    // No bin folder: an install without a bundled CLI.
+  }
+  return undefined;
 }
 
 /**

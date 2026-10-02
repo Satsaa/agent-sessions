@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -37,14 +38,38 @@ export function connectDaemon(home = codexHome(), timeoutMs = 3000): Promise<Web
   });
 }
 
+/** Starts the daemon with `codex` (Codex's own start, lock and all) unless it already answers; whether it answers after. */
+export async function ensureDaemon(codex: string, home = codexHome(), timeoutMs = 15_000): Promise<boolean> {
+  const existing = await connectDaemon(home);
+  if (existing) {
+    existing.close();
+    return true;
+  }
+  await new Promise<void>((resolve) => {
+    const child = spawn(codex, ['app-server', 'daemon', 'start'], { stdio: 'ignore', env: { ...process.env, CODEX_HOME: home } });
+    const timer = setTimeout(() => child.kill(), timeoutMs);
+    child.once('error', () => resolve());
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+  const started = await connectDaemon(home);
+  started?.close();
+  return !!started;
+}
+
 interface Reply {
   id?: number;
   result?: unknown;
   error?: { message?: string };
 }
 
-/** A JSON-RPC client on one daemon connection, for the few calls Agent Sessions makes itself. */
-export async function daemonClient(home = codexHome()) {
+/**
+ * A JSON-RPC client on one daemon connection, for the few calls Agent Sessions makes itself. `clientName` is how
+ * Codex records the threads it starts: `codex_vscode` makes one a VS Code thread, like the panel's own.
+ */
+export async function daemonClient(home = codexHome(), clientName = 'agent_sessions') {
   const ws = await connectDaemon(home);
   if (!ws) return undefined;
   let next = 0;
@@ -71,7 +96,7 @@ export async function daemonClient(home = codexHome()) {
       pending.set(id, (reply) => (reply.error ? reject(new Error(reply.error.message ?? `${method} failed`)) : resolve(reply.result as T)));
       ws.send(JSON.stringify({ id, method, params }));
     });
-  await request('initialize', { clientInfo: { name: 'agent_sessions', title: 'Agent Sessions', version: '1' }, capabilities: null });
+  await request('initialize', { clientInfo: { name: clientName, title: 'Agent Sessions', version: '1' }, capabilities: null });
   ws.send(JSON.stringify({ method: 'initialized' }));
   return { request, close: () => ws.close() };
 }
@@ -88,6 +113,22 @@ export async function interruptDaemonThread(threadId: string, home = codexHome()
     const running = turns.data.find((t) => t.status === 'inProgress');
     if (running) await client.request('turn/interrupt', { threadId, turnId: running.id });
     return true;
+  } finally {
+    client.close();
+  }
+}
+
+/**
+ * Starts a thread in `cwd` whose first turn is `text`, with the settings of Codex's config like any new thread, and
+ * returns its id; the turn carries on after this connection closes. Undefined when the daemon cannot be reached.
+ */
+export async function startDaemonThread(cwd: string | undefined, text: string, home = codexHome()): Promise<string | undefined> {
+  const client = await daemonClient(home, 'codex_vscode');
+  if (!client) return undefined;
+  try {
+    const { thread } = await client.request<{ thread: { id: string } }>('thread/start', cwd ? { cwd } : {});
+    await client.request('turn/start', { threadId: thread.id, input: [{ type: 'text', text, text_elements: [] }] });
+    return thread.id;
   } finally {
     client.close();
   }
