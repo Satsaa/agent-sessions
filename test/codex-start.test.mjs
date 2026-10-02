@@ -23,15 +23,16 @@ test('a first message starts a VS Code thread on the daemon and sends it as the 
   http.on('upgrade', (req, socket, head) => server.handleUpgrade(req, socket, head, (ws) => server.emit('connection', ws)));
   const calls = [];
   let reads = 0;
-  const result = (method) =>
-    method === 'thread/start' ? { thread: { id: 'new-thread' } }
-    : method === 'thread/read' ? { thread: { preview: ++reads < 3 ? '' : 'Fix the flaky test' } }
-    : {};
+  // The first read fails as Codex's does while the rollout is still empty, the next finds no preview yet.
+  const reply = (method) =>
+    method === 'thread/start' ? { result: { thread: { id: 'new-thread' } } }
+    : method === 'thread/read' ? (++reads === 1 ? { error: { message: 'failed to read thread: rollout is empty' } } : { result: { thread: { preview: reads < 3 ? '' : 'Fix the flaky test' } } })
+    : { result: {} };
   server.on('connection', (ws) => ws.on('message', (data) => {
     const m = JSON.parse(data.toString());
     calls.push([m.method, m.params]);
     if (m.id === undefined) return;
-    ws.send(JSON.stringify({ id: m.id, result: result(m.method) }));
+    ws.send(JSON.stringify({ id: m.id, ...reply(m.method) }));
   }));
   await new Promise((resolve) => http.listen(join(home, 'app-server-control', 'app-server-control.sock'), resolve));
   try {
@@ -41,7 +42,7 @@ test('a first message starts a VS Code thread on the daemon and sends it as the 
       ['thread/start', { cwd: '/work' }],
       ['turn/start', { threadId: 'new-thread', input: [{ type: 'text', text: 'Fix the flaky test', text_elements: [] }] }],
     ], 'the thread starts in the window’s folder and its first turn is the message');
-    assert.equal(reads, 3, 'the panel is opened only once the thread has its preview, or it reads the thread untitled');
+    assert.equal(reads, 3, 'the panel is opened only once the thread has its preview, through the read that fails while its rollout is empty');
   } finally {
     await new Promise((resolve) => http.close(resolve));
   }

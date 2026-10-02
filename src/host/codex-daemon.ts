@@ -131,8 +131,9 @@ export async function startDaemonThread(cwd: string | undefined, text: string, h
     const { thread } = await client.request<{ thread: { id: string } }>('thread/start', cwd ? { cwd } : {});
     await client.request('turn/start', { threadId: thread.id, input: [{ type: 'text', text, text_elements: [] }] });
     for (const until = Date.now() + titledWithinMs; Date.now() < until; await new Promise((r) => setTimeout(r, pollMs))) {
-      const read = await client.request<{ thread: { preview: string } }>('thread/read', { threadId: thread.id, includeTurns: false });
-      if (read.thread.preview) break;
+      // Until Codex has written the rollout's first lines, reading the thread fails ("rollout … is empty").
+      const read = await client.request<{ thread: { preview: string } }>('thread/read', { threadId: thread.id, includeTurns: false }).catch(() => undefined);
+      if (read?.thread.preview) break;
     }
     return thread.id;
   } finally {
