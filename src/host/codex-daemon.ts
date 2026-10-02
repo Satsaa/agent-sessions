@@ -121,13 +121,19 @@ export async function interruptDaemonThread(threadId: string, home = codexHome()
 /**
  * Starts a thread in `cwd` whose first turn is `text`, with the settings of Codex's config like any new thread, and
  * returns its id; the turn carries on after this connection closes. Undefined when the daemon cannot be reached.
+ * Returns once the thread has its preview, the message it is titled by — about two seconds after the turn starts —
+ * or after `titledWithinMs`: a panel opened before then reads the thread untitled and stays so.
  */
-export async function startDaemonThread(cwd: string | undefined, text: string, home = codexHome()): Promise<string | undefined> {
+export async function startDaemonThread(cwd: string | undefined, text: string, home = codexHome(), titledWithinMs = 15_000, pollMs = 250): Promise<string | undefined> {
   const client = await daemonClient(home, 'codex_vscode');
   if (!client) return undefined;
   try {
     const { thread } = await client.request<{ thread: { id: string } }>('thread/start', cwd ? { cwd } : {});
     await client.request('turn/start', { threadId: thread.id, input: [{ type: 'text', text, text_elements: [] }] });
+    for (const until = Date.now() + titledWithinMs; Date.now() < until; await new Promise((r) => setTimeout(r, pollMs))) {
+      const read = await client.request<{ thread: { preview: string } }>('thread/read', { threadId: thread.id, includeTurns: false });
+      if (read.thread.preview) break;
+    }
     return thread.id;
   } finally {
     client.close();

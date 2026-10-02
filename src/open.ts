@@ -211,20 +211,20 @@ export async function newSession(tool: Tool): Promise<void> {
  * neither. The message is one line (Enter sends); undefined when the picker is dismissed, '' for an empty session.
  */
 async function askFirstCodexMessage(): Promise<string | undefined> {
-  type Pick = vscode.QuickPickItem & { message: string };
-  const empty: Pick = { label: '$(add) Empty session', description: 'Codex’s own new panel', alwaysShow: true, message: '' };
+  type Pick = vscode.QuickPickItem & { send: boolean };
+  // Fixed items: rewriting them per keystroke to echo the text made the picker flicker.
+  const send: Pick = { label: '$(send) Start with this message', alwaysShow: true, send: true };
+  const empty: Pick = { label: '$(add) Empty session', description: 'Codex’s own new panel', alwaysShow: true, send: false };
   const picker = vscode.window.createQuickPick<Pick>();
   picker.title = 'New Codex session';
   picker.placeholder = 'Type the first message and press Enter, or pick Empty session';
-  picker.items = [empty];
-  picker.onDidChangeValue((value) => {
-    const message = value.trim();
-    picker.items = message ? [{ label: `$(send) ${message}`, description: 'Start with this message', alwaysShow: true, message }, empty] : [empty];
-  });
+  picker.items = [send, empty];
   return new Promise((resolve) => {
     let chosen: string | undefined;
     picker.onDidAccept(() => {
-      chosen = picker.selectedItems[0]?.message ?? picker.value.trim();
+      const message = picker.value.trim();
+      if (picker.selectedItems[0]?.send !== false && !message) return;
+      chosen = picker.selectedItems[0]?.send === false ? '' : message;
       picker.hide();
     });
     picker.onDidHide(() => {
@@ -246,7 +246,8 @@ async function startCodexWith(message: string): Promise<boolean> {
     return false;
   }
   const codex = bundledCodex();
-  const id = codex && (await ensureDaemon(codex)) ? await startDaemonThread(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, message).catch(() => undefined) : undefined;
+  const id = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Starting Codex session…' }, async () =>
+    codex && (await ensureDaemon(codex)) ? startDaemonThread(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, message).catch(() => undefined) : undefined);
   if (!id) {
     void vscode.window.showWarningMessage('Codex’s app-server daemon did not start the thread; opened an empty session instead.');
     return false;
