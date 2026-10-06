@@ -25,6 +25,8 @@ import { deleteWorktree } from './delete-worktree.js';
 import { SessionItem, SessionsProvider, type GroupBy, type SubagentLayout, type ViewOptions } from './tree.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
 import { switchCodexAccount } from './codex-accounts-ui.js';
+import { signInClaude, signInCodexAccount } from './auth-ui.js';
+import { bundledCodex } from './open.js';
 import { fetchClaudeUsage, readCodexUsage, type ToolUsage, readInactiveCodexUsage } from './usage.js';
 import { UsageProvider, usageStatusColor, usageStatusText, usageStatusTooltip } from './usage-view.js';
 import { initIcons } from './icons.js';
@@ -33,7 +35,7 @@ import { WorktreeItem, WorktreesProvider } from './worktrees-tree.js';
 import { repoRootOf } from './util.js';
 import { stopRunner } from './runner.js';
 import { parentMarker, withMarkedParents } from './markers.js';
-import { handoverNote, handoverTarget, writeHandoverNote } from './handover.js';
+import { handoverNote, handoverTarget } from './handover.js';
 import { type MarkList, type SessionMarks, marksFile, mergeMarks, readMarks, setMark, watchMarks } from './marks.js';
 import * as path from 'node:path';
 
@@ -146,7 +148,15 @@ export function activate(context: vscode.ExtensionContext): void {
   const view = vscode.window.createTreeView('agentSessions.list', { treeDataProvider: provider, showCollapseAll: true });
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   statusBar.command = 'agentSessions.list.focus';
-  const usageProvider = new UsageProvider(context.extensionUri);
+  const usageProvider = new UsageProvider(context.extensionUri, (usage) => {
+    if (usage.tool === 'claude') { signInClaude(config.claudeHome, refreshUsage); return; }
+    void (async () => {
+      const accounts = await listCodexAccounts(config.codexHome);
+      const account = usage.inactive ? accounts.find((a) => a.file === usage.authFile) : accounts.find((a) => a.current);
+      if (usage.inactive && !account) throw new Error('That saved account is no longer available. Refresh Usage and try again.');
+      await signInCodexAccount(config.codexHome, account, refreshUsage);
+    })().catch((error: unknown) => { void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error)); });
+  });
   const usageView = vscode.window.registerWebviewViewProvider('agentSessions.usage', usageProvider);
   const usageBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   usageBar.command = 'agentSessions.usage.focus';
@@ -226,8 +236,8 @@ export function activate(context: vscode.ExtensionContext): void {
       const savedLogins = codex && config.usage.codexNetwork ? (await listCodexAccounts(config.codexHome).catch(() => [])).filter((a) => !a.current) : [];
       const results = await Promise.all<ToolUsage | undefined>([
         config.tools.includes('claude') ? fetchClaudeUsage(config.claudeHome, config.usage.claudeNetwork, path.join(context.globalStorageUri.fsPath, 'claude-usage'), config.usage.refreshInterval * 1000) : undefined,
-        codex ? readCodexUsage(config.codexHome, config.usage.codexNetwork) : undefined,
-        ...savedLogins.map((a) => readInactiveCodexUsage(a)),
+        codex ? readCodexUsage(config.codexHome, config.usage.codexNetwork, bundledCodex()) : undefined,
+        ...savedLogins.map((a) => readInactiveCodexUsage(a, bundledCodex())),
       ]);
       const usages = results.filter((u): u is ToolUsage => u !== undefined);
       for (const u of usages) if (u.error) output.appendLine(`[${new Date().toISOString()}] usage ${u.tool}: ${u.error}`);
@@ -750,16 +760,20 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       try {
         const from = { ...s, transcriptPath };
-        await newSessionFrom(target, handoverNote(from), await writeHandoverNote(from));
+        const started = await newSessionFrom(target, handoverNote(from), s.cwd);
+        if (!started) {
+          void vscode.window.showInformationMessage(`The handover prompt is ready in ${toolLabel(target)}. Send it to continue; the source session stays available until you archive it.`);
+          return;
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         output.appendLine(`move ${s.tool} ${s.id} to ${target} failed: ${message}`);
         void vscode.window.showErrorMessage(`Could not start the ${toolLabel(target)} session: ${message}`);
         return;
       }
-      // After the new session opens: archiving closes the old tab, and Codex attaches the note to the focused panel.
+      // Archive only after Codex accepted the first turn and its destination tab opened.
       await archive(s);
-      if (target === 'codex') void vscode.window.showInformationMessage('The handover note is attached to the new Codex thread; send a message to start it.');
+
     })),
     ...(['pin', 'unpin'] as const).map((action) => vscode.commands.registerCommand(`agentSessions.${action}`, async (arg: unknown) => {
       const s = sessionOf(arg);

@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import type { Tool } from './types.js';
 import { readJsonFile, walkFiles, statOrUndefined } from './util.js';
 import { cachedClaudeUsage } from './claude-usage-cache.js';
+import { refreshClaudeCredentials, refreshCodexCredentials, tokenExpiresSoon, type ClaudeCredentials, type CodexCredentials } from './auth-refresh.js';
 import { decodeCodexAuth, type CodexAccount } from './codex-accounts.js';
 
 export interface UsageWindow {
@@ -29,18 +30,11 @@ export interface ToolUsage {
   error: string | undefined;
   /** A saved login that is not the one the tool currently runs under; listed last and kept out of the status bar. */
   inactive: boolean;
+  /** Local credential source, kept inside the extension host for account-specific sign-in. */
+  authFile?: string;
 }
 
 // ---------------------------------------------------------------- Claude
-
-interface ClaudeCredentials {
-  claudeAiOauth?: {
-    accessToken?: string;
-    expiresAt?: number;
-    subscriptionType?: string;
-    rateLimitTier?: string;
-  };
-}
 
 interface ClaudeUsageBucket {
   utilization?: number | null;
@@ -133,18 +127,26 @@ export async function fetchClaudeUsage(home: string, allowNetwork: boolean, cach
   base.plan = planLabel(oauth?.subscriptionType, oauth?.rateLimitTier);
   if (!allowNetwork) return { ...base, error: 'Network fetch disabled in settings' };
   if (!oauth?.accessToken) return { ...base, error: 'No Claude Code OAuth credential found (log in with `claude`)' };
-  if (oauth.expiresAt && oauth.expiresAt < Date.now()) return { ...base, error: 'Claude credential expired; run any `claude` command to refresh it' };
 
   let data: ClaudeUsageResponse;
   try {
-    const result = await cachedClaudeUsage(cacheDirectory, oauth.accessToken, interval, () => fetch(CLAUDE_USAGE_URL, {
-      headers: {
-        Authorization: `Bearer ${oauth.accessToken}`,
-        'anthropic-beta': 'oauth-2025-04-20',
-        Accept: 'application/json',
-      },
-      signal: AbortSignal.timeout(10_000),
-    }), await claudeAccountKey(home));
+    const result = await cachedClaudeUsage(cacheDirectory, oauth.accessToken, interval, async () => {
+      let current = oauth;
+      if (current.expiresAt && current.expiresAt <= Date.now() + 60_000) {
+        current = (await refreshClaudeCredentials(home)).claudeAiOauth;
+      }
+      const request = () => fetch(CLAUDE_USAGE_URL, {
+        headers: { Authorization: `Bearer ${current.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20', Accept: 'application/json' },
+        signal: AbortSignal.timeout(10_000),
+      });
+      let response = await request();
+      if (response.status === 401) {
+        await response.body?.cancel();
+        current = (await refreshClaudeCredentials(home, current.accessToken)).claudeAiOauth;
+        response = await request();
+      }
+      return response;
+    }, await claudeAccountKey(home));
     base.asOf = result.asOf;
     base.error = result.error;
     if (!result.data) return base;
@@ -310,26 +312,30 @@ function liveWindows(rl: CodexLiveRateLimit | null | undefined, suffix: string, 
   }));
 }
 
-/**
- * Live Codex usage from the same endpoint the Codex CLI's `/status` and the IDE plugin read, authenticated with the
- * access token in `auth.json`. Codex keeps that token fresh while it runs; a 401 here means it has not run for a
- * while, and the caller falls back to the rollout snapshot rather than refreshing the token itself.
- */
-async function fetchCodexUsage(authFile: string): Promise<CodexLiveUsage> {
-  const auth = await readJsonFile<{ tokens?: { access_token?: string; account_id?: string } }>(authFile);
-  const token = auth?.tokens?.access_token;
-  if (!token) throw new Error('not logged in to ChatGPT');
-  const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
-  const { accountId } = decodeCodexAuth(auth);
-  if (accountId) headers['chatgpt-account-id'] = accountId;
-  const res = await fetch(CODEX_USAGE_URL, { headers, signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) throw new Error(res.status === 401 ? 'login token expired (run a Codex turn to refresh it)' : `HTTP ${res.status}`);
+/** Refresh expired credentials through Codex itself, then retry an unauthorized usage request once. */
+async function fetchCodexUsage(authFile: string, executable: string): Promise<CodexLiveUsage> {
+  let auth = await readJsonFile<CodexCredentials>(authFile);
+  if (!auth?.tokens?.access_token) throw new Error('not logged in to ChatGPT');
+  if (tokenExpiresSoon(auth.tokens.access_token)) auth = await refreshCodexCredentials(authFile, auth.tokens.access_token, executable);
+  const request = () => {
+    const headers: Record<string, string> = { Authorization: `Bearer ${auth?.tokens?.access_token}`, Accept: 'application/json' };
+    const { accountId } = decodeCodexAuth(auth);
+    if (accountId) headers['chatgpt-account-id'] = accountId;
+    return fetch(CODEX_USAGE_URL, { headers, signal: AbortSignal.timeout(15_000) });
+  };
+  let res = await request();
+  if (res.status === 401 && auth.tokens?.access_token) {
+    await res.body?.cancel();
+    auth = await refreshCodexCredentials(authFile, auth.tokens.access_token, executable);
+    res = await request();
+  }
+  if (!res.ok) throw new Error(res.status === 401 ? 'Sign in again to this account from the Usage view' : `HTTP ${res.status}`);
   return (await res.json()) as CodexLiveUsage;
 }
 
 /** Live usage from chatgpt.com for the login in `authFile`, merged over what the auth file itself says about the account. */
-async function liveCodexUsage(authFile: string, base: ToolUsage, account: { plan: string | undefined; until: string | undefined; email: string | undefined }): Promise<ToolUsage> {
-  const live = await fetchCodexUsage(authFile);
+async function liveCodexUsage(authFile: string, base: ToolUsage, account: { plan: string | undefined; until: string | undefined; email: string | undefined }, executable: string): Promise<ToolUsage> {
+  const live = await fetchCodexUsage(authFile, executable);
   const reached = !!live.rate_limit_reached_type || !!live.rate_limit?.limit_reached;
   const windows = liveWindows(live.rate_limit, '', reached);
   for (const extra of live.additional_rate_limits ?? []) {
@@ -344,23 +350,23 @@ async function liveCodexUsage(authFile: string, base: ToolUsage, account: { plan
 
 /**
  * Usage of a saved Codex login other than the active one. Only the network knows it: rollouts belong to the active
- * login, and Codex refreshes only the active token, so a stale saved token reports itself as such.
+ * login. Saved tokens are renewed in an isolated Codex home without changing the active login.
  */
-export async function readInactiveCodexUsage(account: CodexAccount): Promise<ToolUsage> {
-  const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), account: account.email, windows: [], asOf: 0, source: 'chatgpt.com usage endpoint, saved login', error: undefined, inactive: true };
+export async function readInactiveCodexUsage(account: CodexAccount, executable = 'codex'): Promise<ToolUsage> {
+  const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), account: account.email, windows: [], asOf: 0, source: 'chatgpt.com usage endpoint, saved login', error: undefined, inactive: true, authFile: account.file };
   try {
-    return await liveCodexUsage(account.file, base, account);
+    return await liveCodexUsage(account.file, base, account, executable);
   } catch (err) {
     return { ...base, error: `live usage unavailable: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
-export async function readCodexUsage(home: string, allowNetwork: boolean): Promise<ToolUsage> {
+export async function readCodexUsage(home: string, allowNetwork: boolean, executable = 'codex'): Promise<ToolUsage> {
   const account = await readCodexPlan(home);
   const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), account: account.email, windows: [], asOf: 0, source: 'rate_limits recorded in the latest rollout', error: undefined, inactive: false };
   if (allowNetwork) {
     try {
-      return await liveCodexUsage(path.join(home, 'auth.json'), base, account);
+      return await liveCodexUsage(path.join(home, 'auth.json'), base, account, executable);
     } catch (err) {
       base.error = `live usage unavailable: ${err instanceof Error ? err.message : String(err)}`;
     }

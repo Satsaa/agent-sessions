@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { toolLabel } from './types.js';
 import { toolIcon } from './icons.js';
 import { relativeTime } from './util.js';
@@ -26,8 +26,9 @@ export class UsageProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private usages: ToolUsage[] = [];
   private description = '';
+  private signInActions = new Map<string, ToolUsage>();
 
-  constructor(private readonly extensionUri: vscode.Uri) {}
+  constructor(private readonly extensionUri: vscode.Uri, private readonly signIn?: (usage: ToolUsage) => void) {}
 
   set(usages: ToolUsage[], description = ''): void {
     this.usages = usages;
@@ -50,6 +51,10 @@ export class UsageProvider implements vscode.WebviewViewProvider {
       if (view.visible) void view.webview.postMessage({ html: this.groupsHtml(view.webview) });
     });
     view.webview.onDidReceiveMessage((message: unknown) => {
+      if (message && typeof message === 'object' && 'signIn' in message && typeof message.signIn === 'string') {
+        const usage = this.signInActions.get(message.signIn);
+        if (usage) this.signIn?.(usage);
+      }
       if (message === 'ready') void view.webview.postMessage({ html: this.groupsHtml(view.webview) });
     });
     const nonce = randomBytes(16).toString('hex');
@@ -84,6 +89,7 @@ li { display: flex; align-items: baseline; gap: 6px; min-height: 22px; line-heig
 .message { white-space: normal; opacity: .7; }
 /* A saved login Codex is not running under. */
 details.inactive { opacity: .6; }
+button { background: none; border: 0; color: var(--vscode-textLink-foreground); cursor: pointer; padding: 0; font: inherit; }
 </style></head><body><main>${this.groupsHtml(view.webview)}</main>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
@@ -99,6 +105,10 @@ function restore() {
   }
 }
 restore();
+main.addEventListener('click', event => {
+  const button = event.target.closest('button[data-sign-in]');
+  if (button) vscode.postMessage({ signIn: button.dataset.signIn });
+});
 window.addEventListener('message', event => {
   const focused = document.activeElement.closest('details')?.dataset.tool;
   main.innerHTML = event.data.html;
@@ -110,7 +120,10 @@ vscode.postMessage('ready');
   }
 
   private groupsHtml(webview: vscode.Webview): string {
+    this.signInActions.clear();
     return this.usages.map((u) => {
+      const actionId = randomUUID();
+      this.signInActions.set(actionId, u);
       const icons = toolIcon(u.tool);
       const title = [toolLabel(u.tool), u.account, u.plan, u.inactive ? 'Saved login, not the one Codex runs under' : '', u.error, u.asOf ? `As of ${relativeTime(u.asOf)} (${new Date(u.asOf).toLocaleString()})` : '', `Source: ${u.source}`].filter(Boolean).join('\n');
       const message = !u.windows.length ? u.error ?? 'No limits reported' : '';
@@ -121,7 +134,7 @@ vscode.postMessage('ready');
       const plan = u.error && !u.windows.length ? 'unavailable' : u.plan ?? '';
       const sub = manyCodex && u.tool === 'codex' ? [u.account, plan].filter(Boolean).join(' · ') : plan;
       const key = u.tool === 'codex' && u.account ? `${u.tool}:${u.account}` : u.tool;
-      return `<details data-tool="${escapeHtml(key)}"${u.inactive ? ' class="inactive"' : ''} open><summary title="${escapeHtml(title)}"><img class="light" src="${escapeHtml(webview.asWebviewUri(icons.light).toString())}" alt=""><img class="dark" src="${escapeHtml(webview.asWebviewUri(icons.dark).toString())}" alt=""><span>${toolLabel(u.tool)}</span>${warning}<span class="plan">${escapeHtml(sub)}</span></summary><ul>${rows}</ul></details>`;
+      return `<details data-tool="${escapeHtml(key)}"${u.inactive ? ' class="inactive"' : ''} open><summary title="${escapeHtml(title)}"><img class="light" src="${escapeHtml(webview.asWebviewUri(icons.light).toString())}" alt=""><img class="dark" src="${escapeHtml(webview.asWebviewUri(icons.dark).toString())}" alt=""><span>${toolLabel(u.tool)}</span>${warning}<span class="plan">${escapeHtml(sub)}</span></summary><ul>${rows}<li><button data-sign-in="${actionId}">Sign in again…</button></li></ul></details>`;
     }).join('');
   }
 }

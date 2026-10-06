@@ -1,28 +1,11 @@
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { writeCredentials, withCodexAccountLock } from './auth-refresh.js';
+import { decodeCodexAuth, type CodexIdentity, type CodexCredentials } from './codex-identity.js';
+export { decodeCodexAuth, type CodexIdentity } from './codex-identity.js';
 import { readJsonFile } from './util.js';
 import { holdersOfFilesIn, startTimeOf } from './window.js';
-
-/** The parts of `~/.codex/auth.json` this module reads; the file is otherwise copied byte for byte. */
-interface CodexAuthFile {
-  auth_mode?: string;
-  last_refresh?: string;
-  tokens?: { id_token?: string; account_id?: string };
-}
-
-interface CodexAuthClaims {
-  chatgpt_account_id?: string;
-  chatgpt_plan_type?: string;
-  chatgpt_subscription_active_until?: string;
-}
-
-export interface CodexIdentity {
-  accountId: string | undefined;
-  email: string | undefined;
-  plan: string | undefined;
-  until: string | undefined;
-}
 
 export interface CodexAccount extends CodexIdentity {
   /** Where the credentials live: `auth.json` itself, a profile this extension saved, or a `auth-backup.*` copy. */
@@ -32,31 +15,12 @@ export interface CodexAccount extends CodexIdentity {
   current: boolean;
 }
 
-/** Decode the ChatGPT id_token without verifying it: only the login owner reads this file, so the claims name the account. */
-export function decodeCodexAuth(auth: CodexAuthFile | undefined): CodexIdentity {
-  const none: CodexIdentity = { accountId: auth?.tokens?.account_id, email: undefined, plan: undefined, until: undefined };
-  const payload = auth?.tokens?.id_token?.split('.')[1];
-  if (!payload) return none;
-  try {
-    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>;
-    const openai = claims['https://api.openai.com/auth'] as CodexAuthClaims | undefined;
-    return {
-      accountId: openai?.chatgpt_account_id ?? none.accountId,
-      email: typeof claims.email === 'string' ? claims.email : undefined,
-      plan: openai?.chatgpt_plan_type,
-      until: openai?.chatgpt_subscription_active_until,
-    };
-  } catch {
-    return none;
-  }
-}
-
 export function profilesDir(home: string): string {
   return path.join(home, 'auth-profiles');
 }
 
 async function readAccount(file: string, current: boolean): Promise<CodexAccount | undefined> {
-  const auth = await readJsonFile<CodexAuthFile>(file);
+  const auth = await readJsonFile<CodexCredentials>(file);
   if (!auth?.tokens?.id_token) return undefined;
   const refreshedAt = auth.last_refresh ? Date.parse(auth.last_refresh) : NaN;
   return { ...decodeCodexAuth(auth), file, refreshedAt: Number.isFinite(refreshedAt) ? refreshedAt : 0, current };
@@ -94,6 +58,10 @@ async function writePrivate(file: string, bytes: Buffer): Promise<void> {
 
 /** Keep the active login's (refreshed) tokens as a profile, so switching away never loses an account. */
 export async function saveCurrentCodexAccount(home: string): Promise<CodexAccount | undefined> {
+  return withCodexAccountLock(home, async () => saveCurrentAccount(home));
+}
+
+async function saveCurrentAccount(home: string): Promise<CodexAccount | undefined> {
   const file = path.join(home, 'auth.json');
   const current = await readAccount(file, true);
   if (!current?.accountId) return undefined;
@@ -104,11 +72,14 @@ export async function saveCurrentCodexAccount(home: string): Promise<CodexAccoun
 /** Make `account` the active login. The current login is profiled first; tested in codex-accounts.test.mjs. */
 export async function activateCodexAccount(home: string, account: CodexAccount): Promise<void> {
   if (account.current) return;
-  const bytes = await fsp.readFile(account.file);
-  const incoming = decodeCodexAuth(JSON.parse(bytes.toString('utf8')) as CodexAuthFile);
-  if (!incoming.accountId) throw new Error(`${account.file} does not hold a ChatGPT login.`);
-  await saveCurrentCodexAccount(home);
-  await writePrivate(path.join(home, 'auth.json'), bytes);
+  await withCodexAccountLock(home, async (assertHeld) => {
+    const bytes = await fsp.readFile(account.file);
+    const incoming = decodeCodexAuth(JSON.parse(bytes.toString('utf8')) as CodexCredentials);
+    if (!incoming.accountId) throw new Error(`${account.file} does not hold a ChatGPT login.`);
+    await saveCurrentAccount(home);
+    assertHeld();
+    await writePrivate(path.join(home, 'auth.json'), bytes);
+  });
 }
 
 export interface CodexProcess {
@@ -151,4 +122,27 @@ export async function stopCodexProcesses(home: string, approved: CodexProcess[])
     await delay(100);
   }
   throw new Error('Codex did not release its sessions after being asked to stop; they may still be shutting down.');
+}
+
+/** Accept only the requested account; renewing a saved login must never switch the active account. */
+export async function importCodexLogin(home: string, credentials: CodexCredentials, expectedId?: string): Promise<void> {
+  const identity = decodeCodexAuth(credentials);
+  if (!identity.accountId || !credentials.tokens?.access_token) throw new Error('The login did not produce a ChatGPT account.');
+  if (expectedId && identity.accountId !== expectedId) throw new Error('You signed in to a different ChatGPT account. The existing logins were kept; try again with the selected account.');
+  const accountId = identity.accountId;
+  await withCodexAccountLock(home, async (assertHeld) => {
+    assertHeld();
+    await fsPrivateProfile(home, accountId, credentials);
+    const activeFile = path.join(home, 'auth.json');
+    const active = await readJsonFile<CodexCredentials>(activeFile);
+    assertHeld();
+    if (!active || decodeCodexAuth(active).accountId === identity.accountId) await writeCredentials(activeFile, credentials);
+  });
+}
+
+async function fsPrivateProfile(home: string, accountId: string, credentials: CodexCredentials): Promise<void> {
+  // Account IDs come from an external token: never let one form a path outside the profile directory.
+  if (!/^[a-zA-Z0-9_-]+$/.test(accountId)) throw new Error('The login returned an invalid account ID.');
+  await fsp.mkdir(profilesDir(home), { recursive: true, mode: 0o700 });
+  await writeCredentials(path.join(profilesDir(home), `${accountId}.json`), credentials);
 }

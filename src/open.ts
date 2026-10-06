@@ -5,7 +5,8 @@ import { moveHereIfHeldElsewhere } from './session-host.js';
 import { seedSessionMode } from './claude-modes.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ensureDaemon, startDaemonThread } from './host/codex-daemon.js';
+import { codexHome as discoveryCodexHome } from './codex.js';
+import { codexHome, ensureDaemon, startDaemonThread } from './host/codex-daemon.js';
 
 const CLAUDE_EXTENSION = 'anthropic.claude-code';
 const CODEX_EXTENSION = 'openai.chatgpt';
@@ -257,7 +258,7 @@ async function startCodexWith(message: string): Promise<boolean> {
 }
 
 /** The `codex` the Codex extension ships, the version its panel was built against. */
-function bundledCodex(): string | undefined {
+export function bundledCodex(): string | undefined {
   const root = vscode.extensions.getExtension(CODEX_EXTENSION)?.extensionPath;
   if (!root) return undefined;
   try {
@@ -271,27 +272,40 @@ function bundledCodex(): string | undefined {
   return undefined;
 }
 
-/**
- * A new session in `tool` that starts from `note`: Claude Code takes it as the first prompt, ready to send. Codex's
- * panel takes no text from outside, so a new one is opened and `noteFile` attached to it with Codex's own "Add File
- * to Codex Thread" command, which adds to the focused panel. Without either extension the CLI gets it as its prompt.
- */
-export async function newSessionFrom(tool: Tool, note: string, noteFile: string): Promise<void> {
+/** Starts the handover, returning true only when a destination turn was submitted successfully. */
+export async function newSessionFrom(tool: Tool, note: string, cwd?: string): Promise<boolean> {
   const installed = extensionInstalled(tool === 'claude' ? CLAUDE_EXTENSION : CODEX_EXTENSION);
   if (!installed) {
-    const t = vscode.window.createTerminal({ name: toolLabel(tool) });
+    const t = vscode.window.createTerminal({ name: toolLabel(tool), ...(cwd ? { cwd } : {}) });
     t.show();
     t.sendText(`${tool} '${note.replace(/'/g, `'\\''`)}'`, true);
-    return;
+    // Sending terminal text cannot confirm that the CLI accepted it.
+    return false;
   }
   if (tool === 'claude') {
     await openClaude(undefined, note);
-    return;
+    // Claude prefills the prompt; the person still needs to send it.
+    return false;
   }
-  await openCodex(newCodexPanelUri());
-  // Codex learns which panel has focus from the panel's view-state event, which follows the tab opening.
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(noteFile));
+  if (!vscode.workspace.getConfiguration('agentSessions').get<boolean>('keepSessionsRunning', false)) {
+    throw new Error('Enable Agent Sessions: Keep Sessions Running and reload the window to move a conversation to Codex. The source session is still available.');
+  }
+  const codex = bundledCodex();
+  const home = codexHome();
+  const discovered = discoveryCodexHome(vscode.workspace.getConfiguration('agentSessions').get<string>('codexHome', ''));
+  if (path.resolve(discovered) !== path.resolve(home)) throw new Error('The configured Codex home differs from the panel’s CODEX_HOME. Use the same home for both before moving a conversation.');
+  const id = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Moving conversation to Codex…' }, async () => {
+    if (!codex || !(await ensureDaemon(codex, home))) throw new Error('The Codex app-server daemon is unavailable.');
+    const started = await startDaemonThread(cwd, note, home);
+    if (!started) throw new Error('The Codex app-server daemon did not start a conversation.');
+    return started;
+  });
+  try {
+    await openCodex(codexRouteUri(`/local/${id}`));
+  } catch (error) {
+    throw new Error(`Codex conversation ${id} started, but its tab could not open. Open it from the session list. ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return true;
 }
 
 let newPanels = 0;

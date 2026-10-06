@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.21",
+  "version": "0.8.22",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -787,7 +787,7 @@
         "agentSessions.usage.codexNetwork": {
           "type": "boolean",
           "default": true,
-          "description": "Fetch Codex usage live from chatgpt.com with the login stored in ~/.codex/auth.json (the same request the Codex CLI and plugin make). Off, or when the token is stale, the numbers come from the latest rollout file."
+          "description": "Fetch Codex usage live from chatgpt.com with the login stored in ~/.codex/auth.json (the same request the Codex CLI and plugin make). Expired logins refresh automatically. Off, or when refresh fails, the numbers come from the latest rollout file."
         },
         "agentSessions.usage.refreshInterval": {
           "type": "number",
