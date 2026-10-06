@@ -152,8 +152,8 @@ export function activate(context: vscode.ExtensionContext): void {
     if (usage.tool === 'claude') { signInClaude(config.claudeHome, refreshUsage); return; }
     void (async () => {
       const accounts = await listCodexAccounts(config.codexHome);
-      const account = usage.inactive ? accounts.find((a) => a.file === usage.authFile) : accounts.find((a) => a.current);
-      if (usage.inactive && !account) throw new Error('That saved account is no longer available. Refresh Usage and try again.');
+      const account = usage.accountId ? accounts.find((a) => a.accountId === usage.accountId) : accounts.find((a) => a.file === usage.authFile);
+      if ((usage.accountId || usage.inactive) && !account) throw new Error('That account is no longer available. Refresh Usage and try again.');
       await signInCodexAccount(config.codexHome, account, refreshUsage);
     })().catch((error: unknown) => { void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error)); });
   });

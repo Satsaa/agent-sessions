@@ -26,7 +26,7 @@ export class UsageProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private usages: ToolUsage[] = [];
   private description = '';
-  private signInActions = new Map<string, ToolUsage>();
+  private accountActions = new Map<string, ToolUsage>();
 
   constructor(private readonly extensionUri: vscode.Uri, private readonly signIn?: (usage: ToolUsage) => void) {}
 
@@ -50,10 +50,15 @@ export class UsageProvider implements vscode.WebviewViewProvider {
     view.onDidChangeVisibility(() => {
       if (view.visible) void view.webview.postMessage({ html: this.groupsHtml(view.webview) });
     });
-    view.webview.onDidReceiveMessage((message: unknown) => {
-      if (message && typeof message === 'object' && 'signIn' in message && typeof message.signIn === 'string') {
-        const usage = this.signInActions.get(message.signIn);
-        if (usage) this.signIn?.(usage);
+    view.webview.onDidReceiveMessage(async (message: unknown) => {
+      if (message && typeof message === 'object' && 'accountActions' in message && typeof message.accountActions === 'string') {
+        const usage = this.accountActions.get(message.accountActions);
+        if (!usage) return;
+        const action = await vscode.window.showQuickPick([{ label: 'Sign in again…', action: 'signIn' as const }], {
+          title: usage.account ? `${toolLabel(usage.tool)} · ${usage.account}` : toolLabel(usage.tool),
+          placeHolder: 'Account actions',
+        });
+        if (action?.action === 'signIn') this.signIn?.(usage);
       }
       if (message === 'ready') void view.webview.postMessage({ html: this.groupsHtml(view.webview) });
     });
@@ -89,7 +94,9 @@ li { display: flex; align-items: baseline; gap: 6px; min-height: 22px; line-heig
 .message { white-space: normal; opacity: .7; }
 /* A saved login Codex is not running under. */
 details.inactive { opacity: .6; }
-button { background: none; border: 0; color: var(--vscode-textLink-foreground); cursor: pointer; padding: 0; font: inherit; }
+button.account-actions { flex: none; margin-left: auto; width: 22px; height: 22px; background: none; border: 0; border-radius: 4px; color: var(--vscode-foreground); cursor: pointer; padding: 0; font: inherit; }
+button.account-actions:hover { background: var(--vscode-toolbar-hoverBackground); }
+button.account-actions:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
 </style></head><body><main>${this.groupsHtml(view.webview)}</main>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
@@ -106,8 +113,11 @@ function restore() {
 }
 restore();
 main.addEventListener('click', event => {
-  const button = event.target.closest('button[data-sign-in]');
-  if (button) vscode.postMessage({ signIn: button.dataset.signIn });
+  const button = event.target.closest('button[data-account-actions]');
+  if (!button) return;
+  event.preventDefault();
+  event.stopPropagation();
+  vscode.postMessage({ accountActions: button.dataset.accountActions });
 });
 window.addEventListener('message', event => {
   const focused = document.activeElement.closest('details')?.dataset.tool;
@@ -120,10 +130,10 @@ vscode.postMessage('ready');
   }
 
   private groupsHtml(webview: vscode.Webview): string {
-    this.signInActions.clear();
+    this.accountActions.clear();
     return this.usages.map((u) => {
       const actionId = randomUUID();
-      this.signInActions.set(actionId, u);
+      this.accountActions.set(actionId, u);
       const icons = toolIcon(u.tool);
       const title = [toolLabel(u.tool), u.account, u.plan, u.inactive ? 'Saved login, not the one Codex runs under' : '', u.error, u.asOf ? `As of ${relativeTime(u.asOf)} (${new Date(u.asOf).toLocaleString()})` : '', `Source: ${u.source}`].filter(Boolean).join('\n');
       const message = !u.windows.length ? u.error ?? 'No limits reported' : '';
@@ -134,7 +144,7 @@ vscode.postMessage('ready');
       const plan = u.error && !u.windows.length ? 'unavailable' : u.plan ?? '';
       const sub = manyCodex && u.tool === 'codex' ? [u.account, plan].filter(Boolean).join(' · ') : plan;
       const key = u.tool === 'codex' && u.account ? `${u.tool}:${u.account}` : u.tool;
-      return `<details data-tool="${escapeHtml(key)}"${u.inactive ? ' class="inactive"' : ''} open><summary title="${escapeHtml(title)}"><img class="light" src="${escapeHtml(webview.asWebviewUri(icons.light).toString())}" alt=""><img class="dark" src="${escapeHtml(webview.asWebviewUri(icons.dark).toString())}" alt=""><span>${toolLabel(u.tool)}</span>${warning}<span class="plan">${escapeHtml(sub)}</span></summary><ul>${rows}<li><button data-sign-in="${actionId}">Sign in again…</button></li></ul></details>`;
+      return `<details data-tool="${escapeHtml(key)}"${u.inactive ? ' class="inactive"' : ''} open><summary title="${escapeHtml(title)}"><img class="light" src="${escapeHtml(webview.asWebviewUri(icons.light).toString())}" alt=""><img class="dark" src="${escapeHtml(webview.asWebviewUri(icons.dark).toString())}" alt=""><span>${toolLabel(u.tool)}</span>${warning}<span class="plan">${escapeHtml(sub)}</span><button class="account-actions" data-account-actions="${actionId}" aria-label="Account actions" title="Account actions">⋯</button></summary><ul>${rows}</ul></details>`;
     }).join('');
   }
 }

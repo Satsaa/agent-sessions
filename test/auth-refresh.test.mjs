@@ -25,6 +25,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
  if (m.method === 'initialize') { process.stdout.write(JSON.stringify({ id: m.id, result: {} })+'\\n'); return; }
  if (m.method !== 'account/read' || !m.params.refreshToken) process.exit(3);
  const auth = JSON.parse(fs.readFileSync(file));
+ if (auth.tokens.access_token === 'new') process.exit(7);
  auth.tokens.access_token = 'new'; auth.tokens.refresh_token = 'rotated'; auth.last_refresh = new Date().toISOString();
  fs.writeFileSync(file, JSON.stringify(auth));
  process.stdout.write(JSON.stringify({ id: m.id, result: { account: { type: 'chatgpt' } } })+'\\n');
@@ -109,7 +110,7 @@ test('Codex usage automatically refreshes an expired active token before its fir
 test('simultaneous saved-account refreshes reuse the credential already renewed by another window', async () => {
   const home = await fixture(); const file = join(home, 'saved.json');
   await writeFile(file, JSON.stringify(auth('saved')));
-  const results = await Promise.all([refreshCodexCredentials(file, 'old', cli), refreshCodexCredentials(file, 'old', '/must-not-run')]);
+  const results = await Promise.all([refreshCodexCredentials(file, 'old', cli), refreshCodexCredentials(file, 'old', cli)]);
   assert.ok(results.every(r => r.tokens.access_token === 'new'));
 });
 

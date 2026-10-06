@@ -32,6 +32,8 @@ export interface ToolUsage {
   inactive: boolean;
   /** Local credential source, kept inside the extension host for account-specific sign-in. */
   authFile?: string;
+  /** Stable login identity for actions that stay open across account switches. */
+  accountId?: string;
 }
 
 // ---------------------------------------------------------------- Claude
@@ -243,9 +245,9 @@ async function tailText(file: string, bytes = 96 * 1024): Promise<string> {
  * Codex writes the account's rate-limit snapshot into every `token_count` event of a rollout,
  * so the newest such event across all rollouts is the current usage as of the last turn.
  */
-async function readCodexPlan(home: string): Promise<{ plan: string | undefined; until: string | undefined; email: string | undefined }> {
-  const { plan, until, email } = decodeCodexAuth(await readJsonFile(path.join(home, 'auth.json')));
-  return { plan, until, email };
+async function readCodexPlan(home: string): Promise<{ plan: string | undefined; until: string | undefined; email: string | undefined; accountId: string | undefined }> {
+  const { plan, until, email, accountId } = decodeCodexAuth(await readJsonFile(path.join(home, 'auth.json')));
+  return { plan, until, email, accountId };
 }
 
 /**
@@ -353,7 +355,7 @@ async function liveCodexUsage(authFile: string, base: ToolUsage, account: { plan
  * login. Saved tokens are renewed in an isolated Codex home without changing the active login.
  */
 export async function readInactiveCodexUsage(account: CodexAccount, executable = 'codex'): Promise<ToolUsage> {
-  const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), account: account.email, windows: [], asOf: 0, source: 'chatgpt.com usage endpoint, saved login', error: undefined, inactive: true, authFile: account.file };
+  const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), account: account.email, windows: [], asOf: 0, source: 'chatgpt.com usage endpoint, saved login', error: undefined, inactive: true, ...(account.accountId ? { accountId: account.accountId } : {}), authFile: account.file };
   try {
     return await liveCodexUsage(account.file, base, account, executable);
   } catch (err) {
@@ -363,7 +365,7 @@ export async function readInactiveCodexUsage(account: CodexAccount, executable =
 
 export async function readCodexUsage(home: string, allowNetwork: boolean, executable = 'codex'): Promise<ToolUsage> {
   const account = await readCodexPlan(home);
-  const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), account: account.email, windows: [], asOf: 0, source: 'rate_limits recorded in the latest rollout', error: undefined, inactive: false };
+  const base: ToolUsage = { tool: 'codex', plan: codexPlanLabel(account.plan, account.until), account: account.email, windows: [], asOf: 0, source: 'rate_limits recorded in the latest rollout', error: undefined, inactive: false, ...(account.accountId ? { accountId: account.accountId } : {}) };
   if (allowNetwork) {
     try {
       return await liveCodexUsage(path.join(home, 'auth.json'), base, account, executable);
