@@ -51,7 +51,7 @@ interface Config {
   phoneMode: boolean;
   keepSessionsRunning: boolean;
   usage: { enabled: boolean; claudeNetwork: boolean; codexNetwork: boolean; refreshInterval: number };
-  view: Omit<ViewOptions, 'locallyArchived' | 'pinned'>;
+  view: Omit<ViewOptions, 'locallyArchived' | 'pinned' | 'search'>;
 }
 
 function readConfig(): Config {
@@ -142,10 +142,24 @@ export function activate(context: vscode.ExtensionContext): void {
       takeMarks(await readMarks(marksPath));
     }
   })().catch((err: unknown) => output.appendLine(`reading ${marksPath} failed: ${err instanceof Error ? err.message : String(err)}`));
-  const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned });
+  // What the Sessions view is searched for; kept for the window, not saved.
+  let search = '';
+  const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned, search });
 
   const provider = new SessionsProvider(options(), () => void vscode.commands.executeCommand('setContext', 'agentSessions.loaded', true));
   const view = vscode.window.createTreeView('agentSessions.list', { treeDataProvider: provider, showCollapseAll: true });
+  // While searching, the view says how many sessions matched, so an empty result is not taken for no sessions at all.
+  const syncSearchMessage = () => {
+    const found = provider.searchResults();
+    view.message = found === undefined ? '' : found ? `${found} session${found === 1 ? '' : 's'} matching “${search}”` : `No sessions match “${search}”.`;
+  };
+  context.subscriptions.push(provider.onDidChangeTreeData(syncSearchMessage));
+  const setSearch = (value: string) => {
+    search = value.trim();
+    void vscode.commands.executeCommand('setContext', 'agentSessions.searching', search !== '');
+    provider.setOptions(options());
+    syncSearchMessage();
+  };
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   statusBar.command = 'agentSessions.list.focus';
   const usageProvider = new UsageProvider(context.extensionUri, (usage) => {
@@ -589,6 +603,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('agentSessions.newClaude', () => newIn('claude')),
     vscode.commands.registerCommand('agentSessions.newCodex', () => newIn('codex')),
+    vscode.commands.registerCommand('agentSessions.search', () => {
+      // The list follows each keystroke. Leaving the box keeps the search, so a found row can be clicked.
+      const input = vscode.window.createInputBox();
+      input.title = 'Search Sessions';
+      input.placeholder = 'Words in the title, worktree, branch, folder or id';
+      input.value = search;
+      input.onDidChangeValue(setSearch);
+      input.onDidAccept(() => input.hide());
+      input.onDidHide(() => input.dispose());
+      input.show();
+    }),
+    vscode.commands.registerCommand('agentSessions.clearSearch', () => setSearch('')),
     vscode.commands.registerCommand('agentSessions.showArchived', () => setting('showArchived', true)),
     vscode.commands.registerCommand('agentSessions.hideArchived', () => setting('showArchived', false)),
     vscode.commands.registerCommand('agentSessions.showSubagents', () => setting('showSubagents', true)),

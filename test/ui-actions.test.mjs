@@ -69,7 +69,7 @@ test('age warning begins after ten minutes and clears on a successful fresh read
 });
 
 const session = (id, overrides = {}) => ({ tool: 'codex', id, title: id, state: 'stopped', startedAt: 1, updatedAt: 1, archived: false, subagent: false, empty: false, ...overrides });
-const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, subagentLayout: 'nested', showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), ...overrides });
+const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, subagentLayout: 'nested', showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), search: '', ...overrides });
 
 test('pinned stopped sessions stay in Active outside the history cap without becoming live', () => {
   const provider = new SessionsProvider(options(), () => {});
@@ -150,6 +150,40 @@ test('archiving a session hides its subagents instead of promoting them to rows'
   provider.setOptions(options({ pinned: new Set(), locallyArchived: new Set(['codex:parent']), showArchived: true }));
   const [row] = provider.getChildren()[0].children;
   assert.deepEqual([row.session.id, row.children.map(c => c.session.id), row.children[0].children.map(c => c.session.id)], ['parent', ['child'], ['grandchild']], 'showing archived brings the parent back with its subagents nested again');
+});
+
+test('a search lists what matches in Active, History and Archived, past the archive filter and the history cap', () => {
+  const provider = new SessionsProvider(options(), () => {});
+  provider.setSessions([
+    session('old', { title: 'Deploy fix' }),
+    session('running', { title: 'deploy run', state: 'running', startedAt: 9 }),
+    session('h1', { title: 'deploy history one', updatedAt: 20 }),
+    session('h2', { title: 'deploy history two', updatedAt: 30 }),
+    session('codex-archived', { title: 'deploy put away', archived: true }),
+    session('here-archived', { title: 'deploy put away here', updatedAt: 40 }),
+    session('other', { title: 'unrelated', updatedAt: 50 }),
+  ]);
+  provider.setOptions(options({ search: 'DEPLOY', locallyArchived: new Set(['codex:here-archived']) }));
+  const sections = provider.getChildren().map(group => [group.label, group.children.map(row => row.session.id)]);
+  assert.deepEqual(sections, [
+    ['Active', ['old', 'running']],
+    ['History', ['h2', 'h1']],
+    ['Archived', ['here-archived', 'codex-archived']],
+  ], 'matches are split into live or pinned, stopped and archived sessions, with every match shown');
+  assert.equal(provider.searchResults(), 6, 'the view is told how many sessions matched');
+  provider.setOptions(options({ search: 'history  TWO' }));
+  assert.deepEqual(provider.getChildren().map(group => group.children.map(row => row.session.id)), [['h2']], 'every word must match, in any case');
+  provider.setOptions(options({ search: 'nothing like this' }));
+  assert.deepEqual([provider.getChildren(), provider.searchResults()], [[], 0], 'a search with no match shows no rows and says so');
+  provider.setOptions(options());
+  assert.deepEqual([provider.getChildren().map(group => group.label), provider.searchResults()], [['Active', 'History'], undefined], 'clearing the search brings back the usual list');
+});
+
+test('a search finds a session by what it spawned, and shows it with its subagents', () => {
+  const provider = new SessionsProvider(options({ pinned: new Set(), search: 'needle' }), () => {});
+  provider.setSessions([session('parent', { state: 'running' }), session('child', { title: 'find the needle', state: 'running', subagent: true, parentId: 'parent' })]);
+  const [active] = provider.getChildren();
+  assert.deepEqual([active.label, active.children.map(row => [row.session.id, row.children.map(c => c.session.id)])], ['Active', [['parent', ['child']]]], 'a matching subagent brings its parent row, nested as usual');
 });
 
 test('the Worktrees view redraws only when a row it shows changes', () => {

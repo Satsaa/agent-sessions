@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.23",
+  "version": "0.8.25",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -87,7 +87,7 @@
       {
         "view": "agentSessions.list",
         "contents": "No sessions found under ~/.claude or ~/.codex.\n[New Claude session](command:agentSessions.newClaude)\n[New Codex session](command:agentSessions.newCodex)",
-        "when": "agentSessions.loaded"
+        "when": "agentSessions.loaded && !agentSessions.searching"
       }
     ],
     "commands": [
@@ -113,6 +113,18 @@
           "light": "resources/toolbar/codex-light.svg",
           "dark": "resources/toolbar/codex-dark.svg"
         }
+      },
+      {
+        "command": "agentSessions.search",
+        "title": "Search Sessions",
+        "category": "Agent Sessions",
+        "icon": "$(search)"
+      },
+      {
+        "command": "agentSessions.clearSearch",
+        "title": "Clear Search",
+        "category": "Agent Sessions",
+        "icon": "$(search-stop)"
       },
       {
         "command": "agentSessions.refresh",
@@ -339,6 +351,16 @@
         }
       ],
       "view/title": [
+        {
+          "command": "agentSessions.search",
+          "when": "view == agentSessions.list",
+          "group": "navigation@0"
+        },
+        {
+          "command": "agentSessions.clearSearch",
+          "when": "view == agentSessions.list && agentSessions.searching",
+          "group": "navigation@0"
+        },
         {
           "command": "agentSessions.newClaude",
           "when": "view == agentSessions.list",
@@ -669,6 +691,10 @@
         {
           "command": "agentSessions.rowActions",
           "when": "false"
+        },
+        {
+          "command": "agentSessions.clearSearch",
+          "when": "agentSessions.searching"
         }
       ]
     },

@@ -96,6 +96,17 @@ export interface ViewOptions {
   /** Sessions archived from this view (kept in this extension's own state). */
   locallyArchived: ReadonlySet<string>;
   pinned: ReadonlySet<string>;
+  /** Words every shown session must match; empty shows the list as usual (see `matchesSearch`). */
+  search: string;
+}
+
+/**
+ * Whether a session matches every word of a search, ignoring case: in its title, tool, role, worktree, branch,
+ * folder or id.
+ */
+export function matchesSearch(s: Session, search: string): boolean {
+  const text = [s.title, toolLabel(s.tool), s.agentRole, s.worktree?.name, s.worktree?.branch, s.branch, s.cwd, s.id].filter(Boolean).join('\n').toLowerCase();
+  return search.toLowerCase().split(/\s+/).filter(Boolean).every((word) => text.includes(word));
 }
 
 export class SessionItem extends vscode.TreeItem {
@@ -226,6 +237,8 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   private rendered = '';
   /** Per session, how many times its row identity was retired to drop a selection (see `dropSelection`). */
   private readonly retired = new Map<string, number>();
+  /** How many rows the search found, while there is one. */
+  private found: number | undefined;
   /** Whether the first scan has landed, and whether the view has been told (see `announceLoaded`). */
   private scanned = false;
   private announced = false;
@@ -262,6 +275,11 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   /** Sessions after filtering, for badges and the status bar: the rows themselves, not the spawned sessions nested under them. */
   visible(): Session[] {
     return this.topLevel(this.filtered()).all;
+  }
+
+  /** Rows the current search found, or undefined when nothing is searched. */
+  searchResults(): number | undefined {
+    return this.found;
   }
 
   /** Split the filtered sessions into rows and the spawned sessions shown under them (see `arrangeSubagents`). */
@@ -323,21 +341,29 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     return out;
   }
 
-  private filtered(): Session[] {
+  /**
+   * Archiving a session puts away what it spawned too; otherwise its subagents would lose their parent row and
+   * stand alone in the list. The chain is followed up to the top, with a guard against a cycle in bad data.
+   */
+  private archivedWithAncestors(): (s: Session) => boolean {
     const o = this.options;
-    const repoRoots = o.scope === 'workspace' ? this.workspaceRepoRoots() : undefined;
     const byKey = new Map(this.sessions.map((s) => [`${s.tool}:${s.id}`, s]));
-    // Archiving a session puts away what it spawned too; otherwise its subagents would lose their parent row and
-    // stand alone in the list. The chain is followed up to the top, with a guard against a cycle in bad data.
-    const archivedWithAncestors = (s: Session): boolean => {
+    return (s) => {
       for (let at: Session | undefined = s, depth = 0; at && depth < 32; depth++) {
         if (at.archived || o.locallyArchived.has(`${at.tool}:${at.id}`)) return true;
         at = at.subagent && at.parentId ? byKey.get(`${at.parentTool ?? at.tool}:${at.parentId}`) : undefined;
       }
       return false;
     };
+  }
+
+  /** The sessions the view's filters keep; a search keeps archived ones too, for their own section. */
+  private filtered(withArchived = false): Session[] {
+    const o = this.options;
+    const repoRoots = o.scope === 'workspace' ? this.workspaceRepoRoots() : undefined;
+    const archived = this.archivedWithAncestors();
     return this.sessions.filter((s) => {
-      if (!o.showArchived && archivedWithAncestors(s)) return false;
+      if (!o.showArchived && !withArchived && archived(s)) return false;
       // Spawned sessions stay in: `topLevel` nests them under their parent and drops the parentless unless switched on.
       if (s.empty && !s.subagent && !o.showEmpty && !isLive(s.state) && !o.pinned.has(`${s.tool}:${s.id}`)) return false;
       if (repoRoots) {
@@ -350,7 +376,8 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
 
   private rebuild(): void {
     const o = this.options;
-    const { all, childrenOf } = this.topLevel(this.filtered());
+    const searching = o.search.trim() !== '';
+    const { all, childrenOf } = this.topLevel(this.filtered(searching));
     const isPinned = (s: Session) => o.pinned.has(`${s.tool}:${s.id}`);
     // A session another agent was handed keeps working after its parent stops; the parent stays with it in Active.
     const working = (s: Session) => isLive(s.state) || (childrenOf.get(`${s.tool}:${s.id}`) ?? []).some((c) => isLive(c.state));
@@ -365,47 +392,63 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
       return n ? `#${n}` : '';
     };
 
-    switch (o.groupBy) {
-      case 'none':
-        this.roots = shown.map((s) => item(s));
-        break;
-      case 'activity': {
-        const groups: Node[] = [];
-        if (active.length) groups.push(new GroupItem('active', 'Active', active.map((s) => item(s)), new vscode.ThemeIcon('pulse'), true));
-        if (history.length) groups.push(new GroupItem('history', 'History', history.map((s) => item(s)), new vscode.ThemeIcon('history'), true));
-        this.roots = groups;
-        break;
-      }
-      case 'tool': {
-        const groups: Node[] = [];
-        for (const tool of ['claude', 'codex'] as const) {
-          const mine = shown.filter((s) => s.tool === tool);
-          if (mine.length) groups.push(new GroupItem(tool, toolLabel(tool), mine.map((s) => item(s, false)), toolIcon(tool), true));
+    if (searching) {
+      // A row is found by its own text or by a session nested under it, and is shown with everything under it.
+      const found = (s: Session): boolean => matchesSearch(s, o.search) || (childrenOf.get(`${s.tool}:${s.id}`) ?? []).some(found);
+      const hits = new Set(all.filter(found));
+      const archived = this.archivedWithAncestors();
+      const rest = all.filter((s) => hits.has(s) && !archived(s) && !working(s) && !isPinned(s));
+      const sections: [key: string, label: string, icon: string, sessions: Session[]][] = [
+        ['active', 'Active', 'pulse', active.filter((s) => hits.has(s) && !archived(s))],
+        ['history', 'History', 'history', rest.sort(byRecency)],
+        ['archived', 'Archived', 'archive', [...hits].filter(archived).sort(byRecency)],
+      ];
+      this.found = hits.size;
+      this.roots = sections.filter(([, , , list]) => list.length).map(([key, label, icon, list]) => new GroupItem(`search-${key}`, label, list.map((s) => item(s)), new vscode.ThemeIcon(icon), true));
+    } else {
+      this.found = undefined;
+      switch (o.groupBy) {
+        case 'none':
+          this.roots = shown.map((s) => item(s));
+          break;
+        case 'activity': {
+          const groups: Node[] = [];
+          if (active.length) groups.push(new GroupItem('active', 'Active', active.map((s) => item(s)), new vscode.ThemeIcon('pulse'), true));
+          if (history.length) groups.push(new GroupItem('history', 'History', history.map((s) => item(s)), new vscode.ThemeIcon('history'), true));
+          this.roots = groups;
+          break;
         }
-        this.roots = groups;
-        break;
-      }
-      case 'repository': {
-        const buckets = new Map<string, Session[]>();
-        for (const s of shown) {
-          const root = s.worktree?.repoRoot ?? repoRootOf(s.cwd) ?? s.cwd ?? '(unknown)';
-          const list = buckets.get(root) ?? [];
-          list.push(s);
-          buckets.set(root, list);
+        case 'tool': {
+          const groups: Node[] = [];
+          for (const tool of ['claude', 'codex'] as const) {
+            const mine = shown.filter((s) => s.tool === tool);
+            if (mine.length) groups.push(new GroupItem(tool, toolLabel(tool), mine.map((s) => item(s, false)), toolIcon(tool), true));
+          }
+          this.roots = groups;
+          break;
         }
-        const workspaceRoots = this.workspaceRepoRoots();
-        this.roots = [...buckets.entries()]
-          .sort((a, b) => {
-            const aw = workspaceRoots.has(path.resolve(a[0])) ? 0 : 1;
-            const bw = workspaceRoots.has(path.resolve(b[0])) ? 0 : 1;
-            return aw - bw || Math.max(...b[1].map((s) => s.updatedAt)) - Math.max(...a[1].map((s) => s.updatedAt));
-          })
-          .map(([root, list]) => {
-            const label = path.basename(root) || root;
-            const expanded = workspaceRoots.has(path.resolve(root)) || list.some((s) => isLive(s.state) || isPinned(s));
-            return new GroupItem(root, label, list.map((s) => item(s)), new vscode.ThemeIcon('repo'), expanded);
-          });
-        break;
+        case 'repository': {
+          const buckets = new Map<string, Session[]>();
+          for (const s of shown) {
+            const root = s.worktree?.repoRoot ?? repoRootOf(s.cwd) ?? s.cwd ?? '(unknown)';
+            const list = buckets.get(root) ?? [];
+            list.push(s);
+            buckets.set(root, list);
+          }
+          const workspaceRoots = this.workspaceRepoRoots();
+          this.roots = [...buckets.entries()]
+            .sort((a, b) => {
+              const aw = workspaceRoots.has(path.resolve(a[0])) ? 0 : 1;
+              const bw = workspaceRoots.has(path.resolve(b[0])) ? 0 : 1;
+              return aw - bw || Math.max(...b[1].map((s) => s.updatedAt)) - Math.max(...a[1].map((s) => s.updatedAt));
+            })
+            .map(([root, list]) => {
+              const label = path.basename(root) || root;
+              const expanded = workspaceRoots.has(path.resolve(root)) || list.some((s) => isLive(s.state) || isPinned(s));
+              return new GroupItem(root, label, list.map((s) => item(s)), new vscode.ThemeIcon('repo'), expanded);
+            });
+          break;
+        }
       }
     }
     // VS Code shows the view's progress bar on every data-change event. Refreshes
