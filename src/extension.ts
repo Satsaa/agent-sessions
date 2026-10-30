@@ -158,7 +158,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned, open, search });
 
   const provider = new SessionsProvider(options(), () => void vscode.commands.executeCommand('setContext', 'agentSessions.loaded', true));
-  const view = vscode.window.createTreeView('agentSessions.list', { treeDataProvider: provider, showCollapseAll: true });
+  const view = vscode.window.createTreeView('agentSessions.list', { treeDataProvider: provider, showCollapseAll: true, canSelectMany: true });
   // While searching, the view says how many sessions matched, so an empty result is not taken for no sessions at all.
   const syncSearchMessage = () => {
     const found = provider.searchResults();
@@ -186,8 +186,19 @@ export function activate(context: vscode.ExtensionContext): void {
   const usageBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   usageBar.command = 'agentSessions.usage.focus';
   const worktreesProvider = new WorktreesProvider();
-  const worktreesView = vscode.window.createTreeView('agentSessions.worktrees', { treeDataProvider: worktreesProvider, showCollapseAll: true });
+  const worktreesView = vscode.window.createTreeView('agentSessions.worktrees', { treeDataProvider: worktreesProvider, showCollapseAll: true, canSelectMany: true });
   context.subscriptions.push(output, view, statusBar, usageView, usageBar, worktreesView, { dispose: stopRunner });
+  // The views with several rows selected, for the menus' when-clauses: single-row actions hide there (see row-actions.ts).
+  const multiSelect = new Set<string>();
+  const trackMultiSelect = <T>(id: string, tree: vscode.TreeView<T>) => tree.onDidChangeSelection((e) => {
+    const many = e.selection.length > 1;
+    if (many === multiSelect.has(id)) return;
+    if (many) multiSelect.add(id);
+    else multiSelect.delete(id);
+    void vscode.commands.executeCommand('setContext', 'agentSessions.multiSelect', [...multiSelect]);
+  });
+  context.subscriptions.push(trackMultiSelect('agentSessions.list', view), trackMultiSelect('agentSessions.worktrees', worktreesView));
+  void vscode.commands.executeCommand('setContext', 'agentSessions.multiSelect', []);
   // Its rows get git stats only while it shows (see refresh).
   context.subscriptions.push(worktreesView.onDidChangeVisibility((e) => e.visible && void refresh([])));
 
@@ -200,7 +211,8 @@ export function activate(context: vscode.ExtensionContext): void {
   // same chat stays active: the selection itself survives refreshes through the row id.
   let revealedKey: string | undefined;
   const selectActiveTabSession = (): void => {
-    if (!view.visible) return;
+    // Several rows selected by hand are the person's, for a bulk action: following the active tab would undo them.
+    if (!view.visible || view.selection.length > 1) return;
     const s = sessionOfActiveTab(latestSessions);
     const item = s && provider.itemFor(s.tool, s.id);
     if (!item) {
@@ -538,14 +550,17 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const sessionOf = (arg: unknown): Session | undefined => (arg instanceof SessionItem ? arg.session : undefined);
   const worktreePathOf = (arg: unknown): string | undefined => (typeof arg === 'string' ? arg : arg instanceof WorktreeItem ? arg.worktree.path : undefined);
+  /** The rows a bulk command acts on: invoked on one of several selected rows, VS Code passes the selection second. */
+  const rowsOf = (arg: unknown, selected: unknown): unknown[] => (Array.isArray(selected) && selected.length ? selected : [arg]);
+  const sessionsOf = (arg: unknown, selected: unknown): Session[] => rowsOf(arg, selected).flatMap((x) => sessionOf(x) ?? []);
   const setting = async (key: string, value: unknown) => {
     await vscode.workspace.getConfiguration('agentSessions').update(key, value, vscode.ConfigurationTarget.Global);
   };
-  const mark = async (list: MarkList, s: Session, present: boolean) => takeMarks(await setMark(marksPath, list, `${s.tool}:${s.id}`, present));
-  const archive = async (s: Session) => {
-    await mark('archived', s, true);
+  const mark = async (list: MarkList, sessions: Session[], present: boolean) => takeMarks(await setMark(marksPath, list, sessions.map((s) => `${s.tool}:${s.id}`), present));
+  const archive = async (sessions: Session[]) => {
+    await mark('archived', sessions, true);
     // Archiving puts the session away, so its tab goes too; the agent keeps running.
-    await closeSessionTab(s).catch((err: unknown) => output.appendLine(`close tab for ${s.tool} ${s.id} failed: ${err instanceof Error ? err.message : String(err)}`));
+    for (const s of sessions) await closeSessionTab(s).catch((err: unknown) => output.appendLine(`close tab for ${s.tool} ${s.id} failed: ${err instanceof Error ? err.message : String(err)}`));
     provider.setOptions(options());
     updateIndicators(provider.visible());
   };
@@ -569,23 +584,26 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!p) return;
       vscode.window.createTerminal({ name: path.basename(p), cwd: p }).show();
     }),
-    vscode.commands.registerCommand('agentSessions.worktree.delete', async (arg: unknown) => {
-      if (!(arg instanceof WorktreeItem) || arg.worktree.isMain) return;
-      try {
-        await deleteWorktree(arg.worktree);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        output.appendLine(`delete worktree ${arg.worktree.path} failed: ${message}`);
-        void vscode.window.showErrorMessage(`Could not delete worktree: ${message}`);
-      } finally {
-        await refresh();
+    vscode.commands.registerCommand('agentSessions.worktree.delete', async (arg: unknown, selected: unknown) => {
+      const worktrees = rowsOf(arg, selected).flatMap((x) => (x instanceof WorktreeItem && !x.worktree.isMain ? [x.worktree] : []));
+      if (!worktrees.length) return;
+      // One at a time: each goes through Git's own confirmation, and one that fails leaves the rest to go.
+      for (const w of worktrees) {
+        try {
+          await deleteWorktree(w);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          output.appendLine(`delete worktree ${w.path} failed: ${message}`);
+          void vscode.window.showErrorMessage(`Could not delete worktree ${path.basename(w.path)}: ${message}`);
+        }
       }
+      await refresh();
     }),
-    vscode.commands.registerCommand('agentSessions.worktree.copyPath', async (arg: unknown) => {
-      const p = worktreePathOf(arg);
-      if (!p) return;
-      await vscode.env.clipboard.writeText(p);
-      vscode.window.setStatusBarMessage(`Copied: ${p}`, 3000);
+    vscode.commands.registerCommand('agentSessions.worktree.copyPath', async (arg: unknown, selected: unknown) => {
+      const paths = rowsOf(arg, selected).flatMap((x) => worktreePathOf(x) ?? []);
+      if (!paths.length) return;
+      await vscode.env.clipboard.writeText(paths.join('\n'));
+      vscode.window.setStatusBarMessage(paths.length === 1 ? `Copied: ${paths[0]}` : `Copied ${paths.length} worktree paths`, 3000);
     }),
     vscode.commands.registerCommand('agentSessions.worktree.newClaude', (arg: unknown) => {
       const p = worktreePathOf(arg);
@@ -688,9 +706,8 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showErrorMessage(`Could not open ${toolLabel(s.tool)} session: ${msg}`);
       }
     }),
-    vscode.commands.registerCommand('agentSessions.openInTerminal', (arg: unknown) => {
-      const s = sessionOf(arg);
-      if (s) openInTerminal(s);
+    vscode.commands.registerCommand('agentSessions.openInTerminal', (arg: unknown, selected: unknown) => {
+      for (const s of sessionsOf(arg, selected)) openInTerminal(s);
     }),
     vscode.commands.registerCommand('agentSessions.closeCodex', async (arg: unknown) => {
       const s = sessionOf(arg);
@@ -744,27 +761,29 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       await refresh();
     }),
-    vscode.commands.registerCommand('agentSessions.copyIdentifier', async (arg: unknown) => {
-      const s = sessionOf(arg);
-      if (!s) return;
-      await vscode.env.clipboard.writeText(`${toolLabel(s.tool)} ${s.id}`);
+    vscode.commands.registerCommand('agentSessions.copyIdentifier', async (arg: unknown, selected: unknown) => {
+      const sessions = sessionsOf(arg, selected);
+      if (!sessions.length) return;
+      await vscode.env.clipboard.writeText(sessions.map((s) => `${toolLabel(s.tool)} ${s.id}`).join('\n'));
     }),
-    vscode.commands.registerCommand('agentSessions.copyTranscript', async (arg: unknown) => {
-      const s = sessionOf(arg);
-      if (!s) return;
-      const messages = await readTranscript(s);
-      if (!messages.length) {
-        void vscode.window.showInformationMessage('This session has no messages to copy.');
+    vscode.commands.registerCommand('agentSessions.copyTranscript', async (arg: unknown, selected: unknown) => {
+      const sessions = sessionsOf(arg, selected);
+      if (!sessions.length) return;
+      const read = (await Promise.all(sessions.map(async (s) => ({ s, messages: await readTranscript(s) })))).filter((t) => t.messages.length);
+      if (!read.length) {
+        void vscode.window.showInformationMessage(sessions.length === 1 ? 'This session has no messages to copy.' : 'These sessions have no messages to copy.');
         return;
       }
-      await vscode.env.clipboard.writeText(formatTranscript(s, messages));
-      vscode.window.setStatusBarMessage(`$(copy) Copied ${messages.length} message${messages.length === 1 ? '' : 's'} from "${s.title}"`, 3000);
+      await vscode.env.clipboard.writeText(read.map((t) => formatTranscript(t.s, t.messages)).join('\n'));
+      const count = read.reduce((n, t) => n + t.messages.length, 0);
+      const from = read.length === 1 ? `"${read[0]!.s.title}"` : `${read.length} sessions`;
+      vscode.window.setStatusBarMessage(`$(copy) Copied ${count} message${count === 1 ? '' : 's'} from ${from}`, 3000);
     }),
-    vscode.commands.registerCommand('agentSessions.copyResumeCommand', async (arg: unknown) => {
-      const s = sessionOf(arg);
-      if (!s) return;
-      await vscode.env.clipboard.writeText(resumeCommand(s));
-      vscode.window.setStatusBarMessage(`Copied: ${resumeCommand(s)}`, 3000);
+    vscode.commands.registerCommand('agentSessions.copyResumeCommand', async (arg: unknown, selected: unknown) => {
+      const commands = sessionsOf(arg, selected).map(resumeCommand);
+      if (!commands.length) return;
+      await vscode.env.clipboard.writeText(commands.join('\n'));
+      vscode.window.setStatusBarMessage(commands.length === 1 ? `Copied: ${commands[0]}` : `Copied ${commands.length} resume commands`, 3000);
     }),
     vscode.workspace.registerTextDocumentContentProvider(TRANSCRIPT_SCHEME, {
       onDidChange: transcriptChanged.event,
@@ -776,15 +795,16 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     }),
     vscode.commands.registerCommand('agentSessions.back', () => phone.back()),
-    vscode.commands.registerCommand('agentSessions.rowActions', async (arg: unknown) => {
+    vscode.commands.registerCommand('agentSessions.rowActions', async (arg: unknown, selected: unknown) => {
       if (!(arg instanceof vscode.TreeItem)) return;
+      const rows = rowsOf(arg, selected).filter((x) => x instanceof vscode.TreeItem);
       const titles = new Map<string, string>(
         (context.extension.packageJSON as { contributes: { commands: { command: string; title: string }[] } }).contributes.commands.map((c) => [c.command, c.title]),
       );
-      const picks = rowActionsFor(arg.contextValue, config.phoneMode).map((command) => ({ label: titles.get(command) ?? command, command }));
-      const label = typeof arg.label === 'string' ? arg.label : (arg.label?.label ?? '');
+      const picks = rowActionsFor(rows.map((r) => r.contextValue), config.phoneMode).map((command) => ({ label: titles.get(command) ?? command, command }));
+      const label = rows.length > 1 ? `${rows.length} selected` : typeof arg.label === 'string' ? arg.label : (arg.label?.label ?? '');
       const chosen = await vscode.window.showQuickPick(picks, { title: label });
-      if (chosen) await vscode.commands.executeCommand(chosen.command, arg);
+      if (chosen) await vscode.commands.executeCommand(chosen.command, arg, selected);
     }),
     vscode.commands.registerCommand('agentSessions.openTranscript', async (arg: unknown) => {
       const s = sessionOf(arg);
@@ -803,9 +823,9 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!s?.cwd) return;
       await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(s.cwd), { forceNewWindow: true });
     }),
-    vscode.commands.registerCommand('agentSessions.archive', async (arg: unknown) => {
-      const s = sessionOf(arg);
-      if (s) await archive(s);
+    vscode.commands.registerCommand('agentSessions.archive', async (arg: unknown, selected: unknown) => {
+      const sessions = sessionsOf(arg, selected);
+      if (sessions.length) await archive(sessions);
     }),
     ...(['claude', 'codex'] as const).map((target) => vscode.commands.registerCommand(target === 'codex' ? 'agentSessions.moveToCodex' : 'agentSessions.moveToClaude', async (arg: unknown) => {
       const s = sessionOf(arg);
@@ -829,22 +849,26 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       // Archive only after Codex accepted the first turn and its destination tab opened.
-      await archive(s);
+      await archive([s]);
 
     })),
-    ...(['pin', 'unpin'] as const).map((action) => vscode.commands.registerCommand(`agentSessions.${action}`, async (arg: unknown) => {
-      const s = sessionOf(arg);
-      if (!s) return;
-      await mark('pinned', s, action === 'pin');
+    ...(['pin', 'unpin'] as const).map((action) => vscode.commands.registerCommand(`agentSessions.${action}`, async (arg: unknown, selected: unknown) => {
+      const sessions = sessionsOf(arg, selected);
+      if (!sessions.length) return;
+      await mark('pinned', sessions, action === 'pin');
       provider.setOptions(options());
       await refresh();
     })),
-    vscode.commands.registerCommand('agentSessions.unarchive', async (arg: unknown) => {
-      const s = sessionOf(arg);
-      if (!s) return;
-      await mark('archived', s, false);
-      if (s.archived) {
+    vscode.commands.registerCommand('agentSessions.unarchive', async (arg: unknown, selected: unknown) => {
+      const sessions = sessionsOf(arg, selected);
+      if (!sessions.length) return;
+      await mark('archived', sessions, false);
+      const inTool = sessions.filter((s) => s.archived);
+      if (inTool.length === 1) {
+        const s = inTool[0]!;
         vscode.window.showInformationMessage(`This session is archived in ${s.tool === 'codex' ? 'Codex' : 'Claude Code'} itself; unarchive it there to hide the badge.`);
+      } else if (inTool.length) {
+        vscode.window.showInformationMessage(`${inTool.length} of these sessions are archived in Claude Code or Codex itself; unarchive them there to hide the badge.`);
       }
       provider.setOptions(options());
       updateIndicators(provider.visible());

@@ -451,7 +451,7 @@
       "view/item/context": [
         {
           "command": "agentSessions.openTranscript",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /subagent/",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /subagent/ && view not in agentSessions.multiSelect",
           "group": "1_open@1"
         },
         {
@@ -466,7 +466,7 @@
         },
         {
           "command": "agentSessions.open",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /subagent/)",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /subagent/) && view not in agentSessions.multiSelect",
           "group": "1_open@1"
         },
         {
@@ -476,7 +476,7 @@
         },
         {
           "command": "agentSessions.openFolder",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && view not in agentSessions.multiSelect",
           "group": "1_open@3"
         },
         {
@@ -486,7 +486,7 @@
         },
         {
           "command": "agentSessions.revealTranscript",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && view not in agentSessions.multiSelect",
           "group": "2_copy@2"
         },
         {
@@ -501,12 +501,12 @@
         },
         {
           "command": "agentSessions.moveToCodex",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-claude/ && !(viewItem =~ /subagent/)",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-claude/ && !(viewItem =~ /subagent/) && view not in agentSessions.multiSelect",
           "group": "3_archive@2"
         },
         {
           "command": "agentSessions.moveToClaude",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/ && !(viewItem =~ /subagent/)",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/ && !(viewItem =~ /subagent/) && view not in agentSessions.multiSelect",
           "group": "3_archive@2"
         },
         {
@@ -516,12 +516,12 @@
         },
         {
           "command": "agentSessions.worktree.openFolder",
-          "when": "view == agentSessions.worktrees && viewItem =~ /^worktree(-main)?$/",
+          "when": "view == agentSessions.worktrees && viewItem =~ /^worktree(-main)?$/ && view not in agentSessions.multiSelect",
           "group": "1_open@1"
         },
         {
           "command": "agentSessions.worktree.openTerminal",
-          "when": "view == agentSessions.worktrees && viewItem =~ /^worktree(-main)?$/",
+          "when": "view == agentSessions.worktrees && viewItem =~ /^worktree(-main)?$/ && view not in agentSessions.multiSelect",
           "group": "1_open@2"
         },
         {
@@ -531,12 +531,12 @@
         },
         {
           "command": "agentSessions.worktree.newClaude",
-          "when": "view == agentSessions.worktrees && viewItem =~ /^worktree(-main)?$/",
+          "when": "view == agentSessions.worktrees && viewItem =~ /^worktree(-main)?$/ && view not in agentSessions.multiSelect",
           "group": "2_new@1"
         },
         {
           "command": "agentSessions.worktree.newCodex",
-          "when": "view == agentSessions.worktrees && viewItem =~ /^worktree(-main)?$/",
+          "when": "view == agentSessions.worktrees && viewItem =~ /^worktree(-main)?$/ && view not in agentSessions.multiSelect",
           "group": "2_new@2"
         },
         {
@@ -546,7 +546,7 @@
         },
         {
           "command": "agentSessions.closeCodex",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/ && view not in agentSessions.multiSelect",
           "group": "1_open@4"
         },
         {
@@ -596,12 +596,12 @@
         },
         {
           "command": "agentSessions.rename",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /subagent/)",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /subagent/) && view not in agentSessions.multiSelect",
           "group": "1_open@4"
         },
         {
           "command": "agentSessions.reloadCodexPanel",
-          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/ && !(viewItem =~ /subagent/)",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session-codex/ && !(viewItem =~ /subagent/) && view not in agentSessions.multiSelect",
           "group": "1_open@5"
         },
         {

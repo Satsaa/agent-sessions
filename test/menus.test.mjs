@@ -29,9 +29,20 @@ test('the row action picker covers every context-menu action', async () => {
     const contextMenu = new Set(contributes.menus['view/item/context'].filter((e) => !e.group?.startsWith('inline')).map((e) => e.command));
     assert.deepEqual([...contextMenu].filter((c) => !listed.has(c)), [], 'every context-menu action is in the picker');
     assert.deepEqual([...listed].filter((c) => !contextMenu.has(c)), [], 'the picker offers nothing the context menu does not');
-    assert.deepEqual(rowActionsFor('group', false), [], 'a group row has no actions');
-    assert.ok(rowActionsFor('session-claude-pinned-live', true).includes('agentSessions.unpin') && !rowActionsFor('session-claude-pinned-live', true).includes('agentSessions.pin'), 'a pinned session offers Unpin, not Pin');
-    assert.ok(rowActionsFor('session-claude-live', false).includes('agentSessions.openInTerminal') && !rowActionsFor('session-claude-live', true).includes('agentSessions.openInTerminal'), 'desktop-only actions are offered on the desktop and left out on the phone');
+    assert.deepEqual(rowActionsFor(['group'], false), [], 'a group row has no actions');
+    assert.ok(rowActionsFor(['session-claude-pinned-live'], true).includes('agentSessions.unpin') && !rowActionsFor(['session-claude-pinned-live'], true).includes('agentSessions.pin'), 'a pinned session offers Unpin, not Pin');
+    assert.ok(rowActionsFor(['session-claude-live'], false).includes('agentSessions.openInTerminal') && !rowActionsFor(['session-claude-live'], true).includes('agentSessions.openInTerminal'), 'desktop-only actions are offered on the desktop and left out on the phone');
+    const many = rowActionsFor(['session-claude-live', 'session-codex-pinned-'], false);
+    assert.ok(many.includes('agentSessions.archive') && !many.includes('agentSessions.rename'), 'several rows are offered the bulk actions, not the single-row ones');
+    assert.ok(!many.includes('agentSessions.pin') && !many.includes('agentSessions.unpin'), 'several rows are offered only the actions that fit every one of them');
+
+    // The context menu hides a single-row action while several rows are selected; a bulk one stays.
+    const hides = (e) => / && view not in agentSessions\.multiSelect$/.test(e.when ?? '');
+    const wrong = contributes.menus['view/item/context']
+      .filter((e) => !e.group?.startsWith('inline'))
+      .filter((e) => hides(e) === !!ROW_ACTIONS.find((a) => a.command === e.command)?.bulk)
+      .map((e) => e.command);
+    assert.deepEqual(wrong, [], 'context-menu entries hide on a multi-selection exactly when their action is not bulk');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

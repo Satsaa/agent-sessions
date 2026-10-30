@@ -48,9 +48,9 @@ function update(file: string, change: (m: SessionMarks) => SessionMarks): Promis
   return next;
 }
 
-/** Add or remove one session key from a list, as a change to the file's current content. */
-export function setMark(file: string, list: MarkList, key: string, present: boolean): Promise<SessionMarks> {
-  return update(file, (m) => ({ ...m, [list]: present ? [...m[list], key] : m[list].filter((k) => k !== key) }));
+/** Add or remove session keys from a list, as one change to the file's current content. */
+export function setMark(file: string, list: MarkList, keys: readonly string[], present: boolean): Promise<SessionMarks> {
+  return update(file, (m) => ({ ...m, [list]: present ? [...m[list], ...keys] : m[list].filter((k) => !keys.includes(k)) }));
 }
 
 /** Union marks into the file: how a window brings over what it kept in globalState before the file existed. */
