@@ -69,7 +69,7 @@ test('age warning begins after ten minutes and clears on a successful fresh read
 });
 
 const session = (id, overrides = {}) => ({ tool: 'codex', id, title: id, state: 'stopped', startedAt: 1, updatedAt: 1, archived: false, subagent: false, empty: false, ...overrides });
-const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, subagentLayout: 'nested', showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), search: '', ...overrides });
+const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, subagentLayout: 'nested', activeSort: 'newest', showActiveArchived: true, showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), open: new Set(), search: '', ...overrides });
 
 test('pinned stopped sessions stay in Active outside the history cap without becoming live', () => {
   const provider = new SessionsProvider(options(), () => {});
@@ -89,6 +89,43 @@ test('pinning remains tool-specific and respects repository and archive filterin
   assert.equal(provider.getChildren()[0].children.length, 1);
   provider.setOptions(options({ scope: 'workspace' }));
   assert.deepEqual(provider.getChildren(), []);
+});
+
+test('Active is ordered by the chosen sort, pinned sessions first in every order', () => {
+  const provider = new SessionsProvider(options(), () => {});
+  provider.setSessions([
+    session('old'),
+    session('b-working', { state: 'running', startedAt: 30, updatedAt: 40 }),
+    session('a-replied', { state: 'replied', startedAt: 10, updatedAt: 60 }),
+    session('c-waiting', { state: 'waiting', startedAt: 20, updatedAt: 50 }),
+  ]);
+  const order = (activeSort) => {
+    provider.setOptions(options({ activeSort }));
+    return provider.getChildren()[0].children.map(row => row.session.id);
+  };
+  assert.deepEqual(order('newest'), ['old', 'b-working', 'c-waiting', 'a-replied'], 'newest started first');
+  assert.deepEqual(order('oldest'), ['old', 'a-replied', 'c-waiting', 'b-working'], 'oldest started first');
+  assert.deepEqual(order('activity'), ['old', 'a-replied', 'c-waiting', 'b-working'], 'the session that wrote last first');
+  assert.deepEqual(order('attention'), ['old', 'c-waiting', 'a-replied', 'b-working'], 'waiting, then replied, then working');
+  assert.deepEqual(order('title'), ['old', 'a-replied', 'b-working', 'c-waiting'], 'alphabetically');
+});
+
+test('an archived session in use stays listed while archived sessions are hidden', () => {
+  const provider = new SessionsProvider(options({ pinned: new Set(), historyLimit: 10 }), () => {});
+  const sessions = [
+    session('live', { archived: true, state: 'running' }),
+    session('opened', { archived: true }),
+    session('parent', { archived: true }),
+    session('child', { subagent: true, parentId: 'parent', state: 'running' }),
+    session('put-away', { archived: true }),
+  ];
+  provider.setSessions(sessions);
+  const listed = () => provider.visible().map(s => s.id).sort();
+  provider.setOptions(options({ pinned: new Set(), historyLimit: 10, open: new Set(['codex:opened']) }));
+  assert.deepEqual(listed(), ['live', 'opened', 'parent'], 'live, open in a tab, or holding a working spawned session; never one out of use');
+  assert.deepEqual(provider.getChildren()[0].children.find(row => row.session.id === 'parent').children.map(row => row.session.id), ['child'], 'the working spawned session is under its archived parent');
+  provider.setOptions(options({ pinned: new Set(), historyLimit: 10, open: new Set(['codex:opened']), showActiveArchived: false }));
+  assert.deepEqual(listed(), [], 'switched off, archived sessions are hidden in use or not');
 });
 
 const worktree = { path: '/repo-wt/topic', repoRoot: '/repo', name: 'topic', isMain: false };
@@ -145,9 +182,10 @@ test('archiving a session hides its subagents instead of promoting them to rows'
   provider.setSessions([parent, child]);
   assert.deepEqual(provider.getChildren()[0].children.map(row => row.session.id), ['parent'], 'live subagents nest under their parent');
   provider.setSessions([parent, child, grandchild]);
-  provider.setOptions(options({ pinned: new Set(), locallyArchived: new Set(['codex:parent']) }));
+  // Live sessions are archived here, so the in-use exemption (tested on its own) is switched off.
+  provider.setOptions(options({ pinned: new Set(), locallyArchived: new Set(['codex:parent']), showActiveArchived: false }));
   assert.deepEqual(provider.getChildren(), [], 'an archived session takes its subagents, however deep, out of the list with it');
-  provider.setOptions(options({ pinned: new Set(), locallyArchived: new Set(['codex:parent']), showArchived: true }));
+  provider.setOptions(options({ pinned: new Set(), locallyArchived: new Set(['codex:parent']), showActiveArchived: false, showArchived: true }));
   const [row] = provider.getChildren()[0].children;
   assert.deepEqual([row.session.id, row.children.map(c => c.session.id), row.children[0].children.map(c => c.session.id)], ['parent', ['child'], ['grandchild']], 'showing archived brings the parent back with its subagents nested again');
 });

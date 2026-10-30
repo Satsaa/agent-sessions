@@ -326,10 +326,6 @@ export function openTabLabels(): Set<string> {
   return out;
 }
 
-/**
- * The session shown by the active editor tab, if it is a Claude or Codex panel. A Codex tab opened by id carries
- * the id in its URI; a Claude panel (a webview) and a Codex panel started fresh are known only by their title.
- */
 /** Whether the active editor tab is a Claude or Codex panel at all, matched session or not. */
 export function activeTabIsAgentPanel(): boolean {
   const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
@@ -343,9 +339,29 @@ export function isAgentPanelTab(tab: vscode.Tab): boolean {
   return input instanceof vscode.TabInputWebview && /claude/i.test(input.viewType);
 }
 
+/** The session shown by the active editor tab, if it is a Claude or Codex panel (see `sessionOfTab`). */
 export function sessionOfActiveTab(sessions: readonly Session[]): Session | undefined {
   const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
-  if (!tab) return undefined;
+  return tab && sessionOfTab(tab, sessions);
+}
+
+/** Every session shown in a tab of this window, by `tool:id`. */
+export function openSessionKeys(sessions: readonly Session[]): Set<string> {
+  const out = new Set<string>();
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      const s = sessionOfTab(tab, sessions);
+      if (s) out.add(`${s.tool}:${s.id}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * The session a Claude or Codex panel tab shows. A Codex tab opened by id carries the id in its URI; a Claude panel
+ * (a webview) and a Codex panel started fresh are known only by their title.
+ */
+function sessionOfTab(tab: vscode.Tab, sessions: readonly Session[]): Session | undefined {
   const input = tab.input;
   if (input instanceof vscode.TabInputCustom && input.uri.scheme === 'openai-codex') {
     return sessions.find((s) => s.tool === 'codex' && input.uri.path.includes(s.id)) ?? sessions.find((s) => s.tool === 'codex' && titleMatchesLabel(s.title, tab.label));

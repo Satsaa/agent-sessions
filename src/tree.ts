@@ -7,6 +7,9 @@ import { stateIcon, toolIcon } from './icons.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
 
+/** The order of the Active rows; pinned sessions lead whichever is chosen. */
+export type ActiveSort = 'newest' | 'oldest' | 'activity' | 'attention' | 'title';
+
 /** How long a finished subagent stays under its parent before it is folded away (unless all are shown). */
 export const SUBAGENT_LINGER_MS = 5 * 60_000;
 
@@ -91,11 +94,16 @@ export interface ViewOptions {
   showArchived: boolean;
   showSubagents: boolean;
   subagentLayout: SubagentLayout;
+  activeSort: ActiveSort;
+  /** Archived sessions still in use (see `archivedOutOfUse`) are listed anyway. */
+  showActiveArchived: boolean;
   showEmpty: boolean;
   historyLimit: number;
   /** Sessions archived from this view (kept in this extension's own state). */
   locallyArchived: ReadonlySet<string>;
   pinned: ReadonlySet<string>;
+  /** Sessions shown in a tab of this window, by `tool:id`. */
+  open: ReadonlySet<string>;
   /** Words every shown session must match; empty shows the list as usual (see `matchesSearch`). */
   search: string;
 }
@@ -223,6 +231,27 @@ function byRecency(a: Session, b: Session): number {
 /** Live rows: newest session first, by start time, so the order holds still while agents work and reply. */
 function byStart(a: Session, b: Session): number {
   return b.startedAt - a.startedAt || byRecency(a, b);
+}
+
+/** How urgently a state wants you: a question first, then a finished turn, then work in progress. */
+const ATTENTION: Record<SessionState, number> = { waiting: 0, replied: 1, running: 2, stopped: 3 };
+
+const titles = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+
+/** The Active order for `sort`; `state` is a row's state as Active sees it (a stopped parent of a working agent works). */
+export function activeOrder(sort: ActiveSort, state: (s: Session) => SessionState = (s) => s.state): (a: Session, b: Session) => number {
+  switch (sort) {
+    case 'newest':
+      return byStart;
+    case 'oldest':
+      return (a, b) => byStart(b, a);
+    case 'activity':
+      return byRecency;
+    case 'attention':
+      return (a, b) => ATTENTION[state(a)] - ATTENTION[state(b)] || byStart(a, b);
+    case 'title':
+      return (a, b) => titles.compare(a.title, b.title) || byStart(a, b);
+  }
 }
 
 export class SessionsProvider implements vscode.TreeDataProvider<Node> {
@@ -357,11 +386,41 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     };
   }
 
+  /**
+   * Archived sessions to put away. While `showActiveArchived` is on, one still in use is not: live, open in a tab of
+   * this window, or holding a spawned session that is, so the parent stays with it as it does in Active.
+   */
+  private archivedOutOfUse(): (s: Session) => boolean {
+    const o = this.options;
+    const archived = this.archivedWithAncestors();
+    if (!o.showActiveArchived) return archived;
+    const spawned = new Map<string, Session[]>();
+    for (const s of this.sessions) {
+      const key = parentKeyOf(s);
+      if (!key) continue;
+      const list = spawned.get(key) ?? [];
+      list.push(s);
+      spawned.set(key, list);
+    }
+    // Memoised, with the in-progress mark doubling as a guard against a cycle in bad data.
+    const known = new Map<string, boolean>();
+    const inUse = (s: Session): boolean => {
+      const key = sessionKey(s);
+      const seen = known.get(key);
+      if (seen !== undefined) return seen;
+      known.set(key, false);
+      const result = isLive(s.state) || o.open.has(key) || (spawned.get(key) ?? []).some(inUse);
+      known.set(key, result);
+      return result;
+    };
+    return (s) => archived(s) && !inUse(s);
+  }
+
   /** The sessions the view's filters keep; a search keeps archived ones too, for their own section. */
   private filtered(withArchived = false): Session[] {
     const o = this.options;
     const repoRoots = o.scope === 'workspace' ? this.workspaceRepoRoots() : undefined;
-    const archived = this.archivedWithAncestors();
+    const archived = this.archivedOutOfUse();
     return this.sessions.filter((s) => {
       if (!o.showArchived && !withArchived && archived(s)) return false;
       // Spawned sessions stay in: `topLevel` nests them under their parent and drops the parentless unless switched on.
@@ -381,7 +440,8 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     const isPinned = (s: Session) => o.pinned.has(`${s.tool}:${s.id}`);
     // A session another agent was handed keeps working after its parent stops; the parent stays with it in Active.
     const working = (s: Session) => isLive(s.state) || (childrenOf.get(`${s.tool}:${s.id}`) ?? []).some((c) => isLive(c.state));
-    const active = all.filter((s) => working(s) || isPinned(s)).sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || byStart(a, b));
+    const order = activeOrder(o.activeSort, (s) => (s.state === 'stopped' && working(s) ? 'running' : s.state));
+    const active = all.filter((s) => working(s) || isPinned(s)).sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || order(a, b));
     const history = all.filter((s) => !working(s) && !isPinned(s)).sort(byRecency).slice(0, o.historyLimit);
     const shown = [...active, ...history];
     const item = (s: Session, showTool = true): SessionItem =>
@@ -396,7 +456,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
       // A row is found by its own text or by a session nested under it, and is shown with everything under it.
       const found = (s: Session): boolean => matchesSearch(s, o.search) || (childrenOf.get(`${s.tool}:${s.id}`) ?? []).some(found);
       const hits = new Set(all.filter(found));
-      const archived = this.archivedWithAncestors();
+      const archived = this.archivedOutOfUse();
       const rest = all.filter((s) => hits.has(s) && !archived(s) && !working(s) && !isPinned(s));
       const sections: [key: string, label: string, icon: string, sessions: Session[]][] = [
         ['active', 'Active', 'pulse', active.filter((s) => hits.has(s) && !archived(s))],

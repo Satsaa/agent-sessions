@@ -15,14 +15,14 @@ import {
   writeClaudeSettings,
 } from './claude-modes.js';
 import { type PendingOpen, claimOpen, offerOpen, pendingOpenFile, watchOffers } from './pending-open.js';
-import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, newSessionFrom, openInTerminal, openSession, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab, type FreshCodexTab, freshCodexTabs, restoreFreshCodexTabs } from './open.js';
+import { activeTabIsAgentPanel, closeSessionTab, existingClaudeTab, newSession, newSessionFrom, openInTerminal, openSession, openSessionKeys, openTabLabels, resumeCommand, sessionOfActiveTab, reloadCodexTab, type FreshCodexTab, freshCodexTabs, restoreFreshCodexTabs } from './open.js';
 import { markThisWindow } from './window.js';
 import { formatTranscript, readTranscript } from './transcript.js';
 import { listCodexAccounts } from './codex-accounts.js';
 import { closeCodexSession } from './close.js';
 import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
-import { SessionItem, SessionsProvider, type GroupBy, type SubagentLayout, type ViewOptions } from './tree.js';
+import { SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type SubagentLayout, type ViewOptions } from './tree.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
 import { switchCodexAccount } from './codex-accounts-ui.js';
 import { signInClaude, signInCodexAccount } from './auth-ui.js';
@@ -51,7 +51,7 @@ interface Config {
   phoneMode: boolean;
   keepSessionsRunning: boolean;
   usage: { enabled: boolean; claudeNetwork: boolean; codexNetwork: boolean; refreshInterval: number };
-  view: Omit<ViewOptions, 'locallyArchived' | 'pinned' | 'search'>;
+  view: Omit<ViewOptions, 'locallyArchived' | 'pinned' | 'open' | 'search'>;
 }
 
 function readConfig(): Config {
@@ -76,6 +76,8 @@ function readConfig(): Config {
       showArchived: c.get<boolean>('showArchived', false),
       showSubagents: c.get<boolean>('showSubagents', false),
       subagentLayout: c.get<SubagentLayout>('subagentLayout', 'nested'),
+      activeSort: c.get<ActiveSort>('activeSort', 'newest'),
+      showActiveArchived: c.get<boolean>('showActiveArchived', true),
       showEmpty: c.get<boolean>('showEmpty', false),
       historyLimit: c.get<number>('historyLimit', 200),
     },
@@ -144,7 +146,16 @@ export function activate(context: vscode.ExtensionContext): void {
   })().catch((err: unknown) => output.appendLine(`reading ${marksPath} failed: ${err instanceof Error ? err.message : String(err)}`));
   // What the Sessions view is searched for; kept for the window, not saved.
   let search = '';
-  const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned, search });
+  // Sessions shown in this window's tabs, shared by reference with the view like the marks; kept current by the list and tab changes.
+  const open = new Set<string>();
+  const takeOpen = (sessions: readonly Session[]): boolean => {
+    const now = openSessionKeys(sessions);
+    if (now.size === open.size && [...now].every((k) => open.has(k))) return false;
+    open.clear();
+    for (const k of now) open.add(k);
+    return true;
+  };
+  const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned, open, search });
 
   const provider = new SessionsProvider(options(), () => void vscode.commands.executeCommand('setContext', 'agentSessions.loaded', true));
   const view = vscode.window.createTreeView('agentSessions.list', { treeDataProvider: provider, showCollapseAll: true });
@@ -224,6 +235,11 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   context.subscriptions.push(
     vscode.window.tabGroups.onDidChangeTabs(() => {
+      // An archived session in use stays listed while its tab is open (see `archivedOutOfUse`).
+      if (takeOpen(latestSessions)) {
+        provider.setOptions(options());
+        updateIndicators(provider.visible());
+      }
       selectActiveTabSession();
       saveFreshCodexTabs();
     }),
@@ -372,6 +388,7 @@ export function activate(context: vscode.ExtensionContext): void {
         scanned();
         void finishPendingOpen(sessions);
         await markThisWindow(sessions, openTabLabels());
+        takeOpen(sessions);
         provider.setSessions(sessions);
         updateIndicators(provider.visible());
         selectActiveTabSession();
@@ -630,6 +647,20 @@ export function activate(context: vscode.ExtensionContext): void {
       ];
       const chosen = await vscode.window.showQuickPick(picks, { placeHolder: 'Group sessions by' });
       if (chosen) await setting('groupBy', chosen.value);
+    }),
+    vscode.commands.registerCommand('agentSessions.activeSort', async () => {
+      const picks: { label: string; description: string; value: ActiveSort }[] = [
+        { label: 'Newest started', description: 'The latest session first; the order holds while agents work', value: 'newest' },
+        { label: 'Oldest started', description: 'The earliest session first; new ones join at the bottom', value: 'oldest' },
+        { label: 'Latest activity', description: 'The session that wrote last first; reorders as agents work', value: 'activity' },
+        { label: 'Needs attention', description: 'Waiting for input, then replied, then working', value: 'attention' },
+        { label: 'Title', description: 'Alphabetically', value: 'title' },
+      ];
+      const chosen = await vscode.window.showQuickPick(
+        picks.map((p) => ({ ...p, picked: p.value === config.view.activeSort })),
+        { placeHolder: 'Sort active sessions by' },
+      );
+      if (chosen) await setting('activeSort', chosen.value);
     }),
     vscode.commands.registerCommand('agentSessions.subagentLayout', async () => {
       const picks: { label: string; description: string; value: SubagentLayout }[] = [

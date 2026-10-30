@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.25",
+  "version": "0.8.26",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -179,6 +179,12 @@
         "title": "Group Sessions By…",
         "category": "Agent Sessions",
         "icon": "$(list-tree)"
+      },
+      {
+        "command": "agentSessions.activeSort",
+        "title": "Sort Active Sessions By…",
+        "category": "Agent Sessions",
+        "icon": "$(sort-precedence)"
       },
       {
         "command": "agentSessions.subagentLayout",
@@ -412,9 +418,14 @@
           "group": "2_layout@1"
         },
         {
-          "command": "agentSessions.subagentLayout",
+          "command": "agentSessions.activeSort",
           "when": "view == agentSessions.list",
           "group": "2_layout@2"
+        },
+        {
+          "command": "agentSessions.subagentLayout",
+          "when": "view == agentSessions.list",
+          "group": "2_layout@3"
         },
         {
           "command": "agentSessions.refreshUsage",
@@ -771,6 +782,30 @@
           "type": "string",
           "default": "<parent-session>(?<tool>claude|codex):(?<id>[\\w.-]+)</parent-session>",
           "markdownDescription": "A regular expression matched against the start of a session's first prompt (its first 1000 characters). A session whose first prompt matches was started by another agent, and is listed as a subagent of the session the `id` group names — in the tool the optional `tool` group names (`claude` or `codex`), the session's own tool without it. An optional `role` group labels it. A tool that starts sessions for an agent puts the marker in the prompt it sends, e.g. `<parent-session>codex:019a…</parent-session>`; the default pattern recognises that form, and a tag-wrapped marker stays out of the session's title. Empty turns detection off."
+        },
+        "agentSessions.activeSort": {
+          "type": "string",
+          "enum": [
+            "newest",
+            "oldest",
+            "activity",
+            "attention",
+            "title"
+          ],
+          "enumDescriptions": [
+            "The latest started session first; the order holds while agents work",
+            "The earliest started session first; new sessions join at the bottom",
+            "The session that wrote last first; reorders as agents work",
+            "Waiting for input, then replied, then working",
+            "Alphabetically by title"
+          ],
+          "default": "newest",
+          "description": "The order of the Active sessions (working or pinned), wherever they are listed. Pinned sessions come first in any order."
+        },
+        "agentSessions.showActiveArchived": {
+          "type": "boolean",
+          "default": true,
+          "description": "List an archived session while it is in use — working, waiting for you, replied with its process alive, or open in a tab of this window — even when archived sessions are hidden. It keeps its archived look."
         },
         "agentSessions.showEmpty": {
           "type": "boolean",
