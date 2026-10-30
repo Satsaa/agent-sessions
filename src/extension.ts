@@ -37,6 +37,7 @@ import { stopRunner } from './runner.js';
 import { parentMarker, withMarkedParents } from './markers.js';
 import { handoverNote, handoverTarget } from './handover.js';
 import { type MarkList, type SessionMarks, marksFile, mergeMarks, readMarks, setMark, watchMarks } from './marks.js';
+import { History } from './undo.js';
 import * as path from 'node:path';
 
 const ARCHIVED_KEY = 'agentSessions.archived';
@@ -557,12 +558,69 @@ export function activate(context: vscode.ExtensionContext): void {
     await vscode.workspace.getConfiguration('agentSessions').update(key, value, vscode.ConfigurationTarget.Global);
   };
   const mark = async (list: MarkList, sessions: Session[], present: boolean) => takeMarks(await setMark(marksPath, list, sessions.map((s) => `${s.tool}:${s.id}`), present));
-  const archive = async (sessions: Session[]) => {
+  // What this window archived, pinned or renamed, to take back with Undo (see undo.ts). Not saved: a reload starts empty.
+  const history = new History(() => {
+    void vscode.commands.executeCommand('setContext', 'agentSessions.canUndo', history.canUndo);
+    void vscode.commands.executeCommand('setContext', 'agentSessions.canRedo', history.canRedo);
+  });
+  /** What a step on these sessions is called: the one session's title, or how many there were. */
+  const named = (sessions: Session[]) => (sessions.length === 1 ? `“${sessions[0]!.title}”` : `${sessions.length} sessions`);
+  // Archiving puts the session away, so its tab goes too; the agent keeps running. Says which had a tab closed.
+  const putAway = async (sessions: Session[]): Promise<Session[]> => {
     await mark('archived', sessions, true);
-    // Archiving puts the session away, so its tab goes too; the agent keeps running.
-    for (const s of sessions) await closeSessionTab(s).catch((err: unknown) => output.appendLine(`close tab for ${s.tool} ${s.id} failed: ${err instanceof Error ? err.message : String(err)}`));
+    const closed: Session[] = [];
+    for (const s of sessions) {
+      const tab = await closeSessionTab(s).catch((err: unknown) => {
+        output.appendLine(`close tab for ${s.tool} ${s.id} failed: ${err instanceof Error ? err.message : String(err)}`);
+        return false;
+      });
+      if (tab) closed.push(s);
+    }
     provider.setOptions(options());
     updateIndicators(provider.visible());
+    return closed;
+  };
+  const bringBack = async (sessions: Session[]) => {
+    await mark('archived', sessions, false);
+    provider.setOptions(options());
+    updateIndicators(provider.visible());
+  };
+  const archive = async (sessions: Session[]) => {
+    let closed = await putAway(sessions);
+    history.record({
+      label: `Archive ${named(sessions)}`,
+      // Undoing brings back the tabs archiving closed, so the sessions are where they were.
+      undo: async () => {
+        await bringBack(sessions);
+        for (const s of closed) await openSession(s, claudeModes);
+      },
+      redo: async () => {
+        closed = await putAway(sessions);
+      },
+    });
+  };
+  const setPinned = async (sessions: Session[], present: boolean) => {
+    await mark('pinned', sessions, present);
+    provider.setOptions(options());
+    await refresh();
+  };
+  const retitle = async (s: Session, title: string) => {
+    await renameSession(s, config.codexHome, title);
+    await refresh();
+  };
+  const recordRename = (s: Session, now: string | undefined) => {
+    if (now === undefined || now === s.title) return;
+    history.record({ label: `Rename “${s.title}” to “${now}”`, undo: () => retitle(s, s.title), redo: () => retitle(s, now) });
+  };
+  const stepThrough = async (direction: 'undo' | 'redo') => {
+    try {
+      const step = await (direction === 'undo' ? history.undo() : history.redo());
+      vscode.window.setStatusBarMessage(step ? `${direction === 'undo' ? 'Undid' : 'Redid'}: ${step.label}` : `Nothing to ${direction}`, 3000);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      output.appendLine(`${direction} failed: ${message}`);
+      void vscode.window.showErrorMessage(`Could not ${direction}: ${message}`);
+    }
   };
   // Another window (the phone, or a second desktop window) archived or pinned something.
   context.subscriptions.push(watchMarks(marksPath, (m) => {
@@ -748,12 +806,15 @@ export function activate(context: vscode.ExtensionContext): void {
           output.appendLine(`rename via Claude Code failed: ${err instanceof Error ? err.message : String(err)}`);
         }
         await refresh();
+        // Claude Code's prompt does not say what it wrote, so the title is read back; one left unchanged is no step.
+        recordRename(s, (await listTool('claude')).find((x) => x.id === s.id)?.title);
         return;
       }
       const title = await vscode.window.showInputBox({ prompt: `Rename ${toolLabel(s.tool)} session`, value: s.title, valueSelection: [0, s.title.length], validateInput: (v) => (v.trim() ? undefined : 'A title cannot be empty') });
       if (title === undefined || title.trim() === s.title) return;
       try {
         await renameSession(s, config.codexHome, title);
+        recordRename(s, title.trim());
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         output.appendLine(`rename ${s.tool} ${s.id} failed: ${message}`);
@@ -853,16 +914,18 @@ export function activate(context: vscode.ExtensionContext): void {
 
     })),
     ...(['pin', 'unpin'] as const).map((action) => vscode.commands.registerCommand(`agentSessions.${action}`, async (arg: unknown, selected: unknown) => {
-      const sessions = sessionsOf(arg, selected);
+      const present = action === 'pin';
+      // Only the sessions this changes: undoing must not unpin one that was pinned before.
+      const sessions = sessionsOf(arg, selected).filter((s) => pinned.has(`${s.tool}:${s.id}`) !== present);
       if (!sessions.length) return;
-      await mark('pinned', sessions, action === 'pin');
-      provider.setOptions(options());
-      await refresh();
+      await setPinned(sessions, present);
+      history.record({ label: `${present ? 'Pin' : 'Unpin'} ${named(sessions)}`, undo: () => setPinned(sessions, !present), redo: () => setPinned(sessions, present) });
     })),
     vscode.commands.registerCommand('agentSessions.unarchive', async (arg: unknown, selected: unknown) => {
       const sessions = sessionsOf(arg, selected);
       if (!sessions.length) return;
-      await mark('archived', sessions, false);
+      const wasMarked = sessions.filter((s) => archived.has(`${s.tool}:${s.id}`));
+      await bringBack(sessions);
       const inTool = sessions.filter((s) => s.archived);
       if (inTool.length === 1) {
         const s = inTool[0]!;
@@ -870,9 +933,10 @@ export function activate(context: vscode.ExtensionContext): void {
       } else if (inTool.length) {
         vscode.window.showInformationMessage(`${inTool.length} of these sessions are archived in Claude Code or Codex itself; unarchive them there to hide the badge.`);
       }
-      provider.setOptions(options());
-      updateIndicators(provider.visible());
+      if (wasMarked.length) history.record({ label: `Unarchive ${named(wasMarked)}`, undo: async () => void (await putAway(wasMarked)), redo: () => bringBack(wasMarked) });
     }),
+    vscode.commands.registerCommand('agentSessions.undo', () => stepThrough('undo')),
+    vscode.commands.registerCommand('agentSessions.redo', () => stepThrough('redo')),
   );
 
   void vscode.window.withProgress({ location: { viewId: 'agentSessions.list' } }, () => refresh());

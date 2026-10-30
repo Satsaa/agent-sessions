@@ -346,6 +346,20 @@
         "title": "More Actions…",
         "category": "Agent Sessions",
         "icon": "$(ellipsis)"
+      },
+      {
+        "command": "agentSessions.undo",
+        "title": "Undo",
+        "category": "Agent Sessions",
+        "icon": "$(discard)",
+        "enablement": "agentSessions.canUndo"
+      },
+      {
+        "command": "agentSessions.redo",
+        "title": "Redo",
+        "category": "Agent Sessions",
+        "icon": "$(redo)",
+        "enablement": "agentSessions.canRedo"
       }
     ],
     "menus": {
@@ -446,6 +460,16 @@
           "command": "agentSessions.switchCodexAccount",
           "when": "view == agentSessions.list",
           "group": "3_accounts@1"
+        },
+        {
+          "command": "agentSessions.undo",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/",
+          "group": "0_history@1"
+        },
+        {
+          "command": "agentSessions.redo",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/",
+          "group": "0_history@2"
         }
       ],
       "view/item/context": [
@@ -872,6 +896,19 @@
       {
         "command": "agentSessions.rename",
         "key": "f2",
+        "when": "focusedView == agentSessions.list || focusedView == agentSessions.worktrees"
+      },
+      {
+        "command": "agentSessions.undo",
+        "key": "ctrl+z",
+        "mac": "cmd+z",
+        "when": "focusedView == agentSessions.list || focusedView == agentSessions.worktrees"
+      },
+      {
+        "command": "agentSessions.redo",
+        "key": "ctrl+shift+z",
+        "win": "ctrl+y",
+        "mac": "cmd+shift+z",
         "when": "focusedView == agentSessions.list || focusedView == agentSessions.worktrees"
       }
     ]
