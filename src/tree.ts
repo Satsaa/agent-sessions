@@ -387,8 +387,10 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   }
 
   /**
-   * Archived sessions to put away. While `showActiveArchived` is on, one still in use is not: live, open in a tab of
-   * this window, or holding a spawned session that is, so the parent stays with it as it does in Active.
+   * Archived sessions to put away. While `showActiveArchived` is on, one still in use is not: working or waiting for
+   * you, open in a tab of this window, or holding a spawned session that is, so the parent stays with it as it does in
+   * Active. A replied session is idle: the Claude extension keeps a closed panel's process alive until the window
+   * reloads, and Codex's app-server holds the threads it loaded, so a live process alone does not keep one listed.
    */
   private archivedOutOfUse(): (s: Session) => boolean {
     const o = this.options;
@@ -409,7 +411,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
       const seen = known.get(key);
       if (seen !== undefined) return seen;
       known.set(key, false);
-      const result = isLive(s.state) || o.open.has(key) || (spawned.get(key) ?? []).some(inUse);
+      const result = s.state === 'running' || s.state === 'waiting' || o.open.has(key) || (spawned.get(key) ?? []).some(inUse);
       known.set(key, result);
       return result;
     };

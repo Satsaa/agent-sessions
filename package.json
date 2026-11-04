@@ -829,7 +829,7 @@
         "agentSessions.showActiveArchived": {
           "type": "boolean",
           "default": true,
-          "description": "List an archived session while it is in use — working, waiting for you, replied with its process alive, or open in a tab of this window — even when archived sessions are hidden. It keeps its archived look."
+          "description": "List an archived session while it is in use — working, waiting for you, or open in a tab of this window — even when archived sessions are hidden. It keeps its archived look."
         },
         "agentSessions.showEmpty": {
           "type": "boolean",

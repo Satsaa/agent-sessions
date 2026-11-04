@@ -55,7 +55,7 @@ Claude Code resumes only sessions started in the window's first folder, so openi
 
 ## Filtering defaults
 
-- **Archived** sessions are hidden — except, with `agentSessions.showActiveArchived` (on by default), one still in use: live, open in a tab of this window, or the parent of a spawned session that is. It is listed where it would be unarchived, with the archived icon, and is put away once it stops and its tab closes. Codex's own archive flag is honoured; sessions archived or pinned from this view are kept in `~/.agent-sessions/state.json`, shared live by every window running as the same user (desktop remote windows and the phone server alike). Marks from earlier versions move there on first start.
+- **Archived** sessions are hidden — except, with `agentSessions.showActiveArchived` (on by default), one still in use: working or waiting for you, open in a tab of this window, or the parent of a spawned session that is. An idle one whose process lingers after its tab closed (the Claude extension keeps them until the window reloads) is not in use. It is listed where it would be unarchived, with the archived icon, and is put away once it stops and its tab closes. Codex's own archive flag is honoured; sessions archived or pinned from this view are kept in `~/.agent-sessions/state.json`, shared live by every window running as the same user (desktop remote windows and the phone server alike). Marks from earlier versions move there on first start.
 - **Subagent threads** (Codex threads spawned by another thread) are hidden.
 
 ### Sessions another agent started
@@ -114,7 +114,7 @@ pnpm package      # agent-sessions-<version>.vsix
 | `agentSessions.subagentLayout` | `nested` | `nested` tree under the parent, `flat` under the top thread, `root` as rows |
 | `agentSessions.parentSessionMarker` | `<parent-session>(?<tool>claude\|codex):(?<id>[\w.-]+)</parent-session>` | first-prompt marker of a session another agent started; empty turns it off |
 | `agentSessions.activeSort` | `newest` | Active order: `newest`, `oldest`, `activity`, `attention` or `title` |
-| `agentSessions.showActiveArchived` | `true` | list archived sessions while live or open in a tab |
+| `agentSessions.showActiveArchived` | `true` | list archived sessions while working, waiting or open in a tab |
 | `agentSessions.showEmpty` | `false` | stopped sessions with no prompt |
 | `agentSessions.historyLimit` | `200` | |
 | `agentSessions.pollInterval` | `5` | seconds, while any session is live |

@@ -118,11 +118,13 @@ test('an archived session in use stays listed while archived sessions are hidden
     session('parent', { archived: true }),
     session('child', { subagent: true, parentId: 'parent', state: 'running' }),
     session('put-away', { archived: true }),
+    session('idle', { archived: true, state: 'replied' }),
+    session('idle-opened', { archived: true, state: 'replied' }),
   ];
   provider.setSessions(sessions);
   const listed = () => provider.visible().map(s => s.id).sort();
-  provider.setOptions(options({ pinned: new Set(), historyLimit: 10, open: new Set(['codex:opened']) }));
-  assert.deepEqual(listed(), ['live', 'opened', 'parent'], 'live, open in a tab, or holding a working spawned session; never one out of use');
+  provider.setOptions(options({ pinned: new Set(), historyLimit: 10, open: new Set(['codex:opened', 'codex:idle-opened']) }));
+  assert.deepEqual(listed(), ['idle-opened', 'live', 'opened', 'parent'], 'working, open in a tab, or holding a working spawned session; an idle one whose process outlived its tab is out of use');
   assert.deepEqual(provider.getChildren()[0].children.find(row => row.session.id === 'parent').children.map(row => row.session.id), ['child'], 'the working spawned session is under its archived parent');
   provider.setOptions(options({ pinned: new Set(), historyLimit: 10, open: new Set(['codex:opened']), showActiveArchived: false }));
   assert.deepEqual(listed(), [], 'switched off, archived sessions are hidden in use or not');
