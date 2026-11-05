@@ -38,3 +38,20 @@ test('an idle session whose last record is a prompt is still running', async () 
   const session = await idleSession('11111111-2222-4333-8444-000000000002', [user('do the thing', '2026-09-01T10:00:00Z')]);
   assert.equal(session?.state, 'running', 'a prompt the process has not picked up yet is not a reply');
 });
+
+/** A live session whose process file carries `live` beyond the basics, as a `claude --bg` job's does. */
+async function liveSession(id, live) {
+  const home = join(directory, id);
+  await mkdir(join(home, 'projects', '-tmp-work'), { recursive: true });
+  await mkdir(join(home, 'sessions'), { recursive: true });
+  await writeFile(join(home, 'projects', '-tmp-work', `${id}.jsonl`), user('do the thing', '2026-09-01T10:00:00Z') + '\n');
+  await writeFile(join(home, 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: id, cwd: '/tmp/work', status: 'busy', ...live }));
+  return (await listClaudeSessions(home)).find((s) => s.id === id);
+}
+
+test('a session a background job holds carries the job id that attach and stop take', async () => {
+  const bg = await liveSession('11111111-2222-4333-8444-000000000003', { kind: 'bg', jobId: '800be93a' });
+  assert.equal(bg?.backgroundJob, '800be93a', 'Claude refuses --resume for a running background job, so opening it needs the job');
+  const interactive = await liveSession('11111111-2222-4333-8444-000000000004', { kind: 'interactive', jobId: 'ffffffff' });
+  assert.equal(interactive?.backgroundJob, undefined, 'only a background job is held away from --resume');
+});

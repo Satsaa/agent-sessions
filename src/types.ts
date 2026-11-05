@@ -54,6 +54,11 @@ export interface Session {
   transcriptPath: string;
   /** PID of the process holding the session, when known. */
   pid: number | undefined;
+  /**
+   * The `claude --bg` job holding the session: Claude refuses to resume it anywhere else until it is stopped, so it
+   * opens with `claude attach` or is stopped first.
+   */
+  backgroundJob?: string | undefined;
   /** The process was started from the VS Code window this extension runs in (see window.ts). */
   inThisWindow: boolean;
   /** The permission mode the session's last prompt ran in, and when (Claude records it on each prompt). */

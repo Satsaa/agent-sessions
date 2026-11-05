@@ -30,6 +30,8 @@ interface LiveSessionFile {
   entrypoint?: string;
   name?: string;
   nameSource?: string;
+  /** The id `claude --bg` printed, which `claude attach` and `claude stop` take. */
+  jobId?: string;
 }
 
 interface LiveInfo {
@@ -37,6 +39,7 @@ interface LiveInfo {
   status: LiveSessionFile['status'];
   name: string | undefined;
   cwd: string | undefined;
+  backgroundJob: string | undefined;
 }
 
 async function readLiveSessions(home: string): Promise<Map<string, LiveInfo>> {
@@ -54,6 +57,7 @@ async function readLiveSessions(home: string): Promise<Map<string, LiveInfo>> {
       // "derived" names are just the folder name; only user- or AI-given names are titles.
       name: data.nameSource && data.nameSource !== 'derived' ? data.name : undefined,
       cwd: data.cwd,
+      backgroundJob: data.kind === 'bg' ? data.jobId : undefined,
     });
   }
   return out;
@@ -371,6 +375,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
         empty: !summary.hasPrompt,
         transcriptPath: file,
         pid: liveInfo?.pid,
+        backgroundJob: liveInfo?.backgroundJob,
         inThisWindow: false,
         permissionMode: summary.permissionMode,
         promptHead: summary.promptHead,
@@ -400,6 +405,7 @@ export async function listClaudeSessions(home: string): Promise<Session[]> {
       empty: true,
       transcriptPath: '',
       pid: info.pid,
+      backgroundJob: info.backgroundJob,
       inThisWindow: false,
       permissionMode: undefined,
     });

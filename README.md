@@ -146,6 +146,9 @@ load after installing writes it and the next one uses it.
 - One session, one process. Opening a session another window holds asks **Move Here**; moving it ends it in the other
   window, which says where it went. Without that (the panel's own history list, say) the open is refused with
   "This session is running in …", so the phone and the desktop never run two processes on one conversation.
+- A session a `claude --bg` job holds cannot be resumed elsewhere while the job runs. Opening it asks **Attach in
+  Terminal** (`claude attach <job>`, which keeps it running there) or **Move Here** (`claude stop <job>`, then the panel
+  resumes it); Resume in Terminal and Copy Resume Command give the attach command.
 - Only panel conversations go through the host; `claude auth` and the like run directly.
 - A session keeps its permission mode across windows. Claude Code remembers a session's mode per VS Code install,
   and with a process wrapper set it opens a session it has no mode for in Manual rather than the CLI's default. So

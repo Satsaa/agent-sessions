@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { codexHome as discoveryCodexHome } from './codex.js';
 import { codexHome, ensureDaemon, startDaemonThread } from './host/codex-daemon.js';
+import { run } from './runner.js';
 
 const CLAUDE_EXTENSION = 'anthropic.claude-code';
 const CODEX_EXTENSION = 'openai.chatgpt';
@@ -152,7 +153,9 @@ export async function closeSessionTab(session: Session): Promise<boolean> {
 }
 
 export function resumeCommand(session: Session): string {
-  return session.tool === 'claude' ? `claude --resume ${session.id}` : `codex resume ${session.id}`;
+  if (session.tool === 'codex') return `codex resume ${session.id}`;
+  // A background session refuses `--resume` while its job runs; `attach` opens it and leaves it running.
+  return session.backgroundJob ? `claude attach ${session.backgroundJob}` : `claude --resume ${session.id}`;
 }
 
 export function openInTerminal(session: Session): void {
@@ -163,12 +166,45 @@ export function openInTerminal(session: Session): void {
   terminal.sendText(resumeCommand(session), true);
 }
 
+/**
+ * A `claude --bg` session opens nowhere else while its job runs. Attaching shows it in a terminal and keeps it running
+ * there; moving it here stops the job, whose conversation Claude keeps, and the panel resumes it.
+ */
+async function takeFromBackground(session: Session, job: string): Promise<'terminal' | 'panel' | undefined> {
+  const attach = 'Attach in Terminal';
+  const move = 'Move Here';
+  const choice = await vscode.window.showWarningMessage(
+    `“${session.title}” is running in the background.`,
+    {
+      modal: true,
+      detail:
+        session.state === 'running'
+          ? 'Attaching keeps it running. Moving it here stops the background job, cutting off its current turn.'
+          : 'Attaching keeps it running. Moving it here stops the background job.',
+    },
+    attach,
+    move,
+  );
+  if (choice === attach) return 'terminal';
+  if (choice !== move) return undefined;
+  if ((await run('claude', ['stop', job], { timeoutMs: 30_000 })) === undefined) {
+    void vscode.window.showErrorMessage(`Could not stop the background session “${session.title}” (claude stop ${job}).`);
+    return undefined;
+  }
+  return 'panel';
+}
+
 /** `claudeModeStore` is this install's Claude Code session mode store (see claude-modes.ts). */
 export async function openSession(session: Session, claudeModeStore: string): Promise<void> {
   if (session.tool === 'claude') {
     if (!extensionInstalled(CLAUDE_EXTENSION)) {
       openInTerminal(session);
       return;
+    }
+    if (session.backgroundJob) {
+      const where = await takeFromBackground(session, session.backgroundJob);
+      if (where === 'terminal') openInTerminal(session);
+      if (where !== 'panel') return;
     }
     if (!(await moveHereIfHeldElsewhere(session.id, session.title))) return;
     // Best effort: without it the panel opens the session in its own default mode, as it always did.
