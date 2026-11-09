@@ -29,6 +29,8 @@ export const ROW_ACTIONS: RowAction[] = [
   { command: 'agentSessions.rename', applies: mainThread },
   { command: 'agentSessions.pin', applies: (cv) => mainThread(cv) && !cv.includes('-pinned-'), bulk: true },
   { command: 'agentSessions.unpin', applies: (cv) => mainThread(cv) && cv.includes('-pinned-'), bulk: true },
+  { command: 'agentSessions.moveToBacklog', applies: (cv) => mainThread(cv) && !cv.includes('-backlog-'), bulk: true },
+  { command: 'agentSessions.removeFromBacklog', applies: (cv) => mainThread(cv) && cv.includes('-backlog-'), bulk: true },
   { command: 'agentSessions.archive', applies: (cv) => mainThread(cv) && !cv.includes('archived'), bulk: true },
   { command: 'agentSessions.unarchive', applies: (cv) => cv.includes('archived'), bulk: true },
   { command: 'agentSessions.moveToCodex', applies: (cv) => mainThread(cv) && cv.startsWith('session-claude') },

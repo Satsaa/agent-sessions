@@ -102,6 +102,8 @@ export interface ViewOptions {
   /** Sessions archived from this view (kept in this extension's own state). */
   locallyArchived: ReadonlySet<string>;
   pinned: ReadonlySet<string>;
+  /** Sessions moved to Backlog: listed there whatever their state, until moved out or pinned. */
+  backlog: ReadonlySet<string>;
   /** Sessions shown in a tab of this window, by `tool:id`. */
   open: ReadonlySet<string>;
   /** Words every shown session must match; empty shows the list as usual (see `matchesSearch`). */
@@ -128,6 +130,7 @@ export class SessionItem extends vscode.TreeItem {
     idSuffix = '',
     /** Subagents and teammates this session spawned, shown under it. */
     public readonly children: SessionItem[] = [],
+    backlog = false,
   ) {
     // A session's thread opens collapsed; inside it, every spawned session's own subtree is already open.
     super(session.title, !children.length ? vscode.TreeItemCollapsibleState.None : session.subagent ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
@@ -137,7 +140,8 @@ export class SessionItem extends vscode.TreeItem {
     this.description = `${pinned ? '📌 ' : ''}${describe(session, showTool, stats)}`;
     this.tooltip = tooltipFor(session, archived, stats);
     if (pinned) this.tooltip.appendMarkdown('\n\n$(pin) Pinned to Active');
-    this.contextValue = ['session', session.tool, archived ? 'archived' : '', pinned ? 'pinned' : '', isLive(session.state) ? 'live' : 'stopped', session.subagent ? 'subagent' : '']
+    if (backlog) this.tooltip.appendMarkdown('\n\n$(inbox) In Backlog');
+    this.contextValue = ['session', session.tool, archived ? 'archived' : '', pinned ? 'pinned' : '', backlog ? 'backlog' : '', isLive(session.state) ? 'live' : 'stopped', session.subagent ? 'subagent' : '']
       .filter(Boolean)
       .join('-');
     // A spawned agent has no panel of its own to resume; its transcript is what there is to see.
@@ -426,7 +430,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     return this.sessions.filter((s) => {
       if (!o.showArchived && !withArchived && archived(s)) return false;
       // Spawned sessions stay in: `topLevel` nests them under their parent and drops the parentless unless switched on.
-      if (s.empty && !s.subagent && !o.showEmpty && !isLive(s.state) && !o.pinned.has(`${s.tool}:${s.id}`)) return false;
+      if (s.empty && !s.subagent && !o.showEmpty && !isLive(s.state) && !o.pinned.has(`${s.tool}:${s.id}`) && !o.backlog.has(`${s.tool}:${s.id}`)) return false;
       if (repoRoots) {
         const root = s.worktree?.repoRoot ?? repoRootOf(s.cwd) ?? s.cwd;
         if (!root || !repoRoots.has(path.resolve(root))) return false;
@@ -440,15 +444,19 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     const searching = o.search.trim() !== '';
     const { all, childrenOf } = this.topLevel(this.filtered(searching));
     const isPinned = (s: Session) => o.pinned.has(`${s.tool}:${s.id}`);
+    // Pinning wins over Backlog, should both marks reach the file (each normally clears the other, see marks.ts).
+    const inBacklog = (s: Session) => o.backlog.has(`${s.tool}:${s.id}`) && !isPinned(s);
     // A session another agent was handed keeps working after its parent stops; the parent stays with it in Active.
     const working = (s: Session) => isLive(s.state) || (childrenOf.get(`${s.tool}:${s.id}`) ?? []).some((c) => isLive(c.state));
     const order = activeOrder(o.activeSort, (s) => (s.state === 'stopped' && working(s) ? 'running' : s.state));
-    const active = all.filter((s) => working(s) || isPinned(s)).sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || order(a, b));
-    const history = all.filter((s) => !working(s) && !isPinned(s)).sort(byRecency).slice(0, o.historyLimit);
-    const shown = [...active, ...history];
+    const active = all.filter((s) => !inBacklog(s) && (working(s) || isPinned(s))).sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || order(a, b));
+    // Backlog is parked work: a session stays there while it works, and is never cut by the history limit.
+    const backlog = all.filter(inBacklog).sort(byRecency);
+    const history = all.filter((s) => !inBacklog(s) && !working(s) && !isPinned(s)).sort(byRecency).slice(0, o.historyLimit);
+    const shown = [...active, ...backlog, ...history];
     const item = (s: Session, showTool = true): SessionItem =>
       new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), showTool, s.worktree ? this.stats.get(s.worktree.path) : undefined, '', isPinned(s), retiredSuffix(s),
-        (childrenOf.get(`${s.tool}:${s.id}`) ?? []).map((c) => item(c, false)));
+        (childrenOf.get(`${s.tool}:${s.id}`) ?? []).map((c) => item(c, false)), inBacklog(s));
     const retiredSuffix = (s: Session) => {
       const n = this.retired.get(`${s.tool}:${s.id}`);
       return n ? `#${n}` : '';
@@ -459,9 +467,10 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
       const found = (s: Session): boolean => matchesSearch(s, o.search) || (childrenOf.get(`${s.tool}:${s.id}`) ?? []).some(found);
       const hits = new Set(all.filter(found));
       const archived = this.archivedOutOfUse();
-      const rest = all.filter((s) => hits.has(s) && !archived(s) && !working(s) && !isPinned(s));
+      const rest = all.filter((s) => hits.has(s) && !archived(s) && !inBacklog(s) && !working(s) && !isPinned(s));
       const sections: [key: string, label: string, icon: string, sessions: Session[]][] = [
         ['active', 'Active', 'pulse', active.filter((s) => hits.has(s) && !archived(s))],
+        ['backlog', 'Backlog', 'inbox', backlog.filter((s) => hits.has(s) && !archived(s))],
         ['history', 'History', 'history', rest.sort(byRecency)],
         ['archived', 'Archived', 'archive', [...hits].filter(archived).sort(byRecency)],
       ];
@@ -476,6 +485,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
         case 'activity': {
           const groups: Node[] = [];
           if (active.length) groups.push(new GroupItem('active', 'Active', active.map((s) => item(s)), new vscode.ThemeIcon('pulse'), true));
+          if (backlog.length) groups.push(new GroupItem('backlog', 'Backlog', backlog.map((s) => item(s)), new vscode.ThemeIcon('inbox'), true));
           if (history.length) groups.push(new GroupItem('history', 'History', history.map((s) => item(s)), new vscode.ThemeIcon('history'), true));
           this.roots = groups;
           break;

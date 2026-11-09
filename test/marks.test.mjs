@@ -18,7 +18,7 @@ test('a change keeps what another window wrote since this one last read', async 
   // Another window (another process) archives and pins behind this one's back.
   await writeFile(file, JSON.stringify({ archived: ['claude:1', 'codex:2'], pinned: ['codex:3'] }));
   const m = await setMark(file, 'archived', ['claude:1'], false);
-  assert.deepEqual(m, { archived: ['codex:2'], pinned: ['codex:3'] }, 'unarchiving one session must not drop the other window\'s marks');
+  assert.deepEqual(m, { archived: ['codex:2'], pinned: ['codex:3'], backlog: [] }, 'unarchiving one session must not drop the other window\'s marks');
 });
 
 test('rapid changes from one window all land', async () => {
@@ -27,11 +27,23 @@ test('rapid changes from one window all land', async () => {
   assert.deepEqual((await readMarks(file)).pinned, ['codex:x', 'codex:y', 'codex:z'], 'concurrent pins in one window are applied in turn, not raced');
 });
 
+test('a session is pinned or in Backlog, never both', async () => {
+  const file = join(directory, 'e', 'state.json');
+  await setMark(file, 'pinned', ['codex:1', 'codex:2'], true);
+  let m = await setMark(file, 'backlog', ['codex:1'], true);
+  assert.deepEqual([m.pinned, m.backlog], [['codex:2'], ['codex:1']], 'moving to Backlog unpins');
+  m = await setMark(file, 'pinned', ['codex:1'], true);
+  assert.deepEqual([m.pinned, m.backlog], [['codex:1', 'codex:2'], []], 'pinning takes it out of Backlog');
+  await setMark(file, 'backlog', ['codex:3'], true);
+  m = await setMark(file, 'backlog', ['codex:3'], false);
+  assert.deepEqual(m.pinned, ['codex:1', 'codex:2'], 'removing from Backlog leaves pins alone');
+});
+
 test('migrating globalState unions into the file', async () => {
   const file = join(directory, 'c', 'state.json');
   await setMark(file, 'archived', ['claude:phone'], true);
   const m = await mergeMarks(file, { archived: ['claude:desk', 'claude:phone'], pinned: ['codex:p'] });
-  assert.deepEqual(m, { archived: ['claude:desk', 'claude:phone'], pinned: ['codex:p'] }, 'the desktop\'s old marks join the phone\'s without duplicates');
+  assert.deepEqual(m, { archived: ['claude:desk', 'claude:phone'], pinned: ['codex:p'], backlog: [] }, 'the desktop\'s old marks join the phone\'s without duplicates');
 });
 
 test('a watcher sees another window\'s rewrite', async () => {

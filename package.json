@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.28",
+  "version": "0.8.29",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -292,6 +292,18 @@
         "title": "Unpin Session",
         "category": "Agent Sessions",
         "icon": "$(unpin)"
+      },
+      {
+        "command": "agentSessions.moveToBacklog",
+        "title": "Move to Backlog",
+        "category": "Agent Sessions",
+        "icon": "$(inbox)"
+      },
+      {
+        "command": "agentSessions.removeFromBacklog",
+        "title": "Remove from Backlog",
+        "category": "Agent Sessions",
+        "icon": "$(discard)"
       },
       {
         "command": "agentSessions.worktree.delete",
@@ -594,6 +606,16 @@
           "group": "2_pin@1"
         },
         {
+          "command": "agentSessions.moveToBacklog",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && !(viewItem =~ /-backlog-/) && !(viewItem =~ /subagent/)",
+          "group": "2_pin@2"
+        },
+        {
+          "command": "agentSessions.removeFromBacklog",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-backlog-/ && !(viewItem =~ /subagent/)",
+          "group": "2_pin@2"
+        },
+        {
           "command": "agentSessions.worktree.delete",
           "when": "view == agentSessions.worktrees && viewItem == worktree && !agentSessions.phoneMode",
           "group": "inline@2"
@@ -720,6 +742,14 @@
           "when": "false"
         },
         {
+          "command": "agentSessions.moveToBacklog",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.removeFromBacklog",
+          "when": "false"
+        },
+        {
           "command": "agentSessions.worktree.delete",
           "when": "false"
         },
@@ -760,7 +790,7 @@
             "none"
           ],
           "enumDescriptions": [
-            "Active and pinned sessions first, then history",
+            "Active and pinned sessions first, then the backlog, then history",
             "One group per repository, worktrees inside",
             "Claude and Codex as separate groups",
             "One flat list, newest first"

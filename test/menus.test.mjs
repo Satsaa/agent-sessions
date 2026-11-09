@@ -31,6 +31,7 @@ test('the row action picker covers every context-menu action', async () => {
     assert.deepEqual([...listed].filter((c) => !contextMenu.has(c)), [], 'the picker offers nothing the context menu does not');
     assert.deepEqual(rowActionsFor(['group'], false), [], 'a group row has no actions');
     assert.ok(rowActionsFor(['session-claude-pinned-live'], true).includes('agentSessions.unpin') && !rowActionsFor(['session-claude-pinned-live'], true).includes('agentSessions.pin'), 'a pinned session offers Unpin, not Pin');
+    assert.ok(rowActionsFor(['session-claude-backlog-stopped'], false).includes('agentSessions.removeFromBacklog') && !rowActionsFor(['session-claude-backlog-stopped'], false).includes('agentSessions.moveToBacklog'), 'a backlog session offers Remove from Backlog, not Move to Backlog');
     assert.ok(rowActionsFor(['session-claude-live'], false).includes('agentSessions.openInTerminal') && !rowActionsFor(['session-claude-live'], true).includes('agentSessions.openInTerminal'), 'desktop-only actions are offered on the desktop and left out on the phone');
     const many = rowActionsFor(['session-claude-live', 'session-codex-pinned-'], false);
     assert.ok(many.includes('agentSessions.archive') && !many.includes('agentSessions.rename'), 'several rows are offered the bulk actions, not the single-row ones');

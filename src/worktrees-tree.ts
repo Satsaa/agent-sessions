@@ -14,6 +14,7 @@ export class WorktreeItem extends vscode.TreeItem {
     locallyArchived: ReadonlySet<string>,
     pinned: ReadonlySet<string>,
     childrenOf: ReadonlyMap<string, Session[]>,
+    backlog: ReadonlySet<string>,
   ) {
     super(worktree.isMain ? `${worktree.name} (main checkout)` : worktree.name, sessions.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
     this.id = `worktree:${worktree.path}`;
@@ -24,7 +25,7 @@ export class WorktreeItem extends vscode.TreeItem {
     this.resourceUri = vscode.Uri.file(worktree.path);
     const item = (s: Session, showTool: boolean): SessionItem =>
       new SessionItem(s, locallyArchived.has(`${s.tool}:${s.id}`), showTool, undefined, `wt:${worktree.path}:`, pinned.has(`${s.tool}:${s.id}`), '',
-        (childrenOf.get(`${s.tool}:${s.id}`) ?? []).map((c) => item(c, false)));
+        (childrenOf.get(`${s.tool}:${s.id}`) ?? []).map((c) => item(c, false)), backlog.has(`${s.tool}:${s.id}`) && !pinned.has(`${s.tool}:${s.id}`));
     this.children = sessions.map((s) => item(s, true));
   }
 
@@ -130,7 +131,7 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
   private rendered = '';
 
   /** Every worktree found, with stats and the sessions bound to it. */
-  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>, showAllSubagents: boolean, layout: SubagentLayout = 'nested'): void {
+  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>, showAllSubagents: boolean, layout: SubagentLayout = 'nested', backlog: ReadonlySet<string> = new Set()): void {
     // Spawned sessions sit under their parent as in the Sessions view; only the root layout makes them rows of a worktree.
     const { rows: sessionRows, childrenOf } = arrangeSubagents(sessions, layout, showAllSubagents);
     const rowKeys = new Set(sessionRows.filter((s) => !s.subagent || layout === 'root').map((s) => `${s.tool}:${s.id}`));
@@ -158,7 +159,7 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
     const byRepo = new Map<string, WorktreeItem[]>();
     for (const wt of worktrees) {
       const list = byRepo.get(wt.repoRoot) ?? [];
-      list.push(new WorktreeItem(wt, stats.get(wt.path), assigned(wt), locallyArchived, pinned, childrenOf));
+      list.push(new WorktreeItem(wt, stats.get(wt.path), assigned(wt), locallyArchived, pinned, childrenOf, backlog));
       byRepo.set(wt.repoRoot, list);
     }
     const rows = (root: string, items: WorktreeItem[]): (WorktreeItem | InactiveItem)[] => {

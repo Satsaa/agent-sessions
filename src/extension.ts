@@ -52,7 +52,7 @@ interface Config {
   phoneMode: boolean;
   keepSessionsRunning: boolean;
   usage: { enabled: boolean; claudeNetwork: boolean; codexNetwork: boolean; refreshInterval: number };
-  view: Omit<ViewOptions, 'locallyArchived' | 'pinned' | 'open' | 'search'>;
+  view: Omit<ViewOptions, 'locallyArchived' | 'pinned' | 'backlog' | 'open' | 'search'>;
 }
 
 function readConfig(): Config {
@@ -127,12 +127,13 @@ export function activate(context: vscode.ExtensionContext): void {
   // Filled from the shared marks file (see marks.ts); the sets are shared by reference with the views.
   const archived = new Set<string>();
   const pinned = new Set<string>();
+  const backlog = new Set<string>();
   const marksPath = marksFile();
   const takeMarks = (m: SessionMarks) => {
-    archived.clear();
-    for (const k of m.archived) archived.add(k);
-    pinned.clear();
-    for (const k of m.pinned) pinned.add(k);
+    for (const [set, keys] of [[archived, m.archived], [pinned, m.pinned], [backlog, m.backlog]] as const) {
+      set.clear();
+      for (const k of keys) set.add(k);
+    }
   };
   // Marks this install kept in globalState before the file existed move into it once, then leave globalState.
   const marksReady = (async () => {
@@ -156,7 +157,7 @@ export function activate(context: vscode.ExtensionContext): void {
     for (const k of now) open.add(k);
     return true;
   };
-  const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned, open, search });
+  const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned, backlog, open, search });
 
   const provider = new SessionsProvider(options(), () => void vscode.commands.executeCommand('setContext', 'agentSessions.loaded', true));
   const view = vscode.window.createTreeView('agentSessions.list', { treeDataProvider: provider, showCollapseAll: true, canSelectMany: true });
@@ -415,7 +416,7 @@ export function activate(context: vscode.ExtensionContext): void {
         forceStats = false;
         const stats = await loadWorktreeStats([...sessionWorktrees(provider.visible()), ...(worktreesView.visible ? worktrees : [])], mains, live, force);
         provider.setWorktreeStats(stats);
-        worktreesProvider.set(worktrees, stats, sessions, archived, pinned, config.view.showSubagents, config.view.subagentLayout);
+        worktreesProvider.set(worktrees, stats, sessions, archived, pinned, config.view.showSubagents, config.view.subagentLayout, backlog);
         const linked = worktrees.filter((w) => !w.isMain).length;
         worktreesView.description = linked ? `${linked}` : '';
       } finally {
@@ -599,8 +600,11 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     });
   };
-  const setPinned = async (sessions: Session[], present: boolean) => {
-    await mark('pinned', sessions, present);
+  // Pinned and Backlog exclude each other (see marks.ts), so the step remembers which sessions this took out of the
+  // other list, and undoing puts them back there.
+  const place = async (list: 'pinned' | 'backlog', sessions: Session[], present: boolean, restore: Session[] = []) => {
+    await mark(list, sessions, present);
+    if (restore.length) await mark(list === 'pinned' ? 'backlog' : 'pinned', restore, true);
     provider.setOptions(options());
     await refresh();
   };
@@ -716,7 +720,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('agentSessions.scopeAll', () => setting('scope', 'all')),
     vscode.commands.registerCommand('agentSessions.groupBy', async () => {
       const picks: { label: string; description: string; value: GroupBy }[] = [
-        { label: 'Activity', description: 'Active and pinned sessions first, then history', value: 'activity' },
+        { label: 'Activity', description: 'Active and pinned sessions first, then the backlog, then history', value: 'activity' },
         { label: 'Repository', description: 'One group per repository, worktrees inside', value: 'repository' },
         { label: 'Tool', description: 'Claude and Codex as separate groups', value: 'tool' },
         { label: 'None', description: 'One flat list', value: 'none' },
@@ -913,13 +917,21 @@ export function activate(context: vscode.ExtensionContext): void {
       await archive([s]);
 
     })),
-    ...(['pin', 'unpin'] as const).map((action) => vscode.commands.registerCommand(`agentSessions.${action}`, async (arg: unknown, selected: unknown) => {
-      const present = action === 'pin';
+    ...([
+      ['pin', 'pinned', true, 'Pin'],
+      ['unpin', 'pinned', false, 'Unpin'],
+      ['moveToBacklog', 'backlog', true, 'Move to Backlog'],
+      ['removeFromBacklog', 'backlog', false, 'Remove from Backlog'],
+    ] as const).map(([action, list, present, verb]) => vscode.commands.registerCommand(`agentSessions.${action}`, async (arg: unknown, selected: unknown) => {
+      const marked = list === 'pinned' ? pinned : backlog;
+      const other = list === 'pinned' ? backlog : pinned;
+      const key = (s: Session) => `${s.tool}:${s.id}`;
       // Only the sessions this changes: undoing must not unpin one that was pinned before.
-      const sessions = sessionsOf(arg, selected).filter((s) => pinned.has(`${s.tool}:${s.id}`) !== present);
+      const sessions = sessionsOf(arg, selected).filter((s) => marked.has(key(s)) !== present);
       if (!sessions.length) return;
-      await setPinned(sessions, present);
-      history.record({ label: `${present ? 'Pin' : 'Unpin'} ${named(sessions)}`, undo: () => setPinned(sessions, !present), redo: () => setPinned(sessions, present) });
+      const takenOut = present ? sessions.filter((s) => other.has(key(s))) : [];
+      await place(list, sessions, present);
+      history.record({ label: `${verb} ${named(sessions)}`, undo: () => place(list, sessions, !present, takenOut), redo: () => place(list, sessions, present) });
     })),
     vscode.commands.registerCommand('agentSessions.unarchive', async (arg: unknown, selected: unknown) => {
       const sessions = sessionsOf(arg, selected);

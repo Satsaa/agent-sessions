@@ -4,15 +4,19 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 /**
- * Archived and pinned sessions (`<tool>:<id>` keys), kept in one file under the user's home rather than in a VS Code
- * install's globalState, so every window whose extension runs as this user shares them: the desktop remote window and
- * the phone's serve-web alike.
+ * Archived, pinned and backlogged sessions (`<tool>:<id>` keys), kept in one file under the user's home rather than in
+ * a VS Code install's globalState, so every window whose extension runs as this user shares them: the desktop remote
+ * window and the phone's serve-web alike.
  */
 export interface SessionMarks {
   archived: string[];
   pinned: string[];
+  backlog: string[];
 }
 export type MarkList = keyof SessionMarks;
+
+/** A session is pinned to Active or parked in Backlog, never both: marking it one takes it out of the other. */
+const EXCLUSIVE: Partial<Record<MarkList, MarkList>> = { pinned: 'backlog', backlog: 'pinned' };
 
 export function marksFile(): string {
   return path.join(os.homedir(), '.agent-sessions', 'state.json');
@@ -27,7 +31,7 @@ export async function readMarks(file: string): Promise<SessionMarks> {
   }
   const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  return { archived: list(o.archived), pinned: list(o.pinned) };
+  return { archived: list(o.archived), pinned: list(o.pinned), backlog: list(o.backlog) };
 }
 
 // Changes from this window apply one at a time; each re-reads the file, so another window's change since is kept.
@@ -36,7 +40,8 @@ let queue: Promise<unknown> = Promise.resolve();
 function update(file: string, change: (m: SessionMarks) => SessionMarks): Promise<SessionMarks> {
   const next = queue.then(async () => {
     const marks = change(await readMarks(file));
-    const sorted = { archived: [...new Set(marks.archived)].sort(), pinned: [...new Set(marks.pinned)].sort() };
+    const tidy = (l: MarkList) => [...new Set(marks[l])].sort();
+    const sorted: SessionMarks = { archived: tidy('archived'), pinned: tidy('pinned'), backlog: tidy('backlog') };
     await fsp.mkdir(path.dirname(file), { recursive: true });
     // Written beside and renamed over, so a reader never sees half a file.
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
@@ -48,14 +53,22 @@ function update(file: string, change: (m: SessionMarks) => SessionMarks): Promis
   return next;
 }
 
-/** Add or remove session keys from a list, as one change to the file's current content. */
+/**
+ * Add or remove session keys from a list, as one change to the file's current content. Adding to a list with an
+ * exclusive partner (see `EXCLUSIVE`) removes them from that one in the same change.
+ */
 export function setMark(file: string, list: MarkList, keys: readonly string[], present: boolean): Promise<SessionMarks> {
-  return update(file, (m) => ({ ...m, [list]: present ? [...m[list], ...keys] : m[list].filter((k) => !keys.includes(k)) }));
+  return update(file, (m) => {
+    const next = { ...m, [list]: present ? [...m[list], ...keys] : m[list].filter((k) => !keys.includes(k)) };
+    const other = present ? EXCLUSIVE[list] : undefined;
+    if (other) next[other] = m[other].filter((k) => !keys.includes(k));
+    return next;
+  });
 }
 
 /** Union marks into the file: how a window brings over what it kept in globalState before the file existed. */
-export function mergeMarks(file: string, add: SessionMarks): Promise<SessionMarks> {
-  return update(file, (m) => ({ archived: [...m.archived, ...add.archived], pinned: [...m.pinned, ...add.pinned] }));
+export function mergeMarks(file: string, add: Pick<SessionMarks, 'archived' | 'pinned'>): Promise<SessionMarks> {
+  return update(file, (m) => ({ ...m, archived: [...m.archived, ...add.archived], pinned: [...m.pinned, ...add.pinned] }));
 }
 
 /** Calls `onChange` with the file's marks whenever any window rewrites it. */

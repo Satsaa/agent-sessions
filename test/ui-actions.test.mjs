@@ -69,7 +69,7 @@ test('age warning begins after ten minutes and clears on a successful fresh read
 });
 
 const session = (id, overrides = {}) => ({ tool: 'codex', id, title: id, state: 'stopped', startedAt: 1, updatedAt: 1, archived: false, subagent: false, empty: false, ...overrides });
-const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, subagentLayout: 'nested', activeSort: 'newest', showActiveArchived: true, showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), open: new Set(), search: '', ...overrides });
+const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, subagentLayout: 'nested', activeSort: 'newest', showActiveArchived: true, showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), backlog: new Set(), open: new Set(), search: '', ...overrides });
 
 test('pinned stopped sessions stay in Active outside the history cap without becoming live', () => {
   const provider = new SessionsProvider(options(), () => {});
@@ -108,6 +108,31 @@ test('Active is ordered by the chosen sort, pinned sessions first in every order
   assert.deepEqual(order('activity'), ['old', 'a-replied', 'c-waiting', 'b-working'], 'the session that wrote last first');
   assert.deepEqual(order('attention'), ['old', 'c-waiting', 'a-replied', 'b-working'], 'waiting, then replied, then working');
   assert.deepEqual(order('title'), ['old', 'a-replied', 'b-working', 'c-waiting'], 'alphabetically');
+});
+
+test('Backlog holds its sessions whatever their state, between Active and History and past the history cap', () => {
+  const provider = new SessionsProvider(options({ pinned: new Set(), backlog: new Set(['codex:parked', 'codex:parked-live', 'codex:parked-empty']) }), () => {});
+  provider.setSessions([
+    session('parked', { updatedAt: 5 }),
+    session('parked-live', { state: 'running', updatedAt: 9 }),
+    session('parked-empty', { empty: true, updatedAt: 1 }),
+    session('running', { state: 'running' }),
+    session('recent', { updatedAt: 20 }),
+    session('older', { updatedAt: 10 }),
+  ]);
+  const sections = () => provider.getChildren().map(group => [group.label, group.children.map(row => row.session.id)]);
+  assert.deepEqual(sections(), [
+    ['Active', ['running']],
+    ['Backlog', ['parked-live', 'parked', 'parked-empty']],
+    ['History', ['recent']],
+  ], 'a working backlog session stays in Backlog, an empty one is kept, and none counts against the history limit');
+  assert.match(provider.getChildren()[1].children[0].contextValue, /-backlog-/, 'a backlog row offers Remove from Backlog');
+  provider.setOptions(options({ pinned: new Set(['codex:parked']), backlog: new Set(['codex:parked']) }));
+  assert.deepEqual(sections().map(([label, ids]) => [label, ids.includes('parked')]), [['Active', true], ['History', false]], 'a pin wins over Backlog');
+  provider.setOptions(options({ pinned: new Set(), backlog: new Set(['codex:parked']), groupBy: 'none', historyLimit: 10 }));
+  assert.deepEqual(provider.getChildren().map(row => row.session.id), ['parked-live', 'running', 'parked', 'recent', 'older'], 'ungrouped, backlog rows follow the active ones');
+  provider.setOptions(options({ pinned: new Set(), backlog: new Set(['codex:parked', 'codex:recent']), search: 'r' }));
+  assert.deepEqual(sections(), [['Active', ['parked-live', 'running']], ['Backlog', ['recent', 'parked']], ['History', ['older']]], 'a search has a Backlog section too');
 });
 
 test('an archived session in use stays listed while archived sessions are hidden', () => {
