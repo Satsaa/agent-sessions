@@ -44,6 +44,8 @@ export interface Session {
    * tool, and the session's transcript is its own rather than a sidechain of the parent's. Absent: the session's tool.
    */
   parentTool?: Tool;
+  /** A marker named a parent, but a person detached the session (marks.ts): it is listed as their own. */
+  detached?: true;
   /** The start of the first prompt as sent, marker included (markers.ts). */
   promptHead?: string | undefined;
   /** What the spawning session called this agent: a teammate's name, an agent type, a Codex nickname. */

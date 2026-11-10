@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.29",
+  "version": "0.8.30",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -304,6 +304,18 @@
         "title": "Remove from Backlog",
         "category": "Agent Sessions",
         "icon": "$(discard)"
+      },
+      {
+        "command": "agentSessions.detach",
+        "title": "Detach from Parent",
+        "category": "Agent Sessions",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "agentSessions.reattach",
+        "title": "Reattach to Parent",
+        "category": "Agent Sessions",
+        "icon": "$(link)"
       },
       {
         "command": "agentSessions.worktree.delete",
@@ -616,6 +628,16 @@
           "group": "2_pin@2"
         },
         {
+          "command": "agentSessions.detach",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-linked$/",
+          "group": "2_pin@3"
+        },
+        {
+          "command": "agentSessions.reattach",
+          "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-detached$/",
+          "group": "2_pin@3"
+        },
+        {
           "command": "agentSessions.worktree.delete",
           "when": "view == agentSessions.worktrees && viewItem == worktree && !agentSessions.phoneMode",
           "group": "inline@2"
@@ -747,6 +769,14 @@
         },
         {
           "command": "agentSessions.removeFromBacklog",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.detach",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.reattach",
           "when": "false"
         },
         {

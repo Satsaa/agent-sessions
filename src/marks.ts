@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 /**
- * Archived, pinned and backlogged sessions (`<tool>:<id>` keys), kept in one file under the user's home rather than in
+ * Archived, pinned, backlogged and detached sessions (`<tool>:<id>` keys), kept in one file under the user's home rather than in
  * a VS Code install's globalState, so every window whose extension runs as this user shares them: the desktop remote
  * window and the phone's serve-web alike.
  */
@@ -12,6 +12,8 @@ export interface SessionMarks {
   archived: string[];
   pinned: string[];
   backlog: string[];
+  /** Sessions a parent marker names (markers.ts) that a person took back as their own: listed unnested, and openable. */
+  detached: string[];
 }
 export type MarkList = keyof SessionMarks;
 
@@ -31,7 +33,7 @@ export async function readMarks(file: string): Promise<SessionMarks> {
   }
   const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  return { archived: list(o.archived), pinned: list(o.pinned), backlog: list(o.backlog) };
+  return { archived: list(o.archived), pinned: list(o.pinned), backlog: list(o.backlog), detached: list(o.detached) };
 }
 
 // Changes from this window apply one at a time; each re-reads the file, so another window's change since is kept.
@@ -41,7 +43,7 @@ function update(file: string, change: (m: SessionMarks) => SessionMarks): Promis
   const next = queue.then(async () => {
     const marks = change(await readMarks(file));
     const tidy = (l: MarkList) => [...new Set(marks[l])].sort();
-    const sorted: SessionMarks = { archived: tidy('archived'), pinned: tidy('pinned'), backlog: tidy('backlog') };
+    const sorted: SessionMarks = { archived: tidy('archived'), pinned: tidy('pinned'), backlog: tidy('backlog'), detached: tidy('detached') };
     await fsp.mkdir(path.dirname(file), { recursive: true });
     // Written beside and renamed over, so a reader never sees half a file.
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;

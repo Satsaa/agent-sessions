@@ -128,9 +128,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const archived = new Set<string>();
   const pinned = new Set<string>();
   const backlog = new Set<string>();
+  const detached = new Set<string>();
   const marksPath = marksFile();
   const takeMarks = (m: SessionMarks) => {
-    for (const [set, keys] of [[archived, m.archived], [pinned, m.pinned], [backlog, m.backlog]] as const) {
+    for (const [set, keys] of [[archived, m.archived], [pinned, m.pinned], [backlog, m.backlog], [detached, m.detached]] as const) {
       set.clear();
       for (const k of keys) set.add(k);
     }
@@ -397,7 +398,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const reading = config.tools.filter((t) => stale.has(t));
         stale.clear();
         await Promise.all(reading.map(async (t) => (lists[t] = await listTool(t))));
-        const sessions = withMarkedParents(config.tools.flatMap((t) => lists[t]), config.parentMarker);
+        const sessions = withMarkedParents(config.tools.flatMap((t) => lists[t]), config.parentMarker, detached);
         latestSessions = sessions;
         scanned();
         void finishPendingOpen(sessions);
@@ -932,6 +933,21 @@ export function activate(context: vscode.ExtensionContext): void {
       const takenOut = present ? sessions.filter((s) => other.has(key(s))) : [];
       await place(list, sessions, present);
       history.record({ label: `${verb} ${named(sessions)}`, undo: () => place(list, sessions, !present, takenOut), redo: () => place(list, sessions, present) });
+    })),
+    // Detaching lists a session another agent started as the person's own, so it opens and continues like theirs;
+    // the transcript is left as it is, so reattaching nests it again.
+    ...([
+      ['detach', true, 'Detach'],
+      ['reattach', false, 'Reattach'],
+    ] as const).map(([action, present, verb]) => vscode.commands.registerCommand(`agentSessions.${action}`, async (arg: unknown, selected: unknown) => {
+      const sessions = sessionsOf(arg, selected).filter((s) => (present ? s.subagent && s.parentTool !== undefined : s.detached));
+      if (!sessions.length) return;
+      const apply = async (on: boolean) => {
+        await mark('detached', sessions, on);
+        await refresh([]);
+      };
+      await apply(present);
+      history.record({ label: `${verb} ${named(sessions)}`, undo: () => apply(!present), redo: () => apply(present) });
     })),
     vscode.commands.registerCommand('agentSessions.unarchive', async (arg: unknown, selected: unknown) => {
       const sessions = sessionsOf(arg, selected);

@@ -47,3 +47,10 @@ test('the marker names only what the tool did not already record, and an unusabl
   assert.equal(parentMarker('(unclosed'), undefined, 'an invalid pattern detects nothing rather than failing the listing');
   assert.equal(parentMarker(''), undefined, 'an empty pattern turns detection off');
 });
+
+test('a detached session is listed as a person’s own until it is reattached', () => {
+  const s = { tool: 'claude', id: 'c', subagent: false, parentId: undefined, agentRole: undefined, promptHead: `<parent-session>codex:${CODEX_PARENT}</parent-session>\n\nWork` };
+  const [detached] = withMarkedParents([s], defaultMarker, new Set(['claude:c']));
+  assert.deepEqual([detached.subagent, detached.parentId, detached.detached], [false, undefined, true], 'detaching unnests the session and flags it for Reattach');
+  assert.equal(withMarkedParents([s], defaultMarker, new Set())[0].parentId, CODEX_PARENT, 'reattaching nests it again from the unchanged transcript');
+});

@@ -20,9 +20,10 @@ const isTool = (value: string | undefined): value is Tool => value === 'claude' 
 
 /**
  * Sessions another agent started with a marker in their first prompt become that agent's subagents. A session its
- * own tool already knows as spawned keeps what the tool recorded.
+ * own tool already knows as spawned keeps what the tool recorded. One in `detached` (`<tool>:<id>` keys, see marks.ts)
+ * stays a person's session, flagged so it can be reattached.
  */
-export function withMarkedParents(sessions: Session[], marker: RegExp | undefined): Session[] {
+export function withMarkedParents(sessions: Session[], marker: RegExp | undefined, detached: ReadonlySet<string> = new Set()): Session[] {
   if (!marker) return sessions;
   return sessions.map((s) => {
     if (s.subagent || !s.promptHead) return s;
@@ -31,6 +32,7 @@ export function withMarkedParents(sessions: Session[], marker: RegExp | undefine
     if (!parentId) return s;
     const parentTool = isTool(groups?.tool) ? groups.tool : s.tool;
     if (parentTool === s.tool && parentId === s.id) return s;
+    if (detached.has(`${s.tool}:${s.id}`)) return { ...s, detached: true };
     return { ...s, subagent: true, parentId, parentTool, agentRole: groups?.role?.trim() || s.agentRole };
   });
 }

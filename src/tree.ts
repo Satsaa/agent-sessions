@@ -141,7 +141,10 @@ export class SessionItem extends vscode.TreeItem {
     this.tooltip = tooltipFor(session, archived, stats);
     if (pinned) this.tooltip.appendMarkdown('\n\n$(pin) Pinned to Active');
     if (backlog) this.tooltip.appendMarkdown('\n\n$(inbox) In Backlog');
-    this.contextValue = ['session', session.tool, archived ? 'archived' : '', pinned ? 'pinned' : '', backlog ? 'backlog' : '', isLive(session.state) ? 'live' : 'stopped', session.subagent ? 'subagent' : '']
+    if (session.detached) this.tooltip.appendMarkdown('\n\n$(debug-disconnect) Detached from the session that started it');
+    // `linked`: the parent comes from a marker (only then is `parentTool` set), so the row can be detached.
+    const linked = session.subagent && session.parentTool !== undefined;
+    this.contextValue = ['session', session.tool, archived ? 'archived' : '', pinned ? 'pinned' : '', backlog ? 'backlog' : '', isLive(session.state) ? 'live' : 'stopped', session.subagent ? 'subagent' : '', linked ? 'linked' : '', session.detached ? 'detached' : '']
       .filter(Boolean)
       .join('-');
     // A spawned agent has no panel of its own to resume; its transcript is what there is to see.
