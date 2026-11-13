@@ -6,8 +6,10 @@ import { fileURLToPath } from 'node:url';
 import {
   CLIENT_LABEL_ENV,
   DEFAULT_CLIENT_LABEL,
+  IDLE_STOP_ENV,
   PROTOCOL,
   hostDir,
+  idleStopMinutes,
   isPanelSession,
   lineReader,
   socketPath,
@@ -89,6 +91,8 @@ async function main(): Promise<void> {
     env,
     client: { label: process.env[CLIENT_LABEL_ENV] || DEFAULT_CLIENT_LABEL, ownerPid: process.ppid },
   };
+  const idleStop = idleStopMinutes(process.env[IDLE_STOP_ENV]);
+  if (idleStop !== undefined) request.idleStopMinutes = idleStop;
   socket.write(`${JSON.stringify(request)}\n`);
 
   // Kept until the host accepts, so a host that refuses our protocol still gets the whole input replayed to `claude`.

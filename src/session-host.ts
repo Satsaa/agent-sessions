@@ -3,7 +3,7 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { CLIENT_LABEL_ENV, PROTOCOL, lineReader, socketPath, type HostMessage, type HostRequest, type HostedSession } from './host/protocol.js';
+import { CLIENT_LABEL_ENV, IDLE_STOP_ENV, PROTOCOL, lineReader, socketPath, type HostMessage, type HostRequest, type HostedSession } from './host/protocol.js';
 
 const REQUEST_TIMEOUT_MS = 2000;
 
@@ -80,6 +80,14 @@ export async function applyKeepSessionsRunning(enabled: boolean, extensionPath: 
     await config.update(tool.setting, ours, vscode.ConfigurationTarget.Global);
     output.appendLine(`keepSessionsRunning: ${name} now starts sessions through ${ours}; reload windows opened before this`);
   }
+}
+
+/**
+ * Hands `agentSessions.idleStopMinutes` to the panels this extension host starts from now on: their wrappers inherit
+ * it and tell the session host. A session already open keeps what its window said when it attached.
+ */
+export function publishIdleStop(minutes: number): void {
+  process.env[IDLE_STOP_ENV] = String(minutes);
 }
 
 function ask(request: HostRequest): Promise<HostMessage | undefined> {

@@ -17,6 +17,16 @@ export const PROTOCOL = 1;
 export const CLIENT_LABEL_ENV = 'AGENT_SESSIONS_CLIENT';
 export const DEFAULT_CLIENT_LABEL = 'another VS Code window';
 
+/** Set in the environment of a VS Code server to its `agentSessions.idleStopMinutes`; see `AttachRequest.idleStopMinutes`. */
+export const IDLE_STOP_ENV = 'AGENT_SESSIONS_IDLE_STOP_MINUTES';
+
+/** The minutes `IDLE_STOP_ENV` holds; undefined when it is unset or not a duration. */
+export function idleStopMinutes(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const minutes = Number(value);
+  return Number.isFinite(minutes) && minutes >= 0 ? minutes : undefined;
+}
+
 export function hostDir(): string {
   return path.join(os.homedir(), '.agent-sessions', 'host');
 }
@@ -42,6 +52,12 @@ export interface AttachRequest {
   cwd: string;
   env: Record<string, string>;
   client: ClientIdentity;
+  /**
+   * How long the session may sit idle once no window is connected before the host stops it; 0 never stops it. The
+   * window holding a session last decides. Optional, so it changed no protocol: a wrapper that leaves it out gets the
+   * host's default, and a host that does not know it ignores it.
+   */
+  idleStopMinutes?: number;
 }
 
 export interface StatusRequest {

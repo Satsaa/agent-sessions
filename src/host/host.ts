@@ -17,7 +17,10 @@ type Json = Record<string, unknown>;
 
 export interface HostOptions {
   socketPath: string;
-  /** How long a process nobody is connected to may sit idle before it is stopped; its transcript resumes it. */
+  /**
+   * How long a process nobody is connected to may sit idle before it is stopped; its transcript resumes it. The
+   * default, for a window that does not say (`AttachRequest.idleStopMinutes`).
+   */
   idleStopMs: number;
   /** How long the host runs with no processes and no connections before it exits. */
   emptyExitMs: number;
@@ -38,6 +41,8 @@ const ASKS_A_PERSON = new Set(['can_use_tool', 'elicitation']);
 /** Output that means a turn is running, including one that starts on its own after a background task ends. */
 const TURN_OUTPUT = new Set(['assistant', 'stream_event', 'user', 'tool_progress']);
 const DETACHED = 'No VS Code window is connected to this session';
+/** The longest a Node timer waits; a longer delay fires at once. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 class Worker {
   sessionId: string | undefined;
@@ -50,7 +55,10 @@ class Worker {
   stopTimer: ReturnType<typeof setTimeout> | undefined;
   readonly exited: Promise<void>;
 
-  constructor(readonly proc: ChildProcess) {
+  /**
+   * How long this process may sit idle with no window before it is stopped; 0 never. Set by each window that attaches.
+   */
+  constructor(readonly proc: ChildProcess, public idleStopMs: number) {
     this.exited = new Promise((resolve) => proc.once('exit', () => resolve()));
   }
 
@@ -228,6 +236,8 @@ export class SessionHost {
     if (socket.destroyed) return this.detach(w, undefined);
     const client: Client = { socket, identity: request.client, initializeIds: new Set() };
     w.client = client;
+    const minutes = request.idleStopMinutes;
+    w.idleStopMs = typeof minutes === 'number' && Number.isFinite(minutes) && minutes >= 0 ? minutes * 60_000 : this.options.idleStopMs;
     this.cancelStop(w);
     socket.on('close', () => this.detach(w, client));
     send(socket, { ev: 'attached' });
@@ -254,7 +264,7 @@ export class SessionHost {
   private spawn(request: AttachRequest, id: string | undefined): Worker {
     const [command, ...args] = request.argv;
     const proc = spawn(command!, args, { cwd: request.cwd, env: request.env, stdio: ['pipe', 'pipe', 'pipe'] });
-    const w = new Worker(proc);
+    const w = new Worker(proc, this.options.idleStopMs);
     this.workers.add(w);
     if (id) this.register(w, id);
     this.options.log(`${id ?? 'new session'}: started pid ${proc.pid} for ${request.client.label}`);
@@ -371,10 +381,11 @@ export class SessionHost {
 
   private scheduleStop(w: Worker): void {
     if (w.client || w.state !== 'idle' || w.stopTimer) return;
+    if (w.idleStopMs === 0 || w.idleStopMs > MAX_TIMER_MS) return;
     w.stopTimer = setTimeout(() => {
       w.stopTimer = undefined;
       if (!w.client && w.state === 'idle') void this.stop(w);
-    }, this.options.idleStopMs);
+    }, w.idleStopMs);
     w.stopTimer.unref();
   }
 

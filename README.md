@@ -129,6 +129,7 @@ pnpm package      # agent-sessions-<version>.vsix
 | `agentSessions.codexHome` | `""` | overrides `$CODEX_HOME` / `~/.codex` |
 | `agentSessions.phoneMode` | `false` | one workbench part at a time, for the window served by `pnpm phone` |
 | `agentSessions.keepSessionsRunning` | `false` | keep Claude Code and Codex panel sessions running when their window closes (below); on in the phone window |
+| `agentSessions.idleStopMinutes` | `10` | minutes an idle Claude Code session with no window is kept before its process stops (below); `0` never |
 
 ## Keeping sessions running
 
@@ -146,6 +147,10 @@ load after installing writes it and the next one uses it.
   are answered with nothing while no window is attached, so the turn does not stall on them.
 - An idle session is not kept: reopening it starts a fresh process with the new window's options, and a detached idle
   process stops after ten minutes. The host exits ten minutes after its last session.
+- `agentSessions.idleStopMinutes` changes those ten minutes (`0` never stops it). A closed laptop is a closed window:
+  VS Code's server drops a disconnected window's extension host after three hours, and an idle session then stops
+  after this long, taking Remote Control's connection with it. The window that last held a session decides, with the
+  value it had when the panel opened.
 - One session, one process. Opening a session another window holds asks **Move Here**; moving it ends it in the other
   window, which says where it went. Without that (the panel's own history list, say) the open is refused with
   "This session is running in …", so the phone and the desktop never run two processes on one conversation.
