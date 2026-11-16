@@ -11,9 +11,12 @@ import type { Tool } from './types.js';
 export interface Task {
   id: string;
   text: string;
-  state: 'open' | 'done';
+  /** `dropped`: abandoned. It stays listed, with why. */
+  state: 'open' | 'done' | 'dropped';
   at: number;
-  doneAt?: number;
+  /** When it was done or dropped, and what the agent said of it: what was delivered, or why it was abandoned. */
+  closedAt?: number;
+  resolution?: string;
 }
 
 export interface Question {
@@ -105,11 +108,16 @@ export function addTask(notes: SessionNotes, text: string, now = Date.now()): Ta
   return task;
 }
 
-export function setTaskDone(notes: SessionNotes, id: string, done: boolean, now = Date.now()): Task {
+/** Close a task as done or dropped, with what there is to say of it, or reopen it, which forgets that. */
+export function setTaskState(notes: SessionNotes, id: string, state: Task['state'], resolution?: string, now = Date.now()): Task {
   const task = find(notes.tasks, id, 'task');
-  task.state = done ? 'done' : 'open';
-  if (done) task.doneAt = now;
-  else delete task.doneAt;
+  task.state = state;
+  delete task.closedAt;
+  delete task.resolution;
+  if (state !== 'open') {
+    task.closedAt = now;
+    if (resolution?.trim()) task.resolution = resolution.trim();
+  }
   return task;
 }
 

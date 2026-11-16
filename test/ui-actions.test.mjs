@@ -319,7 +319,7 @@ test('a hovered Sessions view holds a background update for three seconds, and a
 test('a session lists its questions and tasks under it and counts them on its row, in the chosen details', () => {
   const notes = new Map([['codex:a', {
     seq: 4,
-    tasks: [{ id: 't1', text: 'Create v2 phone engine', state: 'done', at: 1 }, { id: 't4', text: 'Port the guard', state: 'open', at: 4 }],
+    tasks: [{ id: 't0', text: 'Keep Twilio Media', state: 'dropped', resolution: 'Replaced.', at: 0 }, { id: 't1', text: 'Create v2 phone engine', state: 'done', resolution: 'Behind the phoneV2 switch.', at: 1 }, { id: 't4', text: 'Port the guard', state: 'open', at: 4 }],
     questions: [
       { id: 'q2', text: 'Is the old engine kept?', state: 'stale', at: 2 },
       { id: 'q3', text: 'Does it\nhandle barge-in?', state: 'answered', answer: 'Yes.', at: 3, answeredAt: 5 },
@@ -337,7 +337,8 @@ test('a session lists its questions and tasks under it and counts them on its ro
   const [questions, tasks] = provider.getChildren(a);
   assert.deepEqual([questions.label, questions.description, tasks.label, tasks.description], ['Questions', '1 new answer', 'Tasks', '1/2']);
   assert.deepEqual(questions.children.map((n) => [n.label, n.contextValue]), [['Does it handle barge-in?', 'note-question-answered'], ['Is the old engine kept?', 'note-question-stale']], 'an unread answer comes first, a stale question last');
-  assert.deepEqual(tasks.children.map((n) => n.contextValue), ['note-task-open', 'note-task-done']);
+  assert.deepEqual(tasks.children.map((n) => n.contextValue), ['note-task-open', 'note-task-done', 'note-task-dropped'], 'a dropped task stays listed, last and outside the count');
+  assert.match(provider.resolveTreeItem(tasks.children[1], tasks.children[1]).tooltip.value, /Behind the phoneV2 switch\./, 'a closed task says what came of it');
   assert.match(provider.resolveTreeItem(questions.children[0], questions.children[0]).tooltip.value, /Yes\./, 'the answer is in the hover');
 
   provider.setOptions(options({ pinned: new Set(), historyLimit: 10, notes, rowDetails: ['age'] }));

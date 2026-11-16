@@ -23,7 +23,7 @@ import { closeCodexSession } from './close.js';
 import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
 import { NoteItem, ROW_DETAILS, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
-import { markAnswerRead, notesDir, notesFile, readAllNotes, removeNote, setQuestionStale, setTaskDone, updateNotes, watchNotes, type Question, type SessionNotes } from './notes.js';
+import { markAnswerRead, notesDir, notesFile, readAllNotes, removeNote, setQuestionStale, setTaskState, updateNotes, watchNotes, type Question, type SessionNotes, type Task } from './notes.js';
 import { installNotes, notesCommandPath, notesInstalled, uninstallNotes, type NotesInstallPaths } from './notes-install.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
 import { switchCodexAccount } from './codex-accounts-ui.js';
@@ -89,7 +89,7 @@ function readConfig(): Config {
   };
 }
 
-/** A recorded question with its answer, as a read-only page: `agent-sessions-note:/<tool>/<id>/<question id>.md`. */
+/** A recorded question with its answer, or a task with its resolution, as a read-only page: `agent-sessions-note:/<tool>/<id>/<note id>.md`. */
 const NOTE_SCHEME = 'agent-sessions-note';
 
 /** Read-only transcript documents: `agent-sessions-transcript:/<tool>/<id>/<title>.md`. */
@@ -664,6 +664,9 @@ export function activate(context: vscode.ExtensionContext): void {
     provider.notesChanged(false);
     noteChanged.fire(noteUri(item));
   };
+  /** What came of a task, in a person's words; undefined when they cancelled. */
+  const askResolution = async (title: string, value: string): Promise<string | undefined> =>
+    (await vscode.window.showInputBox({ title, value, prompt: 'What was delivered, or why it was dropped', validateInput: (v) => (v.trim() ? undefined : 'Say what came of it') }))?.trim();
   const noteItemsOf = (arg: unknown, selected: unknown): NoteItem[] => rowsOf(arg, selected).filter((x): x is NoteItem => x instanceof NoteItem);
   // The agents' side of the notes is opt-in (notes-install.ts). Once installed, its command follows this install's paths.
   const notesPaths = (): NotesInstallPaths => ({ claudeHome: config.claudeHome, codexHome: config.codexHome, command: notesCommandPath() });
@@ -911,10 +914,20 @@ export function activate(context: vscode.ExtensionContext): void {
       onDidChange: noteChanged.event,
       provideTextDocumentContent(uri) {
         const [tool, id, file] = uri.path.split('/').filter(Boolean);
-        const q = notes.get(`${tool}:${id}`)?.questions.find((x) => `${x.id}.md` === file);
-        if (!q) return '# This question is no longer recorded.\n';
+        const mine = notes.get(`${tool}:${id}`);
         const title = latestSessions.find((x) => x.tool === tool && x.id === id)?.title;
         const when = (at: number) => new Date(at).toLocaleString();
+        const t = mine?.tasks.find((x) => `${x.id}.md` === file);
+        if (t) {
+          return [
+            `# ${t.text}`,
+            `Task added ${when(t.at)}${title ? ` in “${title}”` : ''}`,
+            t.state === 'open' ? '_Not done yet._' : `## ${t.state === 'done' ? 'Done' : 'Dropped'}\n\n${t.resolution ?? '_Nothing was said of it._'}\n\n_${when(t.closedAt ?? t.at)}_`,
+            '',
+          ].join('\n\n');
+        }
+        const q = mine?.questions.find((x) => `${x.id}.md` === file);
+        if (!q) return '# This is no longer recorded.\n';
         return [
           `# ${q.text}`,
           `Asked ${when(q.at)}${title ? ` in “${title}”` : ''}${q.state === 'stale' ? ' · marked stale' : ''}`,
@@ -924,19 +937,32 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     }),
     vscode.commands.registerCommand('agentSessions.note.open', async (arg: unknown) => {
-      if (!(arg instanceof NoteItem) || arg.kind !== 'question') return;
+      if (!(arg instanceof NoteItem)) return;
       await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(noteUri(arg)), { preview: true });
+      if (arg.kind !== 'question') return;
       const q = arg.note as Question;
       if (q.state === 'answered' && !q.read) changeNote(arg, (n) => void markAnswerRead(n, q.id));
     }),
-    vscode.commands.registerCommand('agentSessions.note.done', (arg: unknown, selected: unknown) => {
-      for (const item of noteItemsOf(arg, selected)) if (item.kind === 'task') changeNote(item, (n) => void setTaskDone(n, item.note.id, true));
+    // A closed task always says what came of it, whoever closes it; one text serves every task selected.
+    vscode.commands.registerCommand('agentSessions.note.done', async (arg: unknown, selected: unknown) => {
+      const tasks = noteItemsOf(arg, selected).filter((item) => item.kind === 'task');
+      if (!tasks.length) return;
+      const resolution = await askResolution(tasks.length === 1 ? `Done: ${tasks[0]!.note.text}` : `Done: ${tasks.length} tasks`, '');
+      if (resolution === undefined) return;
+      for (const item of tasks) changeNote(item, (n) => void setTaskState(n, item.note.id, 'done', resolution));
+    }),
+    vscode.commands.registerCommand('agentSessions.note.editResolution', async (arg: unknown) => {
+      if (!(arg instanceof NoteItem) || arg.kind !== 'task') return;
+      const task = arg.note as Task;
+      if (task.state === 'open') return;
+      const resolution = await askResolution(`${task.state === 'done' ? 'Done' : 'Dropped'}: ${task.text}`, task.resolution ?? '');
+      if (resolution !== undefined) changeNote(arg, (n) => void setTaskState(n, task.id, task.state, resolution, task.closedAt));
     }),
     vscode.commands.registerCommand('agentSessions.note.stale', (arg: unknown, selected: unknown) => {
       for (const item of noteItemsOf(arg, selected)) if (item.kind === 'question') changeNote(item, (n) => void setQuestionStale(n, item.note.id, true));
     }),
     vscode.commands.registerCommand('agentSessions.note.reopen', (arg: unknown, selected: unknown) => {
-      for (const item of noteItemsOf(arg, selected)) changeNote(item, (n) => void (item.kind === 'task' ? setTaskDone(n, item.note.id, false) : setQuestionStale(n, item.note.id, false)));
+      for (const item of noteItemsOf(arg, selected)) changeNote(item, (n) => void (item.kind === 'task' ? setTaskState(n, item.note.id, 'open') : setQuestionStale(n, item.note.id, false)));
     }),
     vscode.commands.registerCommand('agentSessions.note.remove', (arg: unknown, selected: unknown) => {
       for (const item of noteItemsOf(arg, selected)) changeNote(item, (n) => removeNote(n, item.kind, item.note.id));

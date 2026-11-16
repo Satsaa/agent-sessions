@@ -155,26 +155,25 @@ export class NoteItem extends vscode.TreeItem implements HoverTooltip {
     const faded = new vscode.ThemeColor('disabledForeground');
     this.iconPath =
       note.state === 'done' ? new vscode.ThemeIcon('pass', faded)
-      : note.state === 'stale' ? new vscode.ThemeIcon('circle-slash', faded)
+      : note.state === 'stale' || note.state === 'dropped' ? new vscode.ThemeIcon('circle-slash', faded)
       : note.state === 'answered' ? (unread ? new vscode.ThemeIcon('mail', new vscode.ThemeColor('charts.green')) : new vscode.ThemeIcon('mail-read', faded))
       : kind === 'question' ? new vscode.ThemeIcon('question', new vscode.ThemeColor('charts.yellow'))
       : new vscode.ThemeIcon('circle-large-outline');
     const answeredAt = kind === 'question' ? (note as Question).answeredAt : undefined;
     this.description =
-      note.state === 'done' ? 'done'
-      : note.state === 'stale' ? 'stale'
+      note.state === 'done' || note.state === 'dropped' || note.state === 'stale' ? note.state
       : note.state === 'answered' ? `${unread ? 'new answer' : 'answered'} · ${relativeTime(answeredAt ?? note.at)}`
       : relativeTime(note.at);
     this.tooltipOnHover = () => {
       const md = new vscode.MarkdownString(undefined, true);
       md.appendMarkdown(`**${escapeMd(note.text)}**\n\n`);
-      const answer = kind === 'question' ? (note as Question).answer : undefined;
-      if (answer !== undefined) md.appendMarkdown(`${answer}\n\n`);
+      const said = kind === 'question' ? (note as Question).answer : (note as Task).resolution;
+      if (said !== undefined) md.appendMarkdown(`${said}\n\n`);
       md.appendMarkdown(`$(clock) ${new Date(note.at).toLocaleString()} · \`${note.id}\``);
       return md;
     };
-    // A question opens as a page with its answer, which also marks the answer read.
-    if (kind === 'question') this.command = { command: 'agentSessions.note.open', title: 'Open Question', arguments: [this] };
+    // A note opens as a page with its answer or resolution; opening a question marks its answer read.
+    this.command = { command: 'agentSessions.note.open', title: 'Open', arguments: [this] };
   }
 }
 
@@ -191,6 +190,8 @@ export class NoteGroupItem extends vscode.TreeItem {
 
 /** What is unanswered or unread first, then what is settled, each oldest first. */
 const QUESTION_ORDER: Record<Question['state'], number> = { open: 1, answered: 2, stale: 3 };
+/** A dropped task is no part of the count, and comes last. */
+const TASK_ORDER: Record<Task['state'], number> = { open: 0, done: 1, dropped: 2 };
 
 function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix: string): NoteGroupItem[] {
   if (!notes) return [];
@@ -203,8 +204,8 @@ function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix:
     groups.push(new NoteGroupItem('question', rows.map((q) => new NoteItem(session, 'question', q, idPrefix)), summary, idPrefix));
   }
   if (notes.tasks.length) {
-    const rows = [...notes.tasks].sort((a, b) => Number(a.state === 'done') - Number(b.state === 'done') || a.at - b.at);
-    groups.push(new NoteGroupItem('task', rows.map((t) => new NoteItem(session, 'task', t, idPrefix)), `${counts.tasksDone}/${notes.tasks.length}`, idPrefix));
+    const rows = [...notes.tasks].sort((a, b) => TASK_ORDER[a.state] - TASK_ORDER[b.state] || a.at - b.at);
+    groups.push(new NoteGroupItem('task', rows.map((t) => new NoteItem(session, 'task', t, idPrefix)), `${counts.tasksDone}/${counts.tasksOpen + counts.tasksDone}`, idPrefix));
   }
   return groups;
 }

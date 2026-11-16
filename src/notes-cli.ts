@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import {
-  NoteError, addQuestion, addTask, answerQuestion, notesDir, notesFile, readNotes, removeNote, setQuestionStale, setTaskDone, updateNotes,
+  NoteError, addQuestion, addTask, answerQuestion, notesDir, notesFile, readNotes, setQuestionStale, setTaskState, updateNotes,
   type SessionNotes,
 } from './notes.js';
 import type { Tool } from './types.js';
@@ -13,8 +13,8 @@ import type { Tool } from './types.js';
 const USAGE = `Records this session's tasks and questions; the user sees them listed under the session.
 
   agent-sessions task add <text>          a deliverable, e.g. "Create v2 phone engine"
-  agent-sessions task done <id>
-  agent-sessions task drop <id>           abandoned: removes it
+  agent-sessions task done <id> <what was delivered>
+  agent-sessions task drop <id> <why it was abandoned>
   agent-sessions question add <text>      a question the user asked
   agent-sessions question answer <id> <answer>
   agent-sessions question stale <id>      no longer worth an answer
@@ -99,10 +99,10 @@ export function runCommand(file: string, args: readonly string[], stdin: () => s
       change((n) => `${addTask(n, text(rest, 'the task')).id} added`);
       break;
     case 'task done':
-      change((n) => `${setTaskDone(n, id(rest[0]), true).id} done`);
+      change((n) => `${setTaskState(n, id(rest[0]), 'done', text(rest.slice(1), 'what was delivered (one or two lines the user reads under the task)')).id} done`);
       break;
     case 'task drop':
-      change((n) => (removeNote(n, 'task', id(rest[0])), `${rest[0]} dropped`));
+      change((n) => `${setTaskState(n, id(rest[0]), 'dropped', text(rest.slice(1), 'why the task was abandoned')).id} dropped`);
       break;
     case 'question add':
       change((n) => `${addQuestion(n, text(rest, 'the question')).id} added; answer it with: agent-sessions question answer <id> <answer>`);

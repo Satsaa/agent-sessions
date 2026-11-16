@@ -26,7 +26,9 @@ export function instructionBlock(command: string): string {
 
 \`${command}\` records this session's tasks and the user's questions. The user sees them listed under the session, outside the chat, so nothing asked or agreed gets lost in a long conversation. Run \`${command} help\` for the commands.
 
-- **A task is a deliverable the user would name**, such as "Create v2 phone engine": never a step of one, and not your own plan or todo list. Most sessions have one to three. Add it when the work is agreed (\`task add "<name>"\`), mark it when it is finished and checked (\`task done <id>\`), and \`task drop <id>\` one that was abandoned.
+This applies to every session and is not optional: a task or a question left unrecorded is one the user loses track of. When either rule below fits, record it before doing anything else.
+
+- **A task is a deliverable the user would name**, such as "Create v2 phone engine": never a step of one, and not your own plan or todo list. Most sessions have one to three. Add it when the work is agreed (\`task add "<name>"\`). Close it when it is finished and checked, saying in a line or two what was delivered and where (\`task done <id> "<what was delivered>"\`), or when it is abandoned, saying why (\`task drop <id> "<why>"\`).
 - **A question is something the user asked that could get lost**: asked beside other work, in the middle of a task, or not answered in the same reply. Record it in their words (\`question add "<question>"\`). A question you answer at once in a short reply needs no record.
 - **Answer a recorded question in both places**: write the answer in your reply, and record the same answer with \`question answer <id> -\`, the text on standard input. The user reads recorded answers on their own, so the text must make sense without the conversation.
 - The user can record a question themselves with \`/question\`. Do not expect them to: recording what they ask is your job either way.
@@ -57,7 +59,7 @@ The user gives this session a task:
 
 $ARGUMENTS
 
-Record it first under a short name of the deliverable: \`${command} task add "<name>"\`. Then do it, and run \`${command} task done <id>\` once it is finished and checked.
+Record it first under a short name of the deliverable: \`${command} task add "<name>"\`. Then do it, and run \`${command} task done <id> "<what was delivered>"\` once it is finished and checked.
 `,
   };
 }

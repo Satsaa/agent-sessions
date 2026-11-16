@@ -13,7 +13,7 @@ await build({
   stdin: { contents: `export * from './src/notes.ts'; export * from './src/notes-cli.ts'; export * from './src/notes-install.ts';`, resolveDir: process.cwd() },
   bundle: true, platform: 'node', format: 'cjs', outfile: bundle,
 });
-const { runCommand, sessionOf, readNotes, notesFile, noteCounts, updateNotes, setQuestionStale, markAnswerRead, NoteError, installNotes, uninstallNotes, notesInstalled } = createRequire(import.meta.url)(bundle);
+const { runCommand, sessionOf, readNotes, notesFile, noteCounts, updateNotes, setQuestionStale, setTaskState, removeNote, markAnswerRead, NoteError, installNotes, uninstallNotes, notesInstalled } = createRequire(import.meta.url)(bundle);
 after(() => rm(directory, { recursive: true, force: true }));
 const noStdin = () => { throw new Error('standard input was not expected'); };
 
@@ -47,9 +47,16 @@ test('a question is asked, answered, read and marked stale, and counts on its ro
   updateNotes(file, (n) => setQuestionStale(n, 'q2', false));
   assert.equal(readNotes(file).questions[0].state, 'answered', 'reopened, it is where it was: answered, with its answer');
 
-  runCommand(file, ['task', 'done', 't1'], noStdin);
+  assert.throws(() => runCommand(file, ['task', 'done', 't1'], noStdin), /what was delivered/, 'a task is closed with what there is to say of it');
+  runCommand(file, ['task', 'done', 't1', 'The', 'cascade', 'engine,', 'behind', 'the', 'phoneV2', 'switch.'], noStdin);
+  assert.deepEqual([readNotes(file).tasks[0].state, readNotes(file).tasks[0].resolution], ['done', 'The cascade engine, behind the phoneV2 switch.']);
   assert.match(runCommand(file, ['list'], noStdin), /t1 \[done\] Create v2 phone engine\nQuestions\n {2}q2 \[answered\]/);
-  assert.throws(() => runCommand(file, ['task', 'done', 't9'], noStdin), /no task t9 in this session \(it has t1\)/);
+  assert.throws(() => runCommand(file, ['task', 'done', 't9', 'x'], noStdin), /no task t9 in this session \(it has t1\)/);
+  assert.throws(() => runCommand(file, ['task', 'drop', 't1'], noStdin), /why the task was abandoned/);
+  runCommand(file, ['task', 'drop', 't1', '-'], () => 'Replaced by the vendor’s engine.');
+  assert.deepEqual([readNotes(file).tasks[0].state, noteCounts(readNotes(file)).tasksDone], ['dropped', 0], 'a dropped task stays listed with why, and counts nowhere');
+  updateNotes(file, (n) => setTaskState(n, 't1', 'open'));
+  assert.equal(readNotes(file).tasks[0].resolution, undefined, 'reopened, it has no resolution');
   assert.throws(() => runCommand(file, ['question', 'add'], noStdin), NoteError);
   assert.throws(() => runCommand(file, ['tasks'], noStdin), /agent-sessions task add/, 'an unknown command prints the usage');
 });
@@ -58,10 +65,10 @@ test('a removed note’s id is not given to the next one, and an emptied file go
   const file = notesFile(join(directory, 'b'), 'codex', 's2');
   runCommand(file, ['task', 'add', 'one'], noStdin);
   runCommand(file, ['task', 'add', 'two'], noStdin);
-  runCommand(file, ['task', 'drop', 't2'], noStdin);
+  updateNotes(file, (n) => removeNote(n, 'task', 't2'));
   assert.match(runCommand(file, ['task', 'add', 'three'], noStdin), /^t3 /, 'an agent holding t2 must not close another task with it');
-  runCommand(file, ['task', 'drop', 't1'], noStdin);
-  runCommand(file, ['task', 'drop', 't3'], noStdin);
+  updateNotes(file, (n) => removeNote(n, 'task', 't1'));
+  updateNotes(file, (n) => removeNote(n, 'task', 't3'));
   assert.equal(existsSync(file), false);
 });
 

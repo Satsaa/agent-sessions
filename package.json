@@ -387,7 +387,7 @@
       },
       {
         "command": "agentSessions.note.open",
-        "title": "Open Question",
+        "title": "Open Task or Question",
         "category": "Agent Sessions"
       },
       {
@@ -423,6 +423,12 @@
         "command": "agentSessions.notes.uninstall",
         "title": "Remove Task and Question Tools for Agents",
         "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.note.editResolution",
+        "title": "Edit Resolution…",
+        "category": "Agent Sessions",
+        "icon": "$(edit)"
       }
     ],
     "menus": {
@@ -733,12 +739,12 @@
         },
         {
           "command": "agentSessions.note.reopen",
-          "when": "view == agentSessions.list && viewItem =~ /^note-(task-done|question-stale)$/ && !agentSessions.phoneMode",
+          "when": "view == agentSessions.list && viewItem =~ /^note-(task-done|task-dropped|question-stale)$/ && !agentSessions.phoneMode",
           "group": "inline@3"
         },
         {
           "command": "agentSessions.note.reopen",
-          "when": "view == agentSessions.list && viewItem =~ /^note-(task-done|question-stale)$/",
+          "when": "view == agentSessions.list && viewItem =~ /^note-(task-done|task-dropped|question-stale)$/",
           "group": "1_note@3"
         },
         {
@@ -750,6 +756,16 @@
           "command": "agentSessions.note.remove",
           "when": "view == agentSessions.list && viewItem =~ /^note-/",
           "group": "1_note@4"
+        },
+        {
+          "command": "agentSessions.note.editResolution",
+          "when": "view == agentSessions.list && viewItem =~ /^note-task-(done|dropped)$/ && !agentSessions.phoneMode",
+          "group": "inline@0"
+        },
+        {
+          "command": "agentSessions.note.editResolution",
+          "when": "view == agentSessions.list && viewItem =~ /^note-task-(done|dropped)$/ && view not in agentSessions.multiSelect",
+          "group": "1_note@0"
         },
         {
           "command": "agentSessions.rowActions",
@@ -888,6 +904,10 @@
         },
         {
           "command": "agentSessions.note.remove",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.note.editResolution",
           "when": "false"
         }
       ]
