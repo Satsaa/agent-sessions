@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.30",
+  "version": "0.8.31",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -1066,6 +1066,13 @@
           "default": false,
           "scope": "machine",
           "markdownDescription": "Keep panel sessions running when their window closes, the phone sleeps or the VS Code server restarts. Claude Code sessions run under the Agent Sessions session host, which also keeps a session to one window at a time (sets `claudeCode.claudeProcessWrapper`); Codex sessions run in Codex's own app-server daemon, which every window shares (sets `chatgpt.cliExecutable`). Turn it on in every server that opens sessions, the phone server included, and reload windows opened before."
+        },
+        "agentSessions.idleStopMinutes": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "scope": "machine",
+          "markdownDescription": "With `#agentSessions.keepSessionsRunning#`: minutes a Claude Code session may sit idle with no window connected before its process is stopped (reopening it resumes it from its transcript). `0` never stops it. A session's process is also what Remote Control reaches, so raise this to keep idle sessions reachable while the laptop is closed; each one holds its memory until then. Applies to sessions opened or reopened after the change."
         },
         "agentSessions.usage.enabled": {
           "type": "boolean",

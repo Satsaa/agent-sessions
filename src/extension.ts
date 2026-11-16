@@ -4,7 +4,7 @@ import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
 import { PhoneLayout, windowFolder } from './phone.js';
 import { rowActionsFor } from './row-actions.js';
-import { applyKeepSessionsRunning, writeNodeLauncher } from './session-host.js';
+import { applyKeepSessionsRunning, publishIdleStop, writeNodeLauncher } from './session-host.js';
 import {
   type ClaudePermissionSettings,
   MIRRORED_CLAUDE_SETTINGS,
@@ -53,6 +53,7 @@ interface Config {
   parentMarker: RegExp | undefined;
   phoneMode: boolean;
   keepSessionsRunning: boolean;
+  idleStopMinutes: number;
   usage: { enabled: boolean; claudeNetwork: boolean; codexNetwork: boolean; refreshInterval: number };
   view: Omit<ViewOptions, 'locallyArchived' | 'pinned' | 'backlog' | 'open' | 'search' | 'notes'>;
 }
@@ -67,6 +68,7 @@ function readConfig(): Config {
     parentMarker: parentMarker(c.get<string>('parentSessionMarker', '')),
     phoneMode: c.get<boolean>('phoneMode', false),
     keepSessionsRunning: c.get<boolean>('keepSessionsRunning', false),
+    idleStopMinutes: Math.max(0, c.get<number>('idleStopMinutes', 10)),
     usage: {
       enabled: c.get<boolean>('usage.enabled', true),
       claudeNetwork: c.get<boolean>('usage.claudeNetwork', true),
@@ -104,6 +106,7 @@ export function activate(context: vscode.ExtensionContext): void {
       output.appendLine(`keepSessionsRunning: ${err instanceof Error ? err.message : String(err)}`),
     );
   void keepSessionsRunning();
+  publishIdleStop(config.idleStopMinutes);
   // Desktop windows publish Claude Code's permission settings; the phone, another install, takes them (claude-modes.ts).
   const claudeSettingsPath = claudeSettingsFile();
   const mirrorClaudeSettings = async () => {
@@ -554,6 +557,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const wasPhone = config.phoneMode;
       config = readConfig();
       if (config.keepSessionsRunning !== wasKeeping) void keepSessionsRunning();
+      publishIdleStop(config.idleStopMinutes);
       if (config.phoneMode !== wasPhone) void syncClaudeSettings();
       syncContexts();
       provider.setOptions(options());

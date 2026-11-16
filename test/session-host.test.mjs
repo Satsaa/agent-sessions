@@ -38,9 +38,9 @@ after(async () => {
 const PANEL_ARGS = ['--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json'];
 
 /** A Claude panel in window `label`, started through the wrapper the way the extension starts it. */
-function panel(label, extra = []) {
+function panel(label, extra = [], env = {}) {
   const child = spawn(process.execPath, [wrapper, FAKE, ...PANEL_ARGS, ...extra], {
-    env: { ...process.env, HOME: dir, AGENT_SESSIONS_CLIENT: label, FAKE_CLAUDE_LOG: log },
+    env: { ...process.env, HOME: dir, AGENT_SESSIONS_CLIENT: label, FAKE_CLAUDE_LOG: log, ...env },
   });
   const messages = [];
   let stderr = '';
@@ -212,4 +212,21 @@ test('a panel closed before its first message leaves no process behind', async (
   await a.close();
   await settle();
   assert.equal(count(), before, 'nothing can reopen a session that never announced its id, so it stops at once');
+});
+
+test('an idle session with no window is stopped after the time its window asked for, or never at 0', async () => {
+  const brief = panel('the desktop', [], { AGENT_SESSIONS_IDLE_STOP_MINUTES: '0.002' });
+  brief.say('sleep:0');
+  const briefId = await sessionOf(brief);
+  await brief.waitFor(isResult);
+  const kept = panel('the desktop', [], { AGENT_SESSIONS_IDLE_STOP_MINUTES: '0' });
+  kept.say('sleep:0');
+  const keptId = await sessionOf(kept);
+  await kept.waitFor(isResult);
+  await brief.close();
+  await kept.close();
+  await new Promise((r) => setTimeout(r, 1000));
+  const hosted = host.sessions().map((s) => s.sessionId);
+  assert.ok(!hosted.includes(briefId), 'the window\'s own idle stop time applies, not the host\'s default');
+  assert.ok(hosted.includes(keptId), '0 keeps an idle session until a window reopens it');
 });
