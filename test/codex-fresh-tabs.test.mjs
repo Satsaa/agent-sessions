@@ -56,7 +56,7 @@ await build({
     b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'module.exports = globalThis.__agentSessionsVSCode;' }));
   } }],
 });
-const { freshCodexTabs, restoreFreshCodexTabs, newCodexPanelUri } = createRequire(import.meta.url)(bundle);
+const { freshCodexTabs, restoreFreshCodexTabs, newCodexPanelUri, existingClaudeTab } = createRequire(import.meta.url)(bundle);
 after(() => rm(directory, { recursive: true, force: true }));
 
 const session = (id, title) => ({ tool: 'codex', id, title });
@@ -94,4 +94,14 @@ test('each new Codex panel gets its own tab, which is still remembered as a fres
   assert.equal(first.path, '/extension/panel/new', 'the route stays Codex’s new-thread panel');
   groups.splice(0, groups.length, { viewColumn: 1, tabs: [{ input: new TabInputCustom(first, 'chatgpt.conversationEditor'), label: 'Fix the build' }] });
   assert.deepEqual(freshCodexTabs([session('bbb', 'Fix the build')]), [{ column: 1, index: 0, threadId: 'bbb' }], 'a new panel’s thread comes back after a reload');
+});
+
+test('a new panel still showing its vendor’s name is no session’s tab', () => {
+  const tab = (label) => ({ input: new TabInputWebview('claudeVSCodePanel'), label });
+  groups.splice(0, groups.length, { viewColumn: 1, tabs: [tab('Claude Code'), tab('Claude Code hooks for the mail')] });
+  const claude = (title) => ({ tool: 'claude', id: title, title });
+  assert.equal(existingClaudeTab(claude('Claude Code hooks for the mail delivery'))?.label, 'Claude Code hooks for the mail', 'the untitled panel is passed over for the session’s own, truncated tab');
+  groups[0].tabs.pop();
+  assert.equal(existingClaudeTab(claude('Claude Code hooks for the mail delivery')), undefined, 'a title starting with the panel’s default name does not make the new panel its tab');
+  assert.equal(existingClaudeTab(claude('Claude Code')), undefined, 'nor does a session named exactly that');
 });

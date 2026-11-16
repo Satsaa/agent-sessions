@@ -182,16 +182,21 @@ function findWorktreeTop(cwd: string): string | undefined {
   return undefined;
 }
 
+/** What a vendor's panel tab is called before its session has a title. */
+const UNTITLED_TAB_LABELS = new Set(['claude code', 'codex', 'new thread']);
+
 /**
  * Whether a tab label names this session. The vendor extensions truncate (Codex appends "…", Claude cuts at 200) and
  * trim differently from our own title cleaning, so compare on normalised text and accept either being a prefix of
- * the other once at least a few characters agree.
+ * the other once at least a few characters agree. A tab still showing a vendor's own name is a new session with no
+ * title yet: it names no session, least of all one whose title happens to start with those words.
  */
 export function titleMatchesLabel(title: string, label: string): boolean {
   const norm = (s: string) => s.replace(/\u2026$|\.\.\.$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
   const a = norm(title);
   const b = norm(label);
   if (!a || !b) return false;
+  if (UNTITLED_TAB_LABELS.has(b)) return false;
   if (a === b) return true;
   const shorter = a.length < b.length ? a : b;
   const longer = shorter === a ? b : a;
