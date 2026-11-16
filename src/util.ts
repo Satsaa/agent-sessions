@@ -185,21 +185,27 @@ function findWorktreeTop(cwd: string): string | undefined {
 /** What a vendor's panel tab is called before its session has a title. */
 const UNTITLED_TAB_LABELS = new Set(['claude code', 'codex', 'new thread']);
 
+/** Claude Code cuts a long tab title without marking it; a whole title this long being another's prefix is not a risk. */
+const UNMARKED_CUT_LENGTH = 100;
+
 /**
- * Whether a tab label names this session. The vendor extensions truncate (Codex appends "…", Claude cuts at 200) and
+ * Whether a tab label names this session. The vendor extensions truncate (Codex appends "…", Claude cuts at 200 unmarked) and
  * trim differently from our own title cleaning, so compare on normalised text and accept either being a prefix of
- * the other once at least a few characters agree. A tab still showing a vendor's own name is a new session with no
- * title yet: it names no session, least of all one whose title happens to start with those words.
+ * the other when the shorter one was cut: it ends in an ellipsis, as ours and Codex's do, or is long enough to be
+ * Claude's unmarked cut. A short whole title is not a cut: tab "HobbyFactory" is not "Hobbyfactory feedback (#340)".
+ * A tab still showing a vendor's own name is a new session with no title yet: it names no session, least of all one
+ * whose title happens to start with those words.
  */
 export function titleMatchesLabel(title: string, label: string): boolean {
-  const norm = (s: string) => s.replace(/\u2026$|\.\.\.$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const ellipsis = /(\u2026|\.\.\.)\s*$/;
+  const norm = (s: string) => s.trim().replace(ellipsis, '').replace(/\s+/g, ' ').trim().toLowerCase();
   const a = norm(title);
   const b = norm(label);
   if (!a || !b) return false;
   if (UNTITLED_TAB_LABELS.has(b)) return false;
   if (a === b) return true;
-  const shorter = a.length < b.length ? a : b;
-  const longer = shorter === a ? b : a;
-  return shorter.length >= 8 && longer.startsWith(shorter);
+  const [shorter, longer, raw] = a.length < b.length ? [a, b, title] : [b, a, label];
+  const cut = ellipsis.test(raw) || shorter.length >= UNMARKED_CUT_LENGTH;
+  return cut && shorter.length >= 8 && longer.startsWith(shorter);
 }
 

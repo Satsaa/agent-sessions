@@ -98,9 +98,9 @@ test('each new Codex panel gets its own tab, which is still remembered as a fres
 
 test('a new panel still showing its vendor’s name is no session’s tab', () => {
   const tab = (label) => ({ input: new TabInputWebview('claudeVSCodePanel'), label });
-  groups.splice(0, groups.length, { viewColumn: 1, tabs: [tab('Claude Code'), tab('Claude Code hooks for the mail')] });
+  groups.splice(0, groups.length, { viewColumn: 1, tabs: [tab('Claude Code'), tab('Claude Code hooks for the mail delivery')] });
   const claude = (title) => ({ tool: 'claude', id: title, title });
-  assert.equal(existingClaudeTab(claude('Claude Code hooks for the mail delivery'))?.label, 'Claude Code hooks for the mail', 'the untitled panel is passed over for the session’s own, truncated tab');
+  assert.equal(existingClaudeTab(claude('Claude Code hooks for the mail delivery'))?.label, 'Claude Code hooks for the mail delivery', 'the untitled panel is passed over for the session’s own tab');
   groups[0].tabs.pop();
   assert.equal(existingClaudeTab(claude('Claude Code hooks for the mail delivery')), undefined, 'a title starting with the panel’s default name does not make the new panel its tab');
   assert.equal(existingClaudeTab(claude('Claude Code')), undefined, 'nor does a session named exactly that');

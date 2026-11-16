@@ -74,6 +74,10 @@ test('tab labels match titles across the vendors’ truncation and whitespace di
   assert.ok(titleMatchesLabel('Fix the deploy pipeline for staging', 'Fix the deploy pipeline…'), 'Codex ellipsis truncation');
   assert.ok(titleMatchesLabel('Fix  the deploy\npipeline', 'fix the deploy pipeline'), 'whitespace and case');
   assert.ok(!titleMatchesLabel('Fix', 'Fix the deploy'), 'a short prefix is not evidence');
-  assert.ok(titleMatchesLabel('Fix the deploy pipeline', 'Fix the deploy pipeline for prod, then dev'), 'our cleaned title may be the shorter side');
+  assert.ok(titleMatchesLabel('Fix the deploy pipeline…', 'Fix the deploy pipeline for prod, then dev'), 'our cut title may be the shorter side');
+  assert.ok(!titleMatchesLabel('Hobbyfactory feedback (#340): catalogue product links and …', 'HobbyFactory'), 'a whole short title is not a cut of a longer one');
+  assert.ok(!titleMatchesLabel('HobbyFactory', 'Hobbyfactory feedback (#340): catalogue product links'), 'nor the other way round');
+  const long = 'Read the deploy logs '.repeat(10);
+  assert.ok(titleMatchesLabel(long + 'and fix the staging pipeline', long), 'Claude cuts a long title without an ellipsis');
   assert.ok(!titleMatchesLabel('Fix the deploy pipeline', 'Fix the deployment now'), 'sharing a prefix is not a match');
 });
