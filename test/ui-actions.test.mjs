@@ -284,3 +284,34 @@ test('a subagent of another agent’s session nests under that session, in the c
   const [row] = provider.getChildren()[0].children;
   assert.deepEqual([row.collapsibleState, row.children[0].collapsibleState], [1, 2], 'the thread opens collapsed, and everything inside it is expanded');
 });
+
+test('a hovered Sessions view holds a background update for three seconds, and a person’s own change for none', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  let fired = 0;
+  const provider = new SessionsProvider(options({ pinned: new Set(), historyLimit: 10 }), () => {});
+  provider.changed.fire = () => { fired++; };
+  provider.setSessions([session('a')]);
+  assert.equal(fired, 1, 'nothing is hovered, so the rows show at once');
+  const [history] = provider.getChildren();
+  const row = history.children[0];
+  assert.equal(row.tooltip, undefined, 'the tooltip is left for the hover to ask for: that request is the hover signal');
+  assert.match(provider.resolveTreeItem(row, row).tooltip.value, /Stopped/);
+
+  provider.setSessions([session('a'), session('b')]);
+  t.mock.timers.tick(2999);
+  assert.equal(fired, 1, 'a session appearing must not move rows under the pointer');
+  provider.resolveTreeItem(history, history);
+  provider.setSessions([session('a'), session('b'), session('c')]);
+  t.mock.timers.tick(2999);
+  assert.equal(fired, 1, 'reaching another row starts the three seconds again');
+  t.mock.timers.tick(1);
+  assert.equal(fired, 2, 'the held changes arrive as one update');
+  assert.equal(provider.getChildren()[0].children.length, 3);
+
+  provider.resolveTreeItem(history, history);
+  provider.setSessions([session('a')]);
+  provider.setOptions(options({ pinned: new Set(), historyLimit: 10, search: 'a' }));
+  assert.equal(fired, 3, 'what a person changes shows at once, hovered or not');
+  t.mock.timers.tick(3000);
+  assert.equal(fired, 3, 'and takes the held update with it');
+});

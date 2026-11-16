@@ -120,6 +120,8 @@ export function matchesSearch(s: Session, search: string): boolean {
 }
 
 export class SessionItem extends vscode.TreeItem {
+  readonly tooltipOnHover: () => vscode.MarkdownString;
+
   constructor(
     public readonly session: Session,
     public readonly archivedHere: boolean,
@@ -138,10 +140,14 @@ export class SessionItem extends vscode.TreeItem {
     this.id = `${idPrefix}${session.tool}:${session.id}${idSuffix}`;
     this.iconPath = stateIcon(session.tool, session.state, archived);
     this.description = `${pinned ? '📌 ' : ''}${describe(session, showTool, stats)}`;
-    this.tooltip = tooltipFor(session, archived, stats);
-    if (pinned) this.tooltip.appendMarkdown('\n\n$(pin) Pinned to Active');
-    if (backlog) this.tooltip.appendMarkdown('\n\n$(inbox) In Backlog');
-    if (session.detached) this.tooltip.appendMarkdown('\n\n$(debug-disconnect) Detached from the session that started it');
+    // Built on hover (`resolveTreeItem`), which is also how the view learns the pointer is over it.
+    this.tooltipOnHover = () => {
+      const tooltip = tooltipFor(session, archived, stats);
+      if (pinned) tooltip.appendMarkdown('\n\n$(pin) Pinned to Active');
+      if (backlog) tooltip.appendMarkdown('\n\n$(inbox) In Backlog');
+      if (session.detached) tooltip.appendMarkdown('\n\n$(debug-disconnect) Detached from the session that started it');
+      return tooltip;
+    };
     // `linked`: the parent comes from a marker (only then is `parentTool` set), so the row can be detached.
     const linked = session.subagent && session.parentTool !== undefined;
     this.contextValue = ['session', session.tool, archived ? 'archived' : '', pinned ? 'pinned' : '', backlog ? 'backlog' : '', isLive(session.state) ? 'live' : 'stopped', session.subagent ? 'subagent' : '', linked ? 'linked' : '', session.detached ? 'detached' : '']
@@ -171,6 +177,15 @@ export class GroupItem extends vscode.TreeItem {
 }
 
 type Node = SessionItem | GroupItem;
+
+/** How long the view keeps still after the pointer reaches a row, so a row is not moved from under a click. */
+const HOVER_HOLD_MS = 3000;
+
+/** Fill in a hovered row's tooltip. */
+export function resolveTooltip(item: vscode.TreeItem, element: unknown): vscode.TreeItem {
+  if (element instanceof SessionItem) item.tooltip = element.tooltipOnHover();
+  return item;
+}
 
 const STATE_LABEL: Record<SessionState, string> = {
   running: 'Working',
@@ -278,6 +293,9 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   /** Whether the first scan has landed, and whether the view has been told (see `announceLoaded`). */
   private scanned = false;
   private announced = false;
+  /** When the pointer last reached a row, and the update waiting for it to leave the rows alone. */
+  private hoveredAt = -Infinity;
+  private held: ReturnType<typeof setTimeout> | undefined;
 
   /** `onLoaded` runs once, when the view has the first scan's rows, so its empty state can stop saying "loading". */
   constructor(options: ViewOptions, private readonly onLoaded: () => void) {
@@ -287,7 +305,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   setSessions(sessions: Session[]): void {
     this.sessions = sessions;
     this.scanned = true;
-    this.rebuild();
+    this.rebuild(true);
     // No rows means no change event and no fetch to wait for: the empty state is already the answer.
     if (!this.roots.length) this.announceLoaded();
   }
@@ -300,7 +318,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
 
   setWorktreeStats(stats: Map<string, WorktreeStats>): void {
     this.stats = stats;
-    this.rebuild();
+    this.rebuild(true);
   }
 
   setOptions(options: ViewOptions): void {
@@ -326,6 +344,24 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
 
   getTreeItem(element: Node): vscode.TreeItem {
     return element;
+  }
+
+  /**
+   * VS Code asks for a row's tooltip when the pointer rests on it, the only sign a tree view gets of the pointer:
+   * it is asked once per row, so the hold counts from reaching a row, not from the pointer's last move.
+   */
+  resolveTreeItem(item: vscode.TreeItem, element: Node): vscode.TreeItem {
+    this.hoveredAt = Date.now();
+    return resolveTooltip(item, element);
+  }
+
+  /** Tell the view its rows changed; a change nobody asked for (`background`) waits out a hover. */
+  private announceChange(background: boolean): void {
+    clearTimeout(this.held);
+    this.held = undefined;
+    const wait = background ? this.hoveredAt + HOVER_HOLD_MS - Date.now() : 0;
+    if (wait > 0) this.held = setTimeout(() => this.announceChange(true), wait);
+    else this.changed.fire(undefined);
   }
 
   getChildren(element?: Node): Node[] {
@@ -442,7 +478,8 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     });
   }
 
-  private rebuild(): void {
+  /** `background`: the sessions themselves changed, rather than a person changing what the view shows. */
+  private rebuild(background = false): void {
     const o = this.options;
     const searching = o.search.trim() !== '';
     const { all, childrenOf } = this.topLevel(this.filtered(searching));
@@ -533,7 +570,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     const rendered = JSON.stringify(this.roots.map(renderKey));
     if (rendered === this.rendered) return;
     this.rendered = rendered;
-    this.changed.fire(undefined);
+    this.announceChange(background);
   }
 }
 

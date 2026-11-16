@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { SessionItem, arrangeSubagents, renderKey, type SubagentLayout } from './tree.js';
+import { SessionItem, arrangeSubagents, renderKey, resolveTooltip, type SubagentLayout } from './tree.js';
 import { isLive, type Session } from './types.js';
 import { statsInline, type RepoWorktree, type WorktreeStats } from './worktree.js';
 
@@ -179,6 +179,10 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
 
   getTreeItem(element: Node): vscode.TreeItem {
     return element;
+  }
+
+  resolveTreeItem(item: vscode.TreeItem, element: Node): vscode.TreeItem {
+    return resolveTooltip(item, element);
   }
 
   getChildren(element?: Node): Node[] {
