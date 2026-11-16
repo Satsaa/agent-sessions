@@ -22,9 +22,9 @@ import { listCodexAccounts } from './codex-accounts.js';
 import { closeCodexSession } from './close.js';
 import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
-import { NoteItem, ROW_DETAILS, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
-import { markAnswerRead, notesDir, notesFile, readAllNotes, removeNote, setQuestionStale, setTaskState, updateNotes, watchNotes, type Question, type SessionNotes, type Task } from './notes.js';
-import { installNotes, notesCommandPath, notesInstalled, uninstallNotes, type NotesInstallPaths } from './notes-install.js';
+import { DoneItem, NoteItem, ROW_DETAILS, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
+import { DONE_PARTS, editSessionDone, hasNotes, markAnswerRead, notesDir, notesFile, readAllNotes, removeNote, reopenSession, setQuestionStale, setTaskState, updateNotes, watchNotes, type Question, type SessionNotes, type Task } from './notes.js';
+import { installNotes, marketplacePath, notesCommandPath, notesOutdated, uninstallNotes, type NotesInstallPaths } from './notes-install.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
 import { switchCodexAccount } from './codex-accounts-ui.js';
 import { signInClaude, signInCodexAccount } from './auth-ui.js';
@@ -649,17 +649,17 @@ export function activate(context: vscode.ExtensionContext): void {
   // Another window (the phone, or a second desktop window) archived or pinned something.
   // A session recorded a task or a question, or another window marked one.
   const noteChanged = new vscode.EventEmitter<vscode.Uri>();
-  const noteUri = (item: NoteItem) => vscode.Uri.from({ scheme: NOTE_SCHEME, path: `/${item.session.tool}/${item.session.id}/${item.note.id}.md` });
+  const noteUri = (item: NoteItem | DoneItem) => vscode.Uri.from({ scheme: NOTE_SCHEME, path: `/${item.session.tool}/${item.session.id}/${item instanceof DoneItem ? 'done' : item.note.id}.md` });
   context.subscriptions.push(noteChanged, watchNotes(notesPath, notes, () => {
     provider.notesChanged(true);
     for (const doc of vscode.workspace.textDocuments) if (doc.uri.scheme === NOTE_SCHEME) noteChanged.fire(doc.uri);
   }));
   /** One change to a note's file, shown at once rather than when the watch notices. */
-  const changeNote = (item: NoteItem, change: (n: SessionNotes) => void): void => {
+  const changeNote = (item: NoteItem | DoneItem, change: (n: SessionNotes) => void): void => {
     const key = `${item.session.tool}:${item.session.id}`;
     try {
       const now = updateNotes(notesFile(notesPath, item.session.tool, item.session.id), change);
-      if (now.tasks.length || now.questions.length) notes.set(key, now);
+      if (hasNotes(now)) notes.set(key, now);
       else notes.delete(key);
     } catch (err) {
       // Removed or changed by its session since the row was drawn: the watch has the truth.
@@ -672,12 +672,15 @@ export function activate(context: vscode.ExtensionContext): void {
   const askResolution = async (title: string, value: string): Promise<string | undefined> =>
     (await vscode.window.showInputBox({ title, value, prompt: 'What was delivered, or why it was dropped', validateInput: (v) => (v.trim() ? undefined : 'Say what came of it') }))?.trim();
   const noteItemsOf = (arg: unknown, selected: unknown): NoteItem[] => rowsOf(arg, selected).filter((x): x is NoteItem => x instanceof NoteItem);
-  // The agents' side of the notes is opt-in (notes-install.ts). Once installed, its command follows this install's paths.
-  const notesPaths = (): NotesInstallPaths => ({ claudeHome: config.claudeHome, codexHome: config.codexHome, command: notesCommandPath() });
-  const writeNotesCommand = () =>
-    writeNodeLauncher(notesCommandPath(), path.join(context.extensionPath, 'dist', 'session-notes.mjs'), "records a session's tasks and questions.", 'echo "agent-sessions: the Agent Sessions extension is not installed here" >&2; exit 1');
+  // The agents' side of the notes is the opt-in plugin (notes-install.ts). Its text names the command at a fixed path,
+  // written by every activation so it follows this install; an installed plugin follows the version shipped here.
+  const notesPaths = (): NotesInstallPaths => ({ claudeHome: config.claudeHome, codexHome: config.codexHome, shipped: context.extensionPath, marketplace: marketplacePath() });
+  const reportPluginFailures = (failed: { tool: string; reason: string }[]) => {
+    for (const f of failed) output.appendLine(`agent-sessions plugin, ${f.tool}: ${f.reason}`);
+  };
   try {
-    if (notesInstalled(notesPaths())) writeNotesCommand();
+    writeNodeLauncher(notesCommandPath(), path.join(context.extensionPath, 'dist', 'session-notes.mjs'), "records a session's tasks and questions.", 'echo "agent-sessions: the Agent Sessions extension is not installed here" >&2; exit 1');
+    if (notesOutdated(notesPaths())) void installNotes(notesPaths()).then((r) => reportPluginFailures(r.failed), (err) => output.appendLine(`agent-sessions plugin: ${err instanceof Error ? err.message : String(err)}`));
   } catch (err) {
     output.appendLine(`session notes command: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -921,6 +924,10 @@ export function activate(context: vscode.ExtensionContext): void {
         const mine = notes.get(`${tool}:${id}`);
         const title = latestSessions.find((x) => x.tool === tool && x.id === id)?.title;
         const when = (at: number) => new Date(at).toLocaleString();
+        if (file === 'done.md') {
+          if (!mine?.done) return '# This session is not marked done.\n';
+          return [`# Done${title ? `: ${title}` : ''}`, `Closed ${when(mine.done.at)}`, `## Features\n\n${mine.done.features}`, `## Tickets\n\n${mine.done.tickets}`, `## Cleanup\n\n${mine.done.cleanup}`, ''].join('\n\n');
+        }
         const t = mine?.tasks.find((x) => `${x.id}.md` === file);
         if (t) {
           return [
@@ -941,9 +948,9 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     }),
     vscode.commands.registerCommand('agentSessions.note.open', async (arg: unknown) => {
-      if (!(arg instanceof NoteItem)) return;
+      if (!(arg instanceof NoteItem || arg instanceof DoneItem)) return;
       await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(noteUri(arg)), { preview: true });
-      if (arg.kind !== 'question') return;
+      if (arg instanceof DoneItem || arg.kind !== 'question') return;
       const q = arg.note as Question;
       if (q.state === 'answered' && !q.read) changeNote(arg, (n) => void markAnswerRead(n, q.id));
     }),
@@ -971,22 +978,34 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('agentSessions.note.remove', (arg: unknown, selected: unknown) => {
       for (const item of noteItemsOf(arg, selected)) changeNote(item, (n) => removeNote(n, item.kind, item.note.id));
     }),
+    vscode.commands.registerCommand('agentSessions.note.reopenSession', (arg: unknown, selected: unknown) => {
+      for (const item of rowsOf(arg, selected)) if (item instanceof DoneItem) changeNote(item, reopenSession);
+    }),
+    vscode.commands.registerCommand('agentSessions.note.editDone', async (arg: unknown) => {
+      if (!(arg instanceof DoneItem)) return;
+      const part = await vscode.window.showQuickPick(DONE_PARTS.map((p) => ({ label: p[0]!.toUpperCase() + p.slice(1), description: arg.done[p], part: p })), { title: 'Edit what the session said' });
+      if (!part) return;
+      const text = (await vscode.window.showInputBox({ title: part.label, value: arg.done[part.part], validateInput: (v) => (v.trim() ? undefined : 'Say what there is, or that there is none') }))?.trim();
+      if (text !== undefined) changeNote(arg, (n) => editSessionDone(n, part.part, text));
+    }),
     vscode.commands.registerCommand('agentSessions.notes.install', async () => {
       try {
-        writeNotesCommand();
-        const { skipped } = installNotes(notesPaths());
-        const left = skipped.length ? ` Left alone, being your own: ${skipped.join(', ')}.` : '';
-        void vscode.window.showInformationMessage(`Claude Code and Codex agents are now told to record tasks and questions, and /question and /task are installed. New sessions pick it up.${left}`);
+        const { failed } = await installNotes(notesPaths());
+        reportPluginFailures(failed);
+        const tools = (['claude', 'codex'] as const).filter((t) => !failed.some((f) => f.tool === t)).map((t) => (t === 'claude' ? 'Claude Code' : 'Codex'));
+        const left = failed.length ? ` Not installed in ${failed.map((f) => (f.tool === 'claude' ? 'Claude Code' : 'Codex')).join(' and ')}: see the Agent Sessions output.` : '';
+        if (tools.length) void vscode.window.showInformationMessage(`The Agent Sessions plugin is installed in ${tools.join(' and ')}: new sessions record their tasks and your questions, and have the question, task and done commands.${left}`);
+        else void vscode.window.showErrorMessage(`Could not install the Agent Sessions plugin.${left}`);
       } catch (err) {
-        void vscode.window.showErrorMessage(`Could not install the task and question tools: ${err instanceof Error ? err.message : String(err)}`);
+        void vscode.window.showErrorMessage(`Could not install the Agent Sessions plugin: ${err instanceof Error ? err.message : String(err)}`);
       }
     }),
-    vscode.commands.registerCommand('agentSessions.notes.uninstall', () => {
+    vscode.commands.registerCommand('agentSessions.notes.uninstall', async () => {
       try {
-        uninstallNotes(notesPaths());
-        void vscode.window.showInformationMessage('Agents are no longer told to record tasks and questions. What was recorded stays listed.');
+        await uninstallNotes(notesPaths());
+        void vscode.window.showInformationMessage('The Agent Sessions plugin is removed from Claude Code and Codex. What was recorded stays listed.');
       } catch (err) {
-        void vscode.window.showErrorMessage(`Could not remove the task and question tools: ${err instanceof Error ? err.message : String(err)}`);
+        void vscode.window.showErrorMessage(`Could not remove the Agent Sessions plugin: ${err instanceof Error ? err.message : String(err)}`);
       }
     }),
     vscode.commands.registerCommand('agentSessions.back', () => phone.back()),

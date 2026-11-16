@@ -4,7 +4,7 @@ import { isLive, toolLabel, type Session, type SessionState } from './types.js';
 import { relativeTime, repoRootOf } from './util.js';
 import { statsInline, type WorktreeStats } from './worktree.js';
 import { stateIcon, toolIcon } from './icons.js';
-import { noteCounts, type NoteKind, type Question, type SessionNotes, type Task } from './notes.js';
+import { hasNotes, noteCounts, type NoteKind, type Question, type SessionDone, type SessionNotes, type Task } from './notes.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
 
@@ -177,6 +177,26 @@ export class NoteItem extends vscode.TreeItem implements HoverTooltip {
   }
 }
 
+/** The row of a session its agent closed (notes.ts), opening what it said it delivered, did with its tickets and cleaned up. */
+export class DoneItem extends vscode.TreeItem implements HoverTooltip {
+  readonly children: readonly never[] = [];
+  readonly tooltipOnHover: () => vscode.MarkdownString;
+
+  constructor(public readonly session: Session, public readonly done: SessionDone, idPrefix: string) {
+    super('Done', vscode.TreeItemCollapsibleState.None);
+    this.id = `${idPrefix}/done`;
+    this.description = `${oneLine(done.features)} · ${relativeTime(done.at)}`;
+    this.iconPath = new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
+    this.contextValue = 'note-done';
+    this.tooltipOnHover = () => {
+      const md = new vscode.MarkdownString(undefined, true);
+      md.appendMarkdown(`**Features**\n\n${done.features}\n\n**Tickets**\n\n${done.tickets}\n\n**Cleanup**\n\n${done.cleanup}\n\n$(clock) ${new Date(done.at).toLocaleString()}`);
+      return md;
+    };
+    this.command = { command: 'agentSessions.note.open', title: 'Open', arguments: [this] };
+  }
+}
+
 /** A session's Questions or Tasks row, holding its notes. */
 export class NoteGroupItem extends vscode.TreeItem {
   constructor(public readonly kind: NoteKind, public readonly children: NoteItem[], summary: string, idPrefix: string) {
@@ -193,10 +213,11 @@ const QUESTION_ORDER: Record<Question['state'], number> = { open: 1, answered: 2
 /** A dropped task is no part of the count, and comes last. */
 const TASK_ORDER: Record<Task['state'], number> = { open: 0, done: 1, dropped: 2 };
 
-function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix: string): NoteGroupItem[] {
+function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix: string): (DoneItem | NoteGroupItem)[] {
   if (!notes) return [];
   const counts = noteCounts(notes);
-  const groups: NoteGroupItem[] = [];
+  const groups: (DoneItem | NoteGroupItem)[] = [];
+  if (notes.done) groups.push(new DoneItem(session, notes.done, idPrefix));
   if (notes.questions.length) {
     const rank = (q: Question) => (q.state === 'answered' && !q.read ? 0 : QUESTION_ORDER[q.state]);
     const rows = [...notes.questions].sort((a, b) => rank(a) - rank(b) || a.at - b.at);
@@ -218,8 +239,8 @@ export interface RowContent {
 
 export class SessionItem extends vscode.TreeItem implements HoverTooltip {
   readonly tooltipOnHover: () => vscode.MarkdownString;
-  /** The session's Questions and Tasks rows, listed before the sessions it spawned. */
-  readonly notes: NoteGroupItem[];
+  /** The session's Done, Questions and Tasks rows, listed before the sessions it spawned. */
+  readonly notes: (DoneItem | NoteGroupItem)[];
 
   constructor(
     public readonly session: Session,
@@ -260,8 +281,6 @@ export class SessionItem extends vscode.TreeItem implements HoverTooltip {
   }
 }
 
-const hasNotes = (notes: SessionNotes | undefined): boolean => !!notes && notes.tasks.length + notes.questions.length > 0;
-
 export class GroupItem extends vscode.TreeItem {
   constructor(
     public readonly key: string,
@@ -278,14 +297,14 @@ export class GroupItem extends vscode.TreeItem {
   }
 }
 
-type Node = SessionItem | GroupItem | NoteGroupItem | NoteItem;
+type Node = SessionItem | GroupItem | NoteGroupItem | NoteItem | DoneItem;
 
 /** How long the view keeps still after the pointer reaches a row, so a row is not moved from under a click. */
 const HOVER_HOLD_MS = 3000;
 
 /** Fill in a hovered row's tooltip. */
 export function resolveTooltip(item: vscode.TreeItem, element: unknown): vscode.TreeItem {
-  if (element instanceof SessionItem || element instanceof NoteItem) item.tooltip = element.tooltipOnHover();
+  if (element instanceof SessionItem || element instanceof NoteItem || element instanceof DoneItem) item.tooltip = element.tooltipOnHover();
   return item;
 }
 
@@ -303,6 +322,8 @@ const STATE_LABEL: Record<SessionState, string> = {
 function describe(session: Session, content: RowContent, stats: WorktreeStats | undefined): string {
   const parts: string[] = [];
   if (session.agentRole) parts.push(session.agentRole);
+  // Shown whatever details are chosen: a done session is one to stop reading.
+  if (content.notes?.done) parts.push('✓ done');
   const counts = noteCounts(content.notes);
   const wt = session.worktree;
   const edits = wt && stats && !stats.gone ? statsInline(stats) : '';
@@ -355,6 +376,7 @@ function tooltipFor(session: Session, archived: boolean, stats: WorktreeStats | 
     if (session.branch) md.appendMarkdown(`$(git-branch) \`${session.branch}\`\n\n`);
   }
   const counts = noteCounts(notes);
+  if (notes?.done) md.appendMarkdown(`$(pass-filled) Done ${new Date(notes.done.at).toLocaleString()}\n\n`);
   if (counts.answersUnread + counts.questionsOpen) md.appendMarkdown(`$(comment-discussion) ${[counts.answersUnread ? `${counts.answersUnread} unread answer${counts.answersUnread === 1 ? '' : 's'}` : '', counts.questionsOpen ? `${counts.questionsOpen} open question${counts.questionsOpen === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ')}\n\n`);
   if (counts.tasksOpen + counts.tasksDone) md.appendMarkdown(`$(checklist) ${counts.tasksDone} of ${counts.tasksOpen + counts.tasksDone} task${counts.tasksOpen + counts.tasksDone === 1 ? '' : 's'} done\n\n`);
   md.appendMarkdown(`$(clock) ${new Date(session.updatedAt).toLocaleString()}\n\n`);

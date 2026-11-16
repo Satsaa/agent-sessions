@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import {
-  NoteError, addQuestion, addTask, answerQuestion, notesDir, notesFile, readNotes, setQuestionStale, setTaskState, updateNotes,
-  type SessionNotes,
+  DONE_PARTS, NoteError, addQuestion, addTask, answerQuestion, markSessionDone, notesDir, notesFile, readNotes, reopenSession, setQuestionStale, setTaskState, updateNotes,
+  type DonePart, type SessionNotes,
 } from './notes.js';
 import type { Tool } from './types.js';
 
@@ -19,6 +19,9 @@ const USAGE = `Records this session's tasks and questions; the user sees them li
   agent-sessions question answer <id> <answer>
   agent-sessions question stale <id>      no longer worth an answer
   agent-sessions list
+  agent-sessions done --features <what was delivered and where> --tickets <each ticket and its status now> --cleanup <worktrees, branches and processes removed or left>
+                                          closes the session; every part is said, "none" with the reason included
+  agent-sessions reopen                   the session is not done after all
 
 A text given as - is read from standard input, for anything with quotes or several lines:
   agent-sessions question answer q1 - <<'END'
@@ -27,6 +30,57 @@ A text given as - is read from standard input, for anything with quotes or sever
 --session <claude|codex>:<id> names another session than the one running the command.`;
 
 type Env = Record<string, string | undefined>;
+
+const COMMAND = '~/.agent-sessions/bin/agent-sessions';
+
+/** What every session of an agent with the plugin is told when it starts (the plugin's SessionStart hook prints it). */
+export const INSTRUCTIONS = `## Session tasks and questions (Agent Sessions)
+
+\`${COMMAND}\` records this session's tasks and the user's questions. The user sees them listed under the session, outside the chat, so nothing asked or agreed gets lost in a long conversation. \`${COMMAND} help\` lists the commands.
+
+This applies to every session and is not optional: a task or a question left unrecorded is one the user loses track of. When a rule below fits, record it before doing anything else.
+
+- **A task is a deliverable the user would name**, such as "Create v2 phone engine": never a step of one, and not your own plan or todo list. Most sessions have one to three. Add it when the work is agreed (\`task add "<name>"\`). Close it when it is finished and checked, saying in a line or two what was delivered and where (\`task done <id> "<what was delivered>"\`), or when it is abandoned, saying why (\`task drop <id> "<why>"\`).
+- **A question is something the user asked that could get lost**: asked beside other work, in the middle of a task, or not answered in the same reply. Record it in their words (\`question add "<question>"\`). A question you answer at once in a short reply needs no record.
+- **Answer a recorded question in both places**: write the answer in your reply, and record the same answer with \`question answer <id> -\`, the text on standard input. The user reads recorded answers on their own, so the text must make sense without the conversation.
+- The user can record a question or a task themselves with the plugin's question and task commands. Do not expect them to: recording what they ask is your job either way.
+- Before ending a turn in a session that has anything recorded, run \`list\` and answer what you can now. Leave the rest open; \`question stale <id>\` marks one that no longer matters.
+- **When the session's work is all delivered, or the user says it is done, close it with the plugin's done skill**: it checks the features, the tickets and the cleanup, then records them with \`done\`. A session is never marked done with a task open or a question unanswered.`;
+
+/**
+ * What a plugin hook prints into the session: the instructions and what is recorded when it starts, and with each
+ * prompt only what is still open, so a long session is reminded of exactly what it owes.
+ */
+export function hookText(event: string, notes: SessionNotes): string {
+  const open = [
+    ...notes.tasks.filter((t) => t.state === 'open').map((t) => `  task ${t.id}: ${t.text}`),
+    ...notes.questions.filter((q) => q.state === 'open').map((q) => `  question ${q.id} (unanswered): ${q.text}`),
+  ];
+  if (event === 'session-start') return [INSTRUCTIONS, ...(notes.tasks.length || notes.questions.length || notes.done ? ['', 'Recorded for this session so far:', formatNotes(notes)] : [])].join('\n');
+  if (event !== 'prompt') throw new NoteError('hook takes session-start or prompt');
+  if (!open.length) return '';
+  return [`Agent Sessions: this session still has open (\`${COMMAND} list\`):`, ...open, 'Close a task when it is delivered and answer a question in your reply and with `question answer`. Record a new deliverable or a question that could get lost from this message before working on it.'].join('\n');
+}
+
+/** The session a hook runs for: both tools hand their hooks the session's id on standard input. */
+export function hookSession(input: string, env: Env, nearest: () => Tool | undefined = nearestTool): { tool: Tool; id: string } | undefined {
+  let payload: { session_id?: unknown; transcript_path?: unknown } = {};
+  try {
+    payload = JSON.parse(input) as typeof payload;
+  } catch {
+    // No payload: the variables below are what there is.
+  }
+  if (typeof payload.session_id === 'string' && payload.session_id) {
+    const transcript = typeof payload.transcript_path === 'string' ? payload.transcript_path : '';
+    const tool: Tool = /[\\/]\.codex[\\/]/.test(transcript) ? 'codex' : /[\\/]\.claude[\\/]/.test(transcript) ? 'claude' : (nearest() ?? (env.CODEX_THREAD_ID && !env.CLAUDE_CODE_SESSION_ID ? 'codex' : 'claude'));
+    return { tool, id: payload.session_id };
+  }
+  try {
+    return sessionOf(env, undefined, nearest);
+  } catch {
+    return undefined;
+  }
+}
 
 /** The nearest process above this one that is Claude Code or Codex. */
 function nearestTool(): Tool | undefined {
@@ -70,11 +124,27 @@ export function sessionOf(env: Env, named: string | undefined, nearest: () => To
 }
 
 export function formatNotes(notes: SessionNotes): string {
-  if (!notes.tasks.length && !notes.questions.length) return 'Nothing recorded for this session.';
+  if (!notes.tasks.length && !notes.questions.length && !notes.done) return 'Nothing recorded for this session.';
   const lines: string[] = [];
   if (notes.tasks.length) lines.push('Tasks', ...notes.tasks.map((t) => `  ${t.id} [${t.state}] ${t.text}`));
   if (notes.questions.length) lines.push('Questions', ...notes.questions.map((q) => `  ${q.id} [${q.state}] ${q.text}`));
+  if (notes.done) lines.push('Session done', ...DONE_PARTS.map((part) => `  ${part}: ${notes.done![part]}`));
   return lines.join('\n');
+}
+
+/** `--features … --tickets … --cleanup …`: each flag takes the words up to the next one. */
+function doneParts(words: readonly string[]): Partial<Record<DonePart, string>> {
+  const parts: Partial<Record<DonePart, string>> = {};
+  let part: DonePart | undefined;
+  for (const word of words) {
+    const flag = DONE_PARTS.find((p) => word === `--${p}`);
+    if (flag) {
+      part = flag;
+      parts[part] = '';
+    } else if (part) parts[part] = `${parts[part]} ${word}`.trim();
+    else throw new NoteError(`done takes ${DONE_PARTS.map((p) => `--${p} <text>`).join(' ')}`);
+  }
+  return parts;
 }
 
 /** Runs one command against `file` and returns what to print. `stdin` supplies a text given as `-`. */
@@ -92,7 +162,7 @@ export function runCommand(file: string, args: readonly string[], stdin: () => s
   const change = (apply: (notes: SessionNotes) => string): void => {
     updateNotes(file, (notes) => { out = apply(notes); });
   };
-  switch (`${group ?? ''} ${verb ?? ''}`.trim()) {
+  switch (group === 'done' || group === 'reopen' ? group : `${group ?? ''} ${verb ?? ''}`.trim()) {
     case 'list':
       return formatNotes(readNotes(file));
     case 'task add':
@@ -113,6 +183,18 @@ export function runCommand(file: string, args: readonly string[], stdin: () => s
     case 'question stale':
       change((n) => `${setQuestionStale(n, id(rest[0]), true).id} marked stale`);
       break;
+    case 'done':
+      change((n) => {
+        markSessionDone(n, doneParts(verb === undefined ? [] : [verb, ...rest]));
+        return 'session marked done';
+      });
+      break;
+    case 'reopen':
+      change((n) => {
+        reopenSession(n);
+        return 'session reopened';
+      });
+      break;
     default:
       throw new NoteError(USAGE);
   }
@@ -126,6 +208,17 @@ export function main(): void {
   if (at >= 0) [, named] = args.splice(at, 2);
   if (!args.length || args[0] === 'help' || args.includes('--help')) {
     console.log(USAGE);
+    return;
+  }
+  if (args[0] === 'hook') {
+    // A hook never fails its session: with no session to name, or anything wrong, it says nothing.
+    try {
+      const session = hookSession(fs.readFileSync(0, 'utf8'), process.env);
+      const text = hookText(args[1] ?? '', session ? readNotes(notesFile(notesDir(), session.tool, session.id)) : { seq: 0, tasks: [], questions: [] });
+      if (text) console.log(text);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+    }
     return;
   }
   try {

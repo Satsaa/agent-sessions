@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.31",
+  "version": "0.8.32",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -416,12 +416,12 @@
       },
       {
         "command": "agentSessions.notes.install",
-        "title": "Install Task and Question Tools for Agents",
+        "title": "Install the Agent Sessions Plugin for Claude Code and Codex",
         "category": "Agent Sessions"
       },
       {
         "command": "agentSessions.notes.uninstall",
-        "title": "Remove Task and Question Tools for Agents",
+        "title": "Remove the Agent Sessions Plugin from Claude Code and Codex",
         "category": "Agent Sessions"
       },
       {
@@ -429,6 +429,18 @@
         "title": "Edit Resolution…",
         "category": "Agent Sessions",
         "icon": "$(edit)"
+      },
+      {
+        "command": "agentSessions.note.editDone",
+        "title": "Edit What the Session Said…",
+        "category": "Agent Sessions",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "agentSessions.note.reopenSession",
+        "title": "Reopen Session (Not Done)",
+        "category": "Agent Sessions",
+        "icon": "$(debug-restart)"
       }
     ],
     "menus": {
@@ -749,12 +761,12 @@
         },
         {
           "command": "agentSessions.note.remove",
-          "when": "view == agentSessions.list && viewItem =~ /^note-/ && !agentSessions.phoneMode",
+          "when": "view == agentSessions.list && viewItem =~ /^note-(task|question)-/ && !agentSessions.phoneMode",
           "group": "inline@4"
         },
         {
           "command": "agentSessions.note.remove",
-          "when": "view == agentSessions.list && viewItem =~ /^note-/",
+          "when": "view == agentSessions.list && viewItem =~ /^note-(task|question)-/",
           "group": "1_note@4"
         },
         {
@@ -766,6 +778,26 @@
           "command": "agentSessions.note.editResolution",
           "when": "view == agentSessions.list && viewItem =~ /^note-task-(done|dropped)$/ && view not in agentSessions.multiSelect",
           "group": "1_note@0"
+        },
+        {
+          "command": "agentSessions.note.editDone",
+          "when": "view == agentSessions.list && viewItem == note-done && !agentSessions.phoneMode",
+          "group": "inline@0"
+        },
+        {
+          "command": "agentSessions.note.editDone",
+          "when": "view == agentSessions.list && viewItem == note-done && view not in agentSessions.multiSelect",
+          "group": "1_note@0"
+        },
+        {
+          "command": "agentSessions.note.reopenSession",
+          "when": "view == agentSessions.list && viewItem == note-done && !agentSessions.phoneMode",
+          "group": "inline@1"
+        },
+        {
+          "command": "agentSessions.note.reopenSession",
+          "when": "view == agentSessions.list && viewItem == note-done",
+          "group": "1_note@3"
         },
         {
           "command": "agentSessions.rowActions",
@@ -908,6 +940,14 @@
         },
         {
           "command": "agentSessions.note.editResolution",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.note.editDone",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.note.reopenSession",
           "when": "false"
         }
       ]

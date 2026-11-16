@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "c=\"$HOME/.agent-sessions/bin/agent-sessions\"; if [ -x \"$c\" ]; then \"$c\" hook session-start; fi" }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "c=\"$HOME/.agent-sessions/bin/agent-sessions\"; if [ -x \"$c\" ]; then \"$c\" hook prompt; fi" }] }
+    ]
+  }
+}

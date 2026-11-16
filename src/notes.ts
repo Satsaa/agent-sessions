@@ -31,11 +31,24 @@ export interface Question {
   read?: boolean;
 }
 
+/** A session its agent closed: what it delivered, what became of its tickets, and what it cleaned up after itself. */
+export interface SessionDone {
+  at: number;
+  features: string;
+  tickets: string;
+  cleanup: string;
+}
+
+export const DONE_PARTS = ['features', 'tickets', 'cleanup'] as const;
+export type DonePart = (typeof DONE_PARTS)[number];
+
 export interface SessionNotes {
   /** The last number an id was made from, so a removed note's id is not given to another. */
   seq: number;
   tasks: Task[];
   questions: Question[];
+  /** Set while the session is done; a new task or question takes it away. */
+  done?: SessionDone;
 }
 
 export type NoteKind = 'task' | 'question';
@@ -68,14 +81,22 @@ export function readNotes(file: string): SessionNotes {
   const o = raw && typeof raw === 'object' ? (raw as Partial<SessionNotes>) : {};
   const rows = <T extends { id: string; text: string }>(v: unknown): T[] =>
     Array.isArray(v) ? v.filter((x): x is T => !!x && typeof x === 'object' && typeof (x as T).id === 'string' && typeof (x as T).text === 'string') : [];
-  return { seq: typeof o.seq === 'number' ? o.seq : 0, tasks: rows<Task>(o.tasks), questions: rows<Question>(o.questions) };
+  const notes: SessionNotes = { seq: typeof o.seq === 'number' ? o.seq : 0, tasks: rows<Task>(o.tasks), questions: rows<Question>(o.questions) };
+  const d = o.done as Partial<SessionDone> | undefined;
+  if (d && typeof d === 'object' && typeof d.at === 'number' && DONE_PARTS.every((part) => typeof d[part] === 'string')) {
+    notes.done = { at: d.at, features: d.features!, tickets: d.tickets!, cleanup: d.cleanup! };
+  }
+  return notes;
 }
+
+/** Whether anything is recorded: a file with nothing in it is not kept, and a session with nothing has no rows. */
+export const hasNotes = (notes: SessionNotes | undefined): notes is SessionNotes => !!notes && (notes.tasks.length + notes.questions.length > 0 || !!notes.done);
 
 /** Apply one change to a session's file as it is now. A file left with nothing in it is removed. */
 export function updateNotes(file: string, change: (notes: SessionNotes) => void): SessionNotes {
   const notes = readNotes(file);
   change(notes);
-  if (!notes.tasks.length && !notes.questions.length) {
+  if (!hasNotes(notes)) {
     fs.rmSync(file, { force: true });
     return notes;
   }
@@ -105,6 +126,7 @@ function find<T extends { id: string }>(list: T[], id: string, what: string): T 
 export function addTask(notes: SessionNotes, text: string, now = Date.now()): Task {
   const task: Task = { id: `t${++notes.seq}`, text: clean(text, 'the task'), state: 'open', at: now };
   notes.tasks.push(task);
+  delete notes.done;
   return task;
 }
 
@@ -112,6 +134,7 @@ export function addTask(notes: SessionNotes, text: string, now = Date.now()): Ta
 export function setTaskState(notes: SessionNotes, id: string, state: Task['state'], resolution?: string, now = Date.now()): Task {
   const task = find(notes.tasks, id, 'task');
   task.state = state;
+  if (state === 'open') delete notes.done;
   delete task.closedAt;
   delete task.resolution;
   if (state !== 'open') {
@@ -124,6 +147,7 @@ export function setTaskState(notes: SessionNotes, id: string, state: Task['state
 export function addQuestion(notes: SessionNotes, text: string, now = Date.now()): Question {
   const question: Question = { id: `q${++notes.seq}`, text: clean(text, 'the question'), state: 'open', at: now };
   notes.questions.push(question);
+  delete notes.done;
   return question;
 }
 
@@ -141,6 +165,34 @@ export function setQuestionStale(notes: SessionNotes, id: string, stale: boolean
   const question = find(notes.questions, id, 'question');
   question.state = stale ? 'stale' : question.answer === undefined ? 'open' : 'answered';
   return question;
+}
+
+/**
+ * Close the session: what it delivered, what became of its tickets, and what it cleaned up, each said even when the
+ * answer is "none". Refused while a task is open or a question unanswered, since those are what a done session leaves behind.
+ */
+export function markSessionDone(notes: SessionNotes, parts: Partial<Record<DonePart, string>>, now = Date.now()): SessionDone {
+  const open = [...notes.tasks.filter((t) => t.state === 'open'), ...notes.questions.filter((q) => q.state === 'open')];
+  if (open.length) {
+    throw new NoteError(`this session is not done: ${open.map((x) => `${x.id} "${x.text}"`).join(', ')} ${open.length === 1 ? 'is' : 'are'} still open. Close each task with what came of it, and answer each question or mark it stale.`);
+  }
+  const said = (part: DonePart): string => {
+    const text = parts[part]?.trim();
+    if (!text) throw new NoteError(`--${part} is missing: say what there is, or that there is none and why`);
+    return text;
+  };
+  notes.done = { at: now, features: said('features'), tickets: said('tickets'), cleanup: said('cleanup') };
+  return notes.done;
+}
+
+/** A person's correction of one part of what a done session said. */
+export function editSessionDone(notes: SessionNotes, part: DonePart, text: string): void {
+  if (!notes.done) throw new NoteError('this session is not marked done');
+  notes.done[part] = clean(text, `the ${part}`);
+}
+
+export function reopenSession(notes: SessionNotes): void {
+  delete notes.done;
 }
 
 export function markAnswerRead(notes: SessionNotes, id: string): Question {

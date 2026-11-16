@@ -1,78 +1,115 @@
+import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
 /**
- * The opt-in agent side of session notes (notes.ts): the `agent-sessions` command at a fixed path, an instruction
- * block in each tool's own global instructions telling its agents when to record a task or a question, and the
- * `/question` and `/task` prompts a person can type. Everything written carries a marker, and only what carries it
- * is ever replaced or removed: a person's own file of the same name is left alone and reported.
+ * The opt-in agent side of session notes (notes.ts) is the `agent-sessions` plugin in this repository's `plugin/`:
+ * hooks that tell each session when to record a task or a question and remind it of what is open, and the question,
+ * task and done skills. It is installed into Claude Code and Codex through their own plugin commands, from a copy of
+ * the marketplace this extension ships, kept at a fixed path so an extension update does not move it. The plugin's
+ * text names the `agent-sessions` command at its fixed path, which every activation writes.
  */
 export function notesCommandPath(): string {
   return path.join(os.homedir(), '.agent-sessions', 'bin', 'agent-sessions');
 }
 
-const BLOCK_START = '<!-- agent-sessions:notes:start (written by the Agent Sessions extension; edits here are replaced) -->';
-const BLOCK_END = '<!-- agent-sessions:notes:end -->';
-const PROMPT_MARK = '<!-- agent-sessions:notes -->';
-
-/** `~/…` where the path is under the home directory: the same text then serves every shell. */
-const tilde = (file: string): string => (file.startsWith(os.homedir() + path.sep) ? `~${file.slice(os.homedir().length)}` : file);
-
-/** What an agent is told. A person may record a question themselves, and the agent must not wait for that. */
-export function instructionBlock(command: string): string {
-  return `${BLOCK_START}
-## Session tasks and questions
-
-\`${command}\` records this session's tasks and the user's questions. The user sees them listed under the session, outside the chat, so nothing asked or agreed gets lost in a long conversation. Run \`${command} help\` for the commands.
-
-This applies to every session and is not optional: a task or a question left unrecorded is one the user loses track of. When either rule below fits, record it before doing anything else.
-
-- **A task is a deliverable the user would name**, such as "Create v2 phone engine": never a step of one, and not your own plan or todo list. Most sessions have one to three. Add it when the work is agreed (\`task add "<name>"\`). Close it when it is finished and checked, saying in a line or two what was delivered and where (\`task done <id> "<what was delivered>"\`), or when it is abandoned, saying why (\`task drop <id> "<why>"\`).
-- **A question is something the user asked that could get lost**: asked beside other work, in the middle of a task, or not answered in the same reply. Record it in their words (\`question add "<question>"\`). A question you answer at once in a short reply needs no record.
-- **Answer a recorded question in both places**: write the answer in your reply, and record the same answer with \`question answer <id> -\`, the text on standard input. The user reads recorded answers on their own, so the text must make sense without the conversation.
-- The user can record a question themselves with \`/question\`. Do not expect them to: recording what they ask is your job either way.
-- Before ending a turn in a session that has anything recorded, run \`list\` and answer what you can now. Leave the rest open; \`question stale <id>\` marks one that no longer matters.
-${BLOCK_END}`;
+export function marketplacePath(): string {
+  return path.join(os.homedir(), '.agent-sessions', 'marketplace');
 }
 
-/** The prompts a person types: `/question <text>` and `/task <text>` in Claude Code, Codex's custom prompts of the same names. */
-export function prompts(command: string): Record<'question' | 'task', string> {
-  return {
-    question: `---
-description: Ask a question that stays listed under this session until it is answered
-argument-hint: <question>
----
-${PROMPT_MARK}
-The user asks:
+export const PLUGIN = 'agent-sessions@agent-sessions';
+const MARKETPLACE = 'agent-sessions';
+/** What a marketplace is made of: each tool's manifest, and the plugin both name. */
+const MARKETPLACE_PARTS = ['.claude-plugin', '.agents', 'plugin'];
 
-$ARGUMENTS
-
-Record it first, in their words: \`${command} question add -\` with the question on standard input. Then answer it. When you have the answer, write it in your reply and record the same answer with \`${command} question answer <id> -\`, the text on standard input; it is read outside this conversation, so it must make sense on its own. If the answer needs work you cannot finish in this turn, say so and leave the question open.
-`,
-    task: `---
-description: Add a task that stays listed under this session until it is done
-argument-hint: <task>
----
-${PROMPT_MARK}
-The user gives this session a task:
-
-$ARGUMENTS
-
-Record it first under a short name of the deliverable: \`${command} task add "<name>"\`. Then do it, and run \`${command} task done <id> "<what was delivered>"\` once it is finished and checked.
-`,
-  };
-}
+export type PluginTool = 'claude' | 'codex';
+/** Runs one of the tools' own commands; rejects with what it printed when it fails or is not installed. */
+export type RunTool = (tool: PluginTool, args: string[]) => Promise<string>;
 
 export interface NotesInstallPaths {
   /** Claude Code's home (`~/.claude`) and Codex's (`~/.codex`). */
   claudeHome: string;
   codexHome: string;
-  command: string;
+  /** The marketplace this extension ships, and the fixed place its copy is installed from. */
+  shipped: string;
+  marketplace: string;
 }
 
-const instructionFiles = (p: NotesInstallPaths): string[] => [path.join(p.claudeHome, 'CLAUDE.md'), path.join(p.codexHome, 'AGENTS.md')];
-const promptFiles = (p: NotesInstallPaths, name: string): string[] => [path.join(p.claudeHome, 'commands', `${name}.md`), path.join(p.codexHome, 'prompts', `${name}.md`)];
+/** The tools' commands from this process, which may have a shorter PATH than a login shell: their usual folders are added. */
+export const runTool: RunTool = (tool, args) =>
+  new Promise((resolve, reject) => {
+    const extra = ['.local/bin', '.npm-global/bin', '.bun/bin'].map((dir) => path.join(os.homedir(), dir));
+    const env = { ...process.env, PATH: [process.env.PATH, ...extra, '/usr/local/bin', '/opt/homebrew/bin'].filter(Boolean).join(path.delimiter) };
+    execFile(tool, args, { env, timeout: 60_000 }, (err, stdout, stderr) => {
+      if (err) reject(new Error(`${tool} ${args.join(' ')}: ${(stderr || stdout || err.message).trim()}`));
+      else resolve(stdout);
+    });
+  });
+
+const pluginVersion = (marketplace: string): string | undefined => {
+  try {
+    return (JSON.parse(fs.readFileSync(path.join(marketplace, 'plugin', '.claude-plugin', 'plugin.json'), 'utf8')) as { version?: string }).version;
+  } catch {
+    return undefined;
+  }
+};
+
+/** Whether the plugin was installed from here: its marketplace copy exists. */
+export function notesInstalled(p: NotesInstallPaths): boolean {
+  return pluginVersion(p.marketplace) !== undefined;
+}
+
+/** Whether the installed copy is another version than the one this extension ships. */
+export function notesOutdated(p: NotesInstallPaths): boolean {
+  return notesInstalled(p) && pluginVersion(p.marketplace) !== pluginVersion(p.shipped);
+}
+
+/**
+ * Copies the marketplace into place and installs the plugin in each tool, replacing an earlier copy. Returns the
+ * tools it could not be installed in and why (a tool that is not installed here, most often). What versions before
+ * the plugin wrote into the tools' instruction files and prompt folders is taken back.
+ */
+export async function installNotes(p: NotesInstallPaths, run: RunTool = runTool): Promise<{ failed: { tool: PluginTool; reason: string }[] }> {
+  fs.rmSync(p.marketplace, { recursive: true, force: true });
+  for (const part of MARKETPLACE_PARTS) fs.cpSync(path.join(p.shipped, part), path.join(p.marketplace, part), { recursive: true });
+  removeLegacyNotes(p);
+  const steps: Record<PluginTool, string[][]> = {
+    // Both are safe to repeat. Claude Code reads the plugin from its folder; Codex copies it, a new version beside the old.
+    claude: [['plugin', 'marketplace', 'add', p.marketplace], ['plugin', 'install', PLUGIN]],
+    codex: [['plugin', 'marketplace', 'add', p.marketplace], ['plugin', 'add', PLUGIN]],
+  };
+  const failed: { tool: PluginTool; reason: string }[] = [];
+  for (const tool of ['claude', 'codex'] as const) {
+    try {
+      for (const args of steps[tool]) await run(tool, args);
+    } catch (err) {
+      failed.push({ tool, reason: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return { failed };
+}
+
+/** Takes the plugin out of both tools. Recorded tasks and questions stay. */
+export async function uninstallNotes(p: NotesInstallPaths, run: RunTool = runTool): Promise<void> {
+  const steps: Record<PluginTool, string[][]> = {
+    claude: [['plugin', 'uninstall', PLUGIN], ['plugin', 'marketplace', 'remove', MARKETPLACE]],
+    codex: [['plugin', 'remove', PLUGIN], ['plugin', 'marketplace', 'remove', MARKETPLACE]],
+  };
+  for (const tool of ['claude', 'codex'] as const) {
+    // Each step on its own: a plugin already gone must not keep its marketplace.
+    for (const args of steps[tool]) await run(tool, args).catch(() => undefined);
+  }
+  fs.rmSync(p.marketplace, { recursive: true, force: true });
+  removeLegacyNotes(p);
+}
+
+// Before the plugin, the same instructions were a marked block in each tool's global instructions and prompt files
+// in their command folders. Only what carries our marker is removed.
+const BLOCK_START = '<!-- agent-sessions:notes:start (written by the Agent Sessions extension; edits here are replaced) -->';
+const BLOCK_END = '<!-- agent-sessions:notes:end -->';
+const PROMPT_MARK = '<!-- agent-sessions:notes -->';
+
 
 function read(file: string): string | undefined {
   try {
@@ -92,40 +129,8 @@ function withoutBlock(text: string): { rest: string; had: boolean } {
   return { rest: [before, after].filter(Boolean).join('\n\n') + (before || after ? '\n' : ''), had: true };
 }
 
-/** Whether the agents have been told: the block is in either tool's instructions. */
-export function notesInstalled(p: NotesInstallPaths): boolean {
-  return instructionFiles(p).some((file) => read(file)?.includes(BLOCK_START));
-}
-
-/**
- * Writes the instruction block and the prompts, replacing our own earlier ones. Returns the prompt files left alone
- * because a person's own file has that name.
- */
-export function installNotes(p: NotesInstallPaths): { skipped: string[] } {
-  const command = tilde(p.command);
-  for (const file of instructionFiles(p)) {
-    const { rest } = withoutBlock(read(file) ?? '');
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `${rest.trimEnd()}${rest.trim() ? '\n\n' : ''}${instructionBlock(command)}\n`);
-  }
-  const skipped: string[] = [];
-  for (const [name, text] of Object.entries(prompts(command))) {
-    for (const file of promptFiles(p, name)) {
-      const existing = read(file);
-      if (existing !== undefined && !existing.includes(PROMPT_MARK)) {
-        skipped.push(file);
-        continue;
-      }
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, text);
-    }
-  }
-  return { skipped };
-}
-
-/** Takes back what `installNotes` wrote. Recorded tasks and questions stay. */
-export function uninstallNotes(p: NotesInstallPaths): void {
-  for (const file of instructionFiles(p)) {
+function removeLegacyNotes(p: NotesInstallPaths): void {
+  for (const file of [path.join(p.claudeHome, 'CLAUDE.md'), path.join(p.codexHome, 'AGENTS.md')]) {
     const text = read(file);
     if (text === undefined) continue;
     const { rest, had } = withoutBlock(text);
@@ -133,8 +138,9 @@ export function uninstallNotes(p: NotesInstallPaths): void {
     if (rest.trim()) fs.writeFileSync(file, rest);
     else fs.rmSync(file, { force: true });
   }
-  for (const name of Object.keys(prompts(''))) {
-    for (const file of promptFiles(p, name)) if (read(file)?.includes(PROMPT_MARK)) fs.rmSync(file, { force: true });
+  for (const name of ['question', 'task']) {
+    for (const file of [path.join(p.claudeHome, 'commands', `${name}.md`), path.join(p.codexHome, 'prompts', `${name}.md`)]) {
+      if (read(file)?.includes(PROMPT_MARK)) fs.rmSync(file, { force: true });
+    }
   }
-  fs.rmSync(p.command, { force: true });
 }
