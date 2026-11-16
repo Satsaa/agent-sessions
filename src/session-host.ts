@@ -34,23 +34,30 @@ function launcherPath(tool: Pick<KeptTool, 'wrapper'>): string {
   return path.join(os.homedir(), '.agent-sessions', 'bin', tool.wrapper);
 }
 
-function writeLauncher(tool: KeptTool, extensionPath: string): void {
+/**
+ * Writes a shell launcher at a fixed path that runs one of this extension's Node programs with this server's Node,
+ * or `fallback` when either has since gone. Rewritten on every activation: both paths change with an update.
+ */
+export function writeNodeLauncher(file: string, program: string, comment: string, fallback: string): void {
   const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
   const script = [
     '#!/bin/sh',
-    '# Written by Agent Sessions: keeps this tool\'s panel sessions running when their window closes.',
+    `# Written by Agent Sessions: ${comment}`,
     `node=${quote(process.execPath)}`,
-    `wrapper=${quote(path.join(extensionPath, 'dist', `${tool.wrapper}.mjs`))}`,
+    `wrapper=${quote(program)}`,
     '[ -x "$node" ] || node=$(command -v node)',
     'if [ -n "$node" ] && [ -f "$wrapper" ]; then ELECTRON_RUN_AS_NODE=1 exec "$node" "$wrapper" "$@"; fi',
-    tool.fallback,
+    fallback,
     '',
   ].join('\n');
-  const file = launcherPath(tool);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, script, { mode: 0o755 });
   fs.renameSync(tmp, file);
+}
+
+function writeLauncher(tool: KeptTool, extensionPath: string): void {
+  writeNodeLauncher(launcherPath(tool), path.join(extensionPath, 'dist', `${tool.wrapper}.mjs`), "keeps this tool's panel sessions running when their window closes.", tool.fallback);
 }
 
 /**

@@ -4,7 +4,7 @@ import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
 import { PhoneLayout, windowFolder } from './phone.js';
 import { rowActionsFor } from './row-actions.js';
-import { applyKeepSessionsRunning } from './session-host.js';
+import { applyKeepSessionsRunning, writeNodeLauncher } from './session-host.js';
 import {
   type ClaudePermissionSettings,
   MIRRORED_CLAUDE_SETTINGS,
@@ -22,7 +22,9 @@ import { listCodexAccounts } from './codex-accounts.js';
 import { closeCodexSession } from './close.js';
 import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
-import { SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type SubagentLayout, type ViewOptions } from './tree.js';
+import { NoteItem, ROW_DETAILS, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
+import { markAnswerRead, notesDir, notesFile, readAllNotes, removeNote, setQuestionStale, setTaskDone, updateNotes, watchNotes, type Question, type SessionNotes } from './notes.js';
+import { installNotes, notesCommandPath, notesInstalled, uninstallNotes, type NotesInstallPaths } from './notes-install.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
 import { switchCodexAccount } from './codex-accounts-ui.js';
 import { signInClaude, signInCodexAccount } from './auth-ui.js';
@@ -52,7 +54,7 @@ interface Config {
   phoneMode: boolean;
   keepSessionsRunning: boolean;
   usage: { enabled: boolean; claudeNetwork: boolean; codexNetwork: boolean; refreshInterval: number };
-  view: Omit<ViewOptions, 'locallyArchived' | 'pinned' | 'backlog' | 'open' | 'search'>;
+  view: Omit<ViewOptions, 'locallyArchived' | 'pinned' | 'backlog' | 'open' | 'search' | 'notes'>;
 }
 
 function readConfig(): Config {
@@ -81,9 +83,14 @@ function readConfig(): Config {
       showActiveArchived: c.get<boolean>('showActiveArchived', true),
       showEmpty: c.get<boolean>('showEmpty', false),
       historyLimit: c.get<number>('historyLimit', 200),
+      // A hand-edited setting may hold anything: only the details there are, each once.
+      rowDetails: [...new Set(c.get<RowDetail[]>('rowDetails', [...ROW_DETAILS]).filter((d) => ROW_DETAILS.includes(d)))],
     },
   };
 }
+
+/** A recorded question with its answer, as a read-only page: `agent-sessions-note:/<tool>/<id>/<question id>.md`. */
+const NOTE_SCHEME = 'agent-sessions-note';
 
 /** Read-only transcript documents: `agent-sessions-transcript:/<tool>/<id>/<title>.md`. */
 const TRANSCRIPT_SCHEME = 'agent-sessions-transcript';
@@ -158,7 +165,15 @@ export function activate(context: vscode.ExtensionContext): void {
     for (const k of now) open.add(k);
     return true;
   };
-  const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned, backlog, open, search });
+  // Each session's recorded tasks and questions (notes.ts), shared by reference with the view and kept current by the watch below.
+  const notesPath = notesDir();
+  const notes = new Map<string, SessionNotes>();
+  try {
+    for (const [key, value] of readAllNotes(notesPath)) notes.set(key, value);
+  } catch (err) {
+    output.appendLine(`reading ${notesPath} failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned, backlog, open, search, notes });
 
   const provider = new SessionsProvider(options(), () => void vscode.commands.executeCommand('setContext', 'agentSessions.loaded', true));
   const view = vscode.window.createTreeView('agentSessions.list', { treeDataProvider: provider, showCollapseAll: true, canSelectMany: true });
@@ -628,6 +643,38 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
   // Another window (the phone, or a second desktop window) archived or pinned something.
+  // A session recorded a task or a question, or another window marked one.
+  const noteChanged = new vscode.EventEmitter<vscode.Uri>();
+  const noteUri = (item: NoteItem) => vscode.Uri.from({ scheme: NOTE_SCHEME, path: `/${item.session.tool}/${item.session.id}/${item.note.id}.md` });
+  context.subscriptions.push(noteChanged, watchNotes(notesPath, notes, () => {
+    provider.notesChanged(true);
+    for (const doc of vscode.workspace.textDocuments) if (doc.uri.scheme === NOTE_SCHEME) noteChanged.fire(doc.uri);
+  }));
+  /** One change to a note's file, shown at once rather than when the watch notices. */
+  const changeNote = (item: NoteItem, change: (n: SessionNotes) => void): void => {
+    const key = `${item.session.tool}:${item.session.id}`;
+    try {
+      const now = updateNotes(notesFile(notesPath, item.session.tool, item.session.id), change);
+      if (now.tasks.length || now.questions.length) notes.set(key, now);
+      else notes.delete(key);
+    } catch (err) {
+      // Removed or changed by its session since the row was drawn: the watch has the truth.
+      void vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
+    }
+    provider.notesChanged(false);
+    noteChanged.fire(noteUri(item));
+  };
+  const noteItemsOf = (arg: unknown, selected: unknown): NoteItem[] => rowsOf(arg, selected).filter((x): x is NoteItem => x instanceof NoteItem);
+  // The agents' side of the notes is opt-in (notes-install.ts). Once installed, its command follows this install's paths.
+  const notesPaths = (): NotesInstallPaths => ({ claudeHome: config.claudeHome, codexHome: config.codexHome, command: notesCommandPath() });
+  const writeNotesCommand = () =>
+    writeNodeLauncher(notesCommandPath(), path.join(context.extensionPath, 'dist', 'session-notes.mjs'), "records a session's tasks and questions.", 'echo "agent-sessions: the Agent Sessions extension is not installed here" >&2; exit 1');
+  try {
+    if (notesInstalled(notesPaths())) writeNotesCommand();
+  } catch (err) {
+    output.appendLine(`session notes command: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   context.subscriptions.push(watchMarks(marksPath, (m) => {
     takeMarks(m);
     provider.setOptions(options());
@@ -859,6 +906,58 @@ export function activate(context: vscode.ExtensionContext): void {
         if (!s) return `# Session ${id} is no longer listed.\n`;
         return formatTranscript(s, await readTranscript(s));
       },
+    }),
+    vscode.workspace.registerTextDocumentContentProvider(NOTE_SCHEME, {
+      onDidChange: noteChanged.event,
+      provideTextDocumentContent(uri) {
+        const [tool, id, file] = uri.path.split('/').filter(Boolean);
+        const q = notes.get(`${tool}:${id}`)?.questions.find((x) => `${x.id}.md` === file);
+        if (!q) return '# This question is no longer recorded.\n';
+        const title = latestSessions.find((x) => x.tool === tool && x.id === id)?.title;
+        const when = (at: number) => new Date(at).toLocaleString();
+        return [
+          `# ${q.text}`,
+          `Asked ${when(q.at)}${title ? ` in “${title}”` : ''}${q.state === 'stale' ? ' · marked stale' : ''}`,
+          q.answer === undefined ? '_Not answered yet._' : `## Answer\n\n${q.answer}\n\n_Answered ${when(q.answeredAt ?? q.at)}_`,
+          '',
+        ].join('\n\n');
+      },
+    }),
+    vscode.commands.registerCommand('agentSessions.note.open', async (arg: unknown) => {
+      if (!(arg instanceof NoteItem) || arg.kind !== 'question') return;
+      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(noteUri(arg)), { preview: true });
+      const q = arg.note as Question;
+      if (q.state === 'answered' && !q.read) changeNote(arg, (n) => void markAnswerRead(n, q.id));
+    }),
+    vscode.commands.registerCommand('agentSessions.note.done', (arg: unknown, selected: unknown) => {
+      for (const item of noteItemsOf(arg, selected)) if (item.kind === 'task') changeNote(item, (n) => void setTaskDone(n, item.note.id, true));
+    }),
+    vscode.commands.registerCommand('agentSessions.note.stale', (arg: unknown, selected: unknown) => {
+      for (const item of noteItemsOf(arg, selected)) if (item.kind === 'question') changeNote(item, (n) => void setQuestionStale(n, item.note.id, true));
+    }),
+    vscode.commands.registerCommand('agentSessions.note.reopen', (arg: unknown, selected: unknown) => {
+      for (const item of noteItemsOf(arg, selected)) changeNote(item, (n) => void (item.kind === 'task' ? setTaskDone(n, item.note.id, false) : setQuestionStale(n, item.note.id, false)));
+    }),
+    vscode.commands.registerCommand('agentSessions.note.remove', (arg: unknown, selected: unknown) => {
+      for (const item of noteItemsOf(arg, selected)) changeNote(item, (n) => removeNote(n, item.kind, item.note.id));
+    }),
+    vscode.commands.registerCommand('agentSessions.notes.install', async () => {
+      try {
+        writeNotesCommand();
+        const { skipped } = installNotes(notesPaths());
+        const left = skipped.length ? ` Left alone, being your own: ${skipped.join(', ')}.` : '';
+        void vscode.window.showInformationMessage(`Claude Code and Codex agents are now told to record tasks and questions, and /question and /task are installed. New sessions pick it up.${left}`);
+      } catch (err) {
+        void vscode.window.showErrorMessage(`Could not install the task and question tools: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }),
+    vscode.commands.registerCommand('agentSessions.notes.uninstall', () => {
+      try {
+        uninstallNotes(notesPaths());
+        void vscode.window.showInformationMessage('Agents are no longer told to record tasks and questions. What was recorded stays listed.');
+      } catch (err) {
+        void vscode.window.showErrorMessage(`Could not remove the task and question tools: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }),
     vscode.commands.registerCommand('agentSessions.back', () => phone.back()),
     vscode.commands.registerCommand('agentSessions.rowActions', async (arg: unknown, selected: unknown) => {

@@ -23,10 +23,11 @@ export class WorktreeItem extends vscode.TreeItem {
     this.description = describe(worktree, stats, sessions);
     this.tooltip = tooltip(worktree, stats, sessions);
     this.resourceUri = vscode.Uri.file(worktree.path);
-    const item = (s: Session, showTool: boolean): SessionItem =>
-      new SessionItem(s, locallyArchived.has(`${s.tool}:${s.id}`), showTool, undefined, `wt:${worktree.path}:`, pinned.has(`${s.tool}:${s.id}`), '',
-        (childrenOf.get(`${s.tool}:${s.id}`) ?? []).map((c) => item(c, false)), backlog.has(`${s.tool}:${s.id}`) && !pinned.has(`${s.tool}:${s.id}`));
-    this.children = sessions.map((s) => item(s, true));
+    // The worktree is the row above, and a session's notes are the Sessions view's to list.
+    const item = (s: Session): SessionItem =>
+      new SessionItem(s, locallyArchived.has(`${s.tool}:${s.id}`), { details: ['age'] }, undefined, `wt:${worktree.path}:`, pinned.has(`${s.tool}:${s.id}`), '',
+        (childrenOf.get(`${s.tool}:${s.id}`) ?? []).map((c) => item(c)), backlog.has(`${s.tool}:${s.id}`) && !pinned.has(`${s.tool}:${s.id}`));
+    this.children = sessions.map((s) => item(s));
   }
 
   readonly children: SessionItem[];

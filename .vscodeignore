@@ -4,6 +4,7 @@
 !dist/session-host.mjs
 !dist/codex-wrapper.mjs
 !dist/runner.mjs
+!dist/session-notes.mjs
 !resources/**
 !package.json
 !README.md

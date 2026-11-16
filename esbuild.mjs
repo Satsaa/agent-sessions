@@ -20,11 +20,11 @@ const options = {
 
 /**
  * The session host, the wrappers Claude Code and Codex start in place of their binaries, and the runner that starts
- * the extension's own commands run as plain Node programs, outside the extension host (see src/host/protocol.ts and src/host/codex-daemon.ts).
+ * the extension's own commands, and the `agent-sessions` command agents record tasks and questions with, run as plain Node programs, outside the extension host (see src/host/protocol.ts and src/host/codex-daemon.ts).
  */
 /** @type {esbuild.BuildOptions} */
 const hostOptions = {
-  entryPoints: { 'claude-wrapper': 'src/host/wrapper.ts', 'codex-wrapper': 'src/host/codex-wrapper.ts', 'session-host': 'src/host/host-main.ts', runner: 'src/host/runner.ts' },
+  entryPoints: { 'claude-wrapper': 'src/host/wrapper.ts', 'codex-wrapper': 'src/host/codex-wrapper.ts', 'session-host': 'src/host/host-main.ts', runner: 'src/host/runner.ts', 'session-notes': 'src/notes-main.ts' },
   bundle: true,
   outdir: 'dist',
   outExtension: { '.js': '.mjs' },

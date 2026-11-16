@@ -69,7 +69,7 @@ test('age warning begins after ten minutes and clears on a successful fresh read
 });
 
 const session = (id, overrides = {}) => ({ tool: 'codex', id, title: id, state: 'stopped', startedAt: 1, updatedAt: 1, archived: false, subagent: false, empty: false, ...overrides });
-const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, subagentLayout: 'nested', activeSort: 'newest', showActiveArchived: true, showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), backlog: new Set(), open: new Set(), search: '', ...overrides });
+const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, subagentLayout: 'nested', activeSort: 'newest', showActiveArchived: true, showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), backlog: new Set(), open: new Set(), search: '', rowDetails: ['questions', 'tasks', 'worktree', 'edits', 'age'], notes: new Map(), ...overrides });
 
 test('pinned stopped sessions stay in Active outside the history cap without becoming live', () => {
   const provider = new SessionsProvider(options(), () => {});
@@ -314,4 +314,38 @@ test('a hovered Sessions view holds a background update for three seconds, and a
   assert.equal(fired, 3, 'what a person changes shows at once, hovered or not');
   t.mock.timers.tick(3000);
   assert.equal(fired, 3, 'and takes the held update with it');
+});
+
+test('a session lists its questions and tasks under it and counts them on its row, in the chosen details', () => {
+  const notes = new Map([['codex:a', {
+    seq: 4,
+    tasks: [{ id: 't1', text: 'Create v2 phone engine', state: 'done', at: 1 }, { id: 't4', text: 'Port the guard', state: 'open', at: 4 }],
+    questions: [
+      { id: 'q2', text: 'Is the old engine kept?', state: 'stale', at: 2 },
+      { id: 'q3', text: 'Does it\nhandle barge-in?', state: 'answered', answer: 'Yes.', at: 3, answeredAt: 5 },
+    ],
+  }]]);
+  const wt = { path: '/wt/phone', name: 'phone', branch: 'phone', repoRoot: '/repo' };
+  const provider = new SessionsProvider(options({ pinned: new Set(), historyLimit: 10, notes }), () => {});
+  provider.setSessions([session('a', { worktree: wt, updatedAt: Date.now() }), session('b', { updatedAt: Date.now() })]);
+  const [a, b] = provider.getChildren()[0].children;
+  assert.match(a.description, /^✉ 1 · ☑ 1\/2 · ⎇ phone · /, 'an unread answer and the tasks done lead the row; the tool is the icon’s to say');
+  assert.doesNotMatch(b.description, /[✉?☑]|Codex/, 'a session with nothing recorded shows no counts');
+  assert.equal(b.collapsibleState, 0);
+  assert.equal(a.collapsibleState, 1, 'notes alone give a session something to expand');
+
+  const [questions, tasks] = provider.getChildren(a);
+  assert.deepEqual([questions.label, questions.description, tasks.label, tasks.description], ['Questions', '1 new answer', 'Tasks', '1/2']);
+  assert.deepEqual(questions.children.map((n) => [n.label, n.contextValue]), [['Does it handle barge-in?', 'note-question-answered'], ['Is the old engine kept?', 'note-question-stale']], 'an unread answer comes first, a stale question last');
+  assert.deepEqual(tasks.children.map((n) => n.contextValue), ['note-task-open', 'note-task-done']);
+  assert.match(provider.resolveTreeItem(questions.children[0], questions.children[0]).tooltip.value, /Yes\./, 'the answer is in the hover');
+
+  provider.setOptions(options({ pinned: new Set(), historyLimit: 10, notes, rowDetails: ['age'] }));
+  assert.doesNotMatch(provider.getChildren()[0].children[0].description, /[✉☑⎇]/, 'only the chosen details are shown');
+  let fired = 0;
+  provider.changed.fire = () => { fired++; };
+  notes.get('codex:a').questions[1].read = true;
+  provider.setOptions(options({ pinned: new Set(), historyLimit: 10, notes }));
+  assert.equal(fired, 1, 'reading an answer redraws: the count leaves the row');
+  assert.match(provider.getChildren()[0].children[0].description, /^☑ 1\/2/);
 });

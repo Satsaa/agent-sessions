@@ -4,6 +4,7 @@ import { isLive, toolLabel, type Session, type SessionState } from './types.js';
 import { relativeTime, repoRootOf } from './util.js';
 import { statsInline, type WorktreeStats } from './worktree.js';
 import { stateIcon, toolIcon } from './icons.js';
+import { noteCounts, type NoteKind, type Question, type SessionNotes, type Task } from './notes.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
 
@@ -108,7 +109,18 @@ export interface ViewOptions {
   open: ReadonlySet<string>;
   /** Words every shown session must match; empty shows the list as usual (see `matchesSearch`). */
   search: string;
+  /** What a session's row says after its title, in this order (see `describe`). */
+  rowDetails: readonly RowDetail[];
+  /** Each session's recorded tasks and questions, by `tool:id` (notes.ts). */
+  notes: ReadonlyMap<string, SessionNotes>;
 }
+
+/**
+ * A part of a session row's description. `edits` is a worktree's commits ahead and behind and its changed lines; it
+ * stands with the worktree's name when both are shown.
+ */
+export const ROW_DETAILS = ['questions', 'tasks', 'worktree', 'edits', 'age'] as const;
+export type RowDetail = (typeof ROW_DETAILS)[number];
 
 /**
  * Whether a session matches every word of a search, ignoring case: in its title, tool, role, worktree, branch,
@@ -119,13 +131,99 @@ export function matchesSearch(s: Session, search: string): boolean {
   return search.toLowerCase().split(/\s+/).filter(Boolean).every((word) => text.includes(word));
 }
 
-export class SessionItem extends vscode.TreeItem {
+/** A row whose tooltip is built when the pointer reaches it (see `resolveTooltip`). */
+interface HoverTooltip {
   readonly tooltipOnHover: () => vscode.MarkdownString;
+}
+
+const oneLine = (text: string): string => {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length > 140 ? `${line.slice(0, 139)}…` : line;
+};
+
+/** One recorded task or question, under its session's Tasks or Questions row. */
+export class NoteItem extends vscode.TreeItem implements HoverTooltip {
+  readonly children: readonly never[] = [];
+  readonly tooltipOnHover: () => vscode.MarkdownString;
+
+  constructor(public readonly session: Session, public readonly kind: NoteKind, public readonly note: Task | Question, idPrefix: string) {
+    super(oneLine(note.text), vscode.TreeItemCollapsibleState.None);
+    this.id = `${idPrefix}/${note.id}`;
+    const unread = kind === 'question' && note.state === 'answered' && !(note as Question).read;
+    // `note-<kind>-<state>`: what the menus' when-clauses and the row action picker read (row-actions.ts).
+    this.contextValue = `note-${kind}-${note.state}`;
+    const faded = new vscode.ThemeColor('disabledForeground');
+    this.iconPath =
+      note.state === 'done' ? new vscode.ThemeIcon('pass', faded)
+      : note.state === 'stale' ? new vscode.ThemeIcon('circle-slash', faded)
+      : note.state === 'answered' ? (unread ? new vscode.ThemeIcon('mail', new vscode.ThemeColor('charts.green')) : new vscode.ThemeIcon('mail-read', faded))
+      : kind === 'question' ? new vscode.ThemeIcon('question', new vscode.ThemeColor('charts.yellow'))
+      : new vscode.ThemeIcon('circle-large-outline');
+    const answeredAt = kind === 'question' ? (note as Question).answeredAt : undefined;
+    this.description =
+      note.state === 'done' ? 'done'
+      : note.state === 'stale' ? 'stale'
+      : note.state === 'answered' ? `${unread ? 'new answer' : 'answered'} · ${relativeTime(answeredAt ?? note.at)}`
+      : relativeTime(note.at);
+    this.tooltipOnHover = () => {
+      const md = new vscode.MarkdownString(undefined, true);
+      md.appendMarkdown(`**${escapeMd(note.text)}**\n\n`);
+      const answer = kind === 'question' ? (note as Question).answer : undefined;
+      if (answer !== undefined) md.appendMarkdown(`${answer}\n\n`);
+      md.appendMarkdown(`$(clock) ${new Date(note.at).toLocaleString()} · \`${note.id}\``);
+      return md;
+    };
+    // A question opens as a page with its answer, which also marks the answer read.
+    if (kind === 'question') this.command = { command: 'agentSessions.note.open', title: 'Open Question', arguments: [this] };
+  }
+}
+
+/** A session's Questions or Tasks row, holding its notes. */
+export class NoteGroupItem extends vscode.TreeItem {
+  constructor(public readonly kind: NoteKind, public readonly children: NoteItem[], summary: string, idPrefix: string) {
+    super(kind === 'question' ? 'Questions' : 'Tasks', vscode.TreeItemCollapsibleState.Expanded);
+    this.id = `${idPrefix}/${kind}s`;
+    this.description = summary;
+    this.iconPath = new vscode.ThemeIcon(kind === 'question' ? 'comment-discussion' : 'checklist');
+    this.contextValue = 'notes';
+  }
+}
+
+/** What is unanswered or unread first, then what is settled, each oldest first. */
+const QUESTION_ORDER: Record<Question['state'], number> = { open: 1, answered: 2, stale: 3 };
+
+function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix: string): NoteGroupItem[] {
+  if (!notes) return [];
+  const counts = noteCounts(notes);
+  const groups: NoteGroupItem[] = [];
+  if (notes.questions.length) {
+    const rank = (q: Question) => (q.state === 'answered' && !q.read ? 0 : QUESTION_ORDER[q.state]);
+    const rows = [...notes.questions].sort((a, b) => rank(a) - rank(b) || a.at - b.at);
+    const summary = [counts.answersUnread ? `${counts.answersUnread} new answer${counts.answersUnread === 1 ? '' : 's'}` : '', counts.questionsOpen ? `${counts.questionsOpen} open` : ''].filter(Boolean).join(' · ');
+    groups.push(new NoteGroupItem('question', rows.map((q) => new NoteItem(session, 'question', q, idPrefix)), summary, idPrefix));
+  }
+  if (notes.tasks.length) {
+    const rows = [...notes.tasks].sort((a, b) => Number(a.state === 'done') - Number(b.state === 'done') || a.at - b.at);
+    groups.push(new NoteGroupItem('task', rows.map((t) => new NoteItem(session, 'task', t, idPrefix)), `${counts.tasksDone}/${notes.tasks.length}`, idPrefix));
+  }
+  return groups;
+}
+
+/** How a row shows a session: the details of its description, and the notes listed under it. */
+export interface RowContent {
+  details: readonly RowDetail[];
+  notes?: SessionNotes | undefined;
+}
+
+export class SessionItem extends vscode.TreeItem implements HoverTooltip {
+  readonly tooltipOnHover: () => vscode.MarkdownString;
+  /** The session's Questions and Tasks rows, listed before the sessions it spawned. */
+  readonly notes: NoteGroupItem[];
 
   constructor(
     public readonly session: Session,
     public readonly archivedHere: boolean,
-    showTool: boolean,
+    content: RowContent,
     stats: WorktreeStats | undefined,
     idPrefix = '',
     pinned = false,
@@ -135,14 +233,15 @@ export class SessionItem extends vscode.TreeItem {
     backlog = false,
   ) {
     // A session's thread opens collapsed; inside it, every spawned session's own subtree is already open.
-    super(session.title, !children.length ? vscode.TreeItemCollapsibleState.None : session.subagent ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+    super(session.title, !children.length && !hasNotes(content.notes) ? vscode.TreeItemCollapsibleState.None : session.subagent ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     const archived = session.archived || archivedHere;
     this.id = `${idPrefix}${session.tool}:${session.id}${idSuffix}`;
+    this.notes = noteGroups(session, content.notes, this.id);
     this.iconPath = stateIcon(session.tool, session.state, archived);
-    this.description = `${pinned ? '📌 ' : ''}${describe(session, showTool, stats)}`;
+    this.description = `${pinned ? '📌 ' : ''}${describe(session, content, stats)}`;
     // Built on hover (`resolveTreeItem`), which is also how the view learns the pointer is over it.
     this.tooltipOnHover = () => {
-      const tooltip = tooltipFor(session, archived, stats);
+      const tooltip = tooltipFor(session, archived, stats, content.notes);
       if (pinned) tooltip.appendMarkdown('\n\n$(pin) Pinned to Active');
       if (backlog) tooltip.appendMarkdown('\n\n$(inbox) In Backlog');
       if (session.detached) tooltip.appendMarkdown('\n\n$(debug-disconnect) Detached from the session that started it');
@@ -160,6 +259,8 @@ export class SessionItem extends vscode.TreeItem {
   }
 }
 
+const hasNotes = (notes: SessionNotes | undefined): boolean => !!notes && notes.tasks.length + notes.questions.length > 0;
+
 export class GroupItem extends vscode.TreeItem {
   constructor(
     public readonly key: string,
@@ -176,14 +277,14 @@ export class GroupItem extends vscode.TreeItem {
   }
 }
 
-type Node = SessionItem | GroupItem;
+type Node = SessionItem | GroupItem | NoteGroupItem | NoteItem;
 
 /** How long the view keeps still after the pointer reaches a row, so a row is not moved from under a click. */
 const HOVER_HOLD_MS = 3000;
 
 /** Fill in a hovered row's tooltip. */
 export function resolveTooltip(item: vscode.TreeItem, element: unknown): vscode.TreeItem {
-  if (element instanceof SessionItem) item.tooltip = element.tooltipOnHover();
+  if (element instanceof SessionItem || element instanceof NoteItem) item.tooltip = element.tooltipOnHover();
   return item;
 }
 
@@ -194,27 +295,43 @@ const STATE_LABEL: Record<SessionState, string> = {
   stopped: 'Stopped',
 };
 
-function describe(session: Session, showTool: boolean, stats: WorktreeStats | undefined): string {
+/**
+ * What follows a row's title: the agent's role, then the details chosen in `agentSessions.rowDetails`, in their order.
+ * The tool is the row's icon, and a detail with nothing to say is left out.
+ */
+function describe(session: Session, content: RowContent, stats: WorktreeStats | undefined): string {
   const parts: string[] = [];
-  if (showTool) parts.push(toolLabel(session.tool));
   if (session.agentRole) parts.push(session.agentRole);
+  const counts = noteCounts(content.notes);
   const wt = session.worktree;
-  if (wt) {
-    let text = `⎇ ${wt.name}`;
-    if (stats?.gone) text += ' (gone)';
-    else if (stats) {
-      const inline = statsInline(stats);
-      if (inline) text += ` ${inline}`;
+  const edits = wt && stats && !stats.gone ? statsInline(stats) : '';
+  for (const detail of content.details) {
+    switch (detail) {
+      case 'questions':
+        // Unread answers before open questions: an answer is the one waiting for you.
+        if (counts.answersUnread) parts.push(`✉ ${counts.answersUnread}`);
+        if (counts.questionsOpen) parts.push(`? ${counts.questionsOpen}`);
+        break;
+      case 'tasks':
+        if (counts.tasksOpen + counts.tasksDone) parts.push(`☑ ${counts.tasksDone}/${counts.tasksOpen + counts.tasksDone}`);
+        break;
+      case 'worktree':
+        // A session in the main checkout names neither: the repository is where you
+        // are anyway, and its branch is the tooltip's business.
+        if (wt) parts.push(`⎇ ${wt.name}${stats?.gone ? ' (gone)' : edits && content.details.includes('edits') ? ` ${edits}` : ''}`);
+        break;
+      case 'edits':
+        if (edits && !content.details.includes('worktree')) parts.push(edits);
+        break;
+      case 'age':
+        parts.push(relativeTime(session.updatedAt));
+        break;
     }
-    parts.push(text);
   }
-  // A session in the main checkout names neither: the repository is where you
-  // are anyway, and its branch is the tooltip's business.
-  parts.push(relativeTime(session.updatedAt));
   return parts.join(' · ');
 }
 
-function tooltipFor(session: Session, archived: boolean, stats: WorktreeStats | undefined): vscode.MarkdownString {
+function tooltipFor(session: Session, archived: boolean, stats: WorktreeStats | undefined, notes: SessionNotes | undefined): vscode.MarkdownString {
   const md = new vscode.MarkdownString(undefined, true);
   md.isTrusted = true;
   md.appendMarkdown(`**${escapeMd(session.title)}**\n\n`);
@@ -236,6 +353,9 @@ function tooltipFor(session: Session, archived: boolean, stats: WorktreeStats | 
     if (session.cwd) md.appendMarkdown(`$(folder) \`${session.cwd}\`\n\n`);
     if (session.branch) md.appendMarkdown(`$(git-branch) \`${session.branch}\`\n\n`);
   }
+  const counts = noteCounts(notes);
+  if (counts.answersUnread + counts.questionsOpen) md.appendMarkdown(`$(comment-discussion) ${[counts.answersUnread ? `${counts.answersUnread} unread answer${counts.answersUnread === 1 ? '' : 's'}` : '', counts.questionsOpen ? `${counts.questionsOpen} open question${counts.questionsOpen === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ')}\n\n`);
+  if (counts.tasksOpen + counts.tasksDone) md.appendMarkdown(`$(checklist) ${counts.tasksDone} of ${counts.tasksOpen + counts.tasksDone} task${counts.tasksOpen + counts.tasksDone === 1 ? '' : 's'} done\n\n`);
   md.appendMarkdown(`$(clock) ${new Date(session.updatedAt).toLocaleString()}\n\n`);
   if (session.pid) md.appendMarkdown(`$(server-process) pid ${session.pid}\n\n`);
   md.appendMarkdown(`\`${session.id}\``);
@@ -321,6 +441,11 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     this.rebuild(true);
   }
 
+  /** The notes map the options share was filled anew: by a session's own command (`background`), or by a person here. */
+  notesChanged(background: boolean): void {
+    this.rebuild(background);
+  }
+
   setOptions(options: ViewOptions): void {
     this.options = options;
     this.rebuild();
@@ -370,7 +495,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
       if (this.scanned) this.announceLoaded();
       return this.roots;
     }
-    return element.children;
+    return element instanceof SessionItem ? [...element.notes, ...element.children] : [...element.children];
   }
 
   getParent(element: Node): Node | undefined {
@@ -494,9 +619,9 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     const backlog = all.filter(inBacklog).sort(byRecency);
     const history = all.filter((s) => !inBacklog(s) && !working(s) && !isPinned(s)).sort(byRecency).slice(0, o.historyLimit);
     const shown = [...active, ...backlog, ...history];
-    const item = (s: Session, showTool = true): SessionItem =>
-      new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), showTool, s.worktree ? this.stats.get(s.worktree.path) : undefined, '', isPinned(s), retiredSuffix(s),
-        (childrenOf.get(`${s.tool}:${s.id}`) ?? []).map((c) => item(c, false)), inBacklog(s));
+    const item = (s: Session): SessionItem =>
+      new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), { details: o.rowDetails, notes: o.notes.get(`${s.tool}:${s.id}`) }, s.worktree ? this.stats.get(s.worktree.path) : undefined, '', isPinned(s), retiredSuffix(s),
+        (childrenOf.get(`${s.tool}:${s.id}`) ?? []).map((c) => item(c)), inBacklog(s));
     const retiredSuffix = (s: Session) => {
       const n = this.retired.get(`${s.tool}:${s.id}`);
       return n ? `#${n}` : '';
@@ -534,7 +659,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
           const groups: Node[] = [];
           for (const tool of ['claude', 'codex'] as const) {
             const mine = shown.filter((s) => s.tool === tool);
-            if (mine.length) groups.push(new GroupItem(tool, toolLabel(tool), mine.map((s) => item(s, false)), toolIcon(tool), true));
+            if (mine.length) groups.push(new GroupItem(tool, toolLabel(tool), mine.map((s) => item(s)), toolIcon(tool), true));
           }
           this.roots = groups;
           break;
@@ -577,6 +702,8 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
 /** A tree row with the rows nested under it. */
 export interface Row extends vscode.TreeItem {
   readonly children: readonly Row[];
+  /** A session's Questions and Tasks rows, listed before `children`. */
+  readonly notes?: readonly Row[];
 }
 
 /** Everything a row shows, so equal keys mean an equal picture. */
@@ -587,5 +714,6 @@ export function renderKey(node: Row): unknown {
     : typeof icon === 'object' && icon !== null && 'dark' in icon ? String(icon.dark)
     : String(icon);
   const base = [node.id, node.label, node.description, node.contextValue, node.collapsibleState, iconKey];
-  return node.children.length ? [...base, node.children.map(renderKey)] : base;
+  const under = [...(node.notes ?? []), ...node.children];
+  return under.length ? [...base, under.map(renderKey)] : base;
 }
