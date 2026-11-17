@@ -978,6 +978,9 @@ export function activate(context: vscode.ExtensionContext): void {
       const resolution = await askResolution(`${task.state === 'done' ? 'Done' : 'Dropped'}: ${task.text}`, task.resolution ?? '');
       if (resolution !== undefined) changeNote(arg, (n) => void setTaskState(n, task.id, task.state, resolution, task.closedAt));
     }),
+    vscode.commands.registerCommand('agentSessions.note.markRead', (arg: unknown, selected: unknown) => {
+      for (const item of noteItemsOf(arg, selected)) if (item.kind === 'question') changeNote(item, (n) => void markAnswerRead(n, item.note.id));
+    }),
     vscode.commands.registerCommand('agentSessions.note.stale', (arg: unknown, selected: unknown) => {
       for (const item of noteItemsOf(arg, selected)) if (item.kind === 'question') changeNote(item, (n) => void setQuestionStale(n, item.note.id, true));
     }),

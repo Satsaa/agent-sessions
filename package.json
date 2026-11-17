@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.35",
+  "version": "0.8.36",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -397,6 +397,12 @@
         "icon": "$(check)"
       },
       {
+        "command": "agentSessions.note.markRead",
+        "title": "Mark Answer Read",
+        "category": "Agent Sessions",
+        "icon": "$(check)"
+      },
+      {
         "command": "agentSessions.note.stale",
         "title": "Mark Question Stale",
         "category": "Agent Sessions",
@@ -740,18 +746,23 @@
           "group": "1_note@1"
         },
         {
-          "command": "agentSessions.note.stale",
-          "when": "view == agentSessions.list && viewItem =~ /^note-question-(open|answered)$/ && !agentSessions.phoneMode",
+          "command": "agentSessions.note.markRead",
+          "when": "view == agentSessions.list && viewItem == note-question-answered-unread && !agentSessions.phoneMode",
           "group": "inline@2"
         },
         {
+          "command": "agentSessions.note.markRead",
+          "when": "view == agentSessions.list && viewItem == note-question-answered-unread",
+          "group": "1_note@1"
+        },
+        {
           "command": "agentSessions.note.stale",
-          "when": "view == agentSessions.list && viewItem =~ /^note-question-(open|answered)$/",
+          "when": "view == agentSessions.list && viewItem =~ /^note-question-(open|answered)/",
           "group": "1_note@2"
         },
         {
           "command": "agentSessions.note.reopen",
-          "when": "view == agentSessions.list && viewItem =~ /^note-(task-done|task-dropped|question-stale)$/ && !agentSessions.phoneMode",
+          "when": "view == agentSessions.list && viewItem =~ /^note-task-(done|dropped)$/ && !agentSessions.phoneMode",
           "group": "inline@3"
         },
         {
@@ -924,6 +935,10 @@
         },
         {
           "command": "agentSessions.note.done",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.note.markRead",
           "when": "false"
         },
         {

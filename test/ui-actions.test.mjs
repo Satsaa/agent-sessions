@@ -341,7 +341,7 @@ test('a session lists its questions and tasks under it and counts them on its ro
   const [notesRow] = provider.getChildren(a);
   assert.deepEqual([provider.getChildren(a).length, notesRow.label, notesRow.description, notesRow.collapsibleState], [1, 'Questions and Tasks', '1 new answer · 1/2 tasks done', 2], 'questions and tasks share one open row');
   assert.deepEqual(notesRow.children.map((n) => [n.label, n.contextValue]), [
-    ['Does it handle barge-in?', 'note-question-answered'],
+    ['Does it handle barge-in?', 'note-question-answered-unread'],
     ['Port the guard', 'note-task-open'],
     ['Create v2 phone engine', 'note-task-done'],
     ['Keep Twilio Media', 'note-task-dropped'],

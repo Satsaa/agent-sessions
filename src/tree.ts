@@ -150,8 +150,8 @@ export class NoteItem extends vscode.TreeItem implements HoverTooltip {
     super(oneLine(note.text), vscode.TreeItemCollapsibleState.None);
     this.id = `${idPrefix}/${note.id}`;
     const unread = kind === 'question' && note.state === 'answered' && !(note as Question).read;
-    // `note-<kind>-<state>`: what the menus' when-clauses and the row action picker read (row-actions.ts).
-    this.contextValue = `note-${kind}-${note.state}`;
+    // `note-<kind>-<state>[-unread]`: what the menus' when-clauses and the row action picker read (row-actions.ts).
+    this.contextValue = `note-${kind}-${note.state}${unread ? '-unread' : ''}`;
     const faded = new vscode.ThemeColor('disabledForeground');
     this.iconPath =
       note.state === 'done' ? new vscode.ThemeIcon('pass', faded)
