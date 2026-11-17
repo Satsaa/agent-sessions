@@ -97,6 +97,15 @@ const NOTE_SCHEME = 'agent-sessions-note';
 /** Read-only transcript documents: `agent-sessions-transcript:/<tool>/<id>/<title>.md`. */
 const TRANSCRIPT_SCHEME = 'agent-sessions-transcript';
 
+/** Opens one of the view's Markdown pages rendered, in VS Code's own Markdown preview; as text where the built-in Markdown extension is disabled. */
+async function showMarkdown(uri: vscode.Uri): Promise<void> {
+  try {
+    await vscode.commands.executeCommand('markdown.showPreview', uri);
+  } catch {
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), { preview: true });
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   initIcons(context);
   const output = vscode.window.createOutputChannel('Agent Sessions');
@@ -949,7 +958,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('agentSessions.note.open', async (arg: unknown) => {
       if (!(arg instanceof NoteItem || arg instanceof DoneItem)) return;
-      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(noteUri(arg)), { preview: true });
+      await showMarkdown(noteUri(arg));
       if (arg instanceof DoneItem || arg.kind !== 'question') return;
       const q = arg.note as Question;
       if (q.state === 'answered' && !q.read) changeNote(arg, (n) => void markAnswerRead(n, q.id));
@@ -1025,7 +1034,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!s) return;
       const uri = vscode.Uri.from({ scheme: TRANSCRIPT_SCHEME, path: `/${s.tool}/${s.id}/${s.title.replace(/[\/\\:]/g, ' ').slice(0, 60) || 'transcript'}.md` });
       transcriptChanged.fire(uri);
-      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), { preview: true });
+      await showMarkdown(uri);
     }),
     vscode.commands.registerCommand('agentSessions.revealTranscript', async (arg: unknown) => {
       const s = sessionOf(arg);
