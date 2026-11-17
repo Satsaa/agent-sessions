@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Claude Code and Codex sessions in one sidebar: live status, worktree, subscription usage, one click to open, new sessions as tabs.",
-  "version": "0.8.36",
+  "version": "0.8.37",
   "publisher": "satsaa",
   "license": "MIT",
   "repository": {
@@ -387,7 +387,7 @@
       },
       {
         "command": "agentSessions.note.open",
-        "title": "Open Task or Question",
+        "title": "Open Task, Answer or Question",
         "category": "Agent Sessions"
       },
       {
@@ -403,8 +403,14 @@
         "icon": "$(check)"
       },
       {
+        "command": "agentSessions.note.answered",
+        "title": "Mark Answered",
+        "category": "Agent Sessions",
+        "icon": "$(check)"
+      },
+      {
         "command": "agentSessions.note.stale",
-        "title": "Mark Question Stale",
+        "title": "Mark Stale",
         "category": "Agent Sessions",
         "icon": "$(circle-slash)"
       },
@@ -747,17 +753,27 @@
         },
         {
           "command": "agentSessions.note.markRead",
-          "when": "view == agentSessions.list && viewItem == note-question-answered-unread && !agentSessions.phoneMode",
+          "when": "view == agentSessions.list && viewItem == note-answer-answered-unread && !agentSessions.phoneMode",
           "group": "inline@2"
         },
         {
           "command": "agentSessions.note.markRead",
-          "when": "view == agentSessions.list && viewItem == note-question-answered-unread",
+          "when": "view == agentSessions.list && viewItem == note-answer-answered-unread",
+          "group": "1_note@1"
+        },
+        {
+          "command": "agentSessions.note.answered",
+          "when": "view == agentSessions.list && viewItem == note-question-open && !agentSessions.phoneMode",
+          "group": "inline@2"
+        },
+        {
+          "command": "agentSessions.note.answered",
+          "when": "view == agentSessions.list && viewItem == note-question-open",
           "group": "1_note@1"
         },
         {
           "command": "agentSessions.note.stale",
-          "when": "view == agentSessions.list && viewItem =~ /^note-question-(open|answered)/",
+          "when": "view == agentSessions.list && viewItem =~ /^note-(answer|question)-(open|answered)/",
           "group": "1_note@2"
         },
         {
@@ -767,17 +783,17 @@
         },
         {
           "command": "agentSessions.note.reopen",
-          "when": "view == agentSessions.list && viewItem =~ /^note-(task-done|task-dropped|question-stale)$/",
+          "when": "view == agentSessions.list && viewItem =~ /^note-(task-done|task-dropped|answer-stale|question-stale)$/",
           "group": "1_note@3"
         },
         {
           "command": "agentSessions.note.remove",
-          "when": "view == agentSessions.list && viewItem =~ /^note-(task|question)-/ && !agentSessions.phoneMode",
+          "when": "view == agentSessions.list && viewItem =~ /^note-(task|answer|question)-/ && !agentSessions.phoneMode",
           "group": "inline@4"
         },
         {
           "command": "agentSessions.note.remove",
-          "when": "view == agentSessions.list && viewItem =~ /^note-(task|question)-/",
+          "when": "view == agentSessions.list && viewItem =~ /^note-(task|answer|question)-/",
           "group": "1_note@4"
         },
         {
@@ -942,6 +958,10 @@
           "when": "false"
         },
         {
+          "command": "agentSessions.note.answered",
+          "when": "false"
+        },
+        {
           "command": "agentSessions.note.stale",
           "when": "false"
         },
@@ -1078,7 +1098,7 @@
               "age"
             ],
             "enumDescriptions": [
-              "Unread answers (✉) and open questions (?) recorded for the session",
+              "Questions the session's agent asked you that wait for you (?), and its answers to yours you have not read (✉)",
               "Tasks done of those recorded (☑ 1/3)",
               "The worktree the session works in",
               "A worktree's commits ahead and behind and its changed lines",
@@ -1092,7 +1112,7 @@
             "edits",
             "age"
           ],
-          "markdownDescription": "What a session's row shows after its title, in this order. A detail with nothing to show is left out. Tasks and questions are what the session's agent recorded with the `agent-sessions` command (*Agent Sessions: Install Task and Question Tools for Agents*)."
+          "markdownDescription": "What a session's row shows after its title, in this order. A detail with nothing to show is left out. Tasks, answers and questions are what the session's agent recorded with the `agent-sessions` command (*Agent Sessions: Install the Agent Sessions Plugin for Claude Code and Codex*)."
         },
         "agentSessions.showEmpty": {
           "type": "boolean",

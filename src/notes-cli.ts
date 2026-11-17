@@ -1,30 +1,33 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import {
-  DONE_PARTS, NoteError, addQuestion, addTask, answerQuestion, markSessionDone, notesDir, notesFile, readNotes, reopenSession, setQuestionStale, setTaskState, updateNotes,
-  type DonePart, type SessionNotes,
+  DONE_PARTS, NoteError, addAnswer, addQuestion, addTask, answerQuestion, emptyNotes, kindOf, markSessionDone, notesDir, notesFile, readNotes, reopenSession, setStale, setTaskState,
+  updateNotes, writeAnswer, type DonePart, type SessionNotes,
 } from './notes.js';
 import type { Tool } from './types.js';
 
 /**
- * The `agent-sessions` command an agent runs in its own shell to record its session's tasks and questions (notes.ts).
- * It finds its session from the variables both tools give their shell commands, so an agent never names it.
+ * The `agent-sessions` command an agent runs in its own shell to record its session's tasks, answers and questions
+ * (notes.ts). It finds its session from the variables both tools give their shell commands, so an agent never names it.
  */
-const USAGE = `Records this session's tasks and questions; the user sees them listed under the session.
+const USAGE = `Records this session's tasks, answers and questions; the user sees them listed under the session.
 
   agent-sessions task add <text>          a deliverable, e.g. "Create v2 phone engine"
   agent-sessions task done <id> <what was delivered>
   agent-sessions task drop <id> <why it was abandoned>
-  agent-sessions question add <text>      a question the user asked
-  agent-sessions question answer <id> <answer>
-  agent-sessions question stale <id>      no longer worth an answer
+  agent-sessions answer add <question>    a question the user asked you
+  agent-sessions answer write <id> <answer>
+  agent-sessions question add <question>  a question you asked the user, waiting for them
+  agent-sessions question answered <id> <what the user answered>
+  agent-sessions answer stale <id>, question stale <id>
+                                          no longer needed
   agent-sessions list
   agent-sessions done --features <what was delivered and where> --tickets <each ticket and its status now> --cleanup <worktrees, branches and processes removed or left>
                                           closes the session; every part is said, "none" with the reason included
   agent-sessions reopen                   the session is not done after all
 
 A text given as - is read from standard input, for anything with quotes or several lines:
-  agent-sessions question answer q1 - <<'END'
+  agent-sessions answer write a1 - <<'END'
   …
   END
 --session <claude|codex>:<id> names another session than the one running the command.`;
@@ -34,33 +37,39 @@ type Env = Record<string, string | undefined>;
 const COMMAND = '~/.agent-sessions/bin/agent-sessions';
 
 /** What every session of an agent with the plugin is told when it starts (the plugin's SessionStart hook prints it). */
-export const INSTRUCTIONS = `## Session tasks and questions (Agent Sessions)
+export const INSTRUCTIONS = `## Session tasks, answers and questions (Agent Sessions)
 
-\`${COMMAND}\` records this session's tasks and the user's questions. The user sees them listed under the session, outside the chat, so nothing asked or agreed gets lost in a long conversation. \`${COMMAND} help\` lists the commands.
+\`${COMMAND}\` records this session's tasks, the answers to the user's questions, and the questions you ask the user. The user sees them listed under the session, outside the chat, so nothing asked or agreed gets lost in a long conversation. \`${COMMAND} help\` lists the commands.
 
-This applies to every session and is not optional: a task or a question left unrecorded is one the user loses track of. Record every time, in the same turn, before starting the work; when in doubt, record it.
+This applies to every session and is not optional: a task, an answer or a question left unrecorded is one the user loses track of. Record every time, in the same turn, before starting the work; when in doubt, record it.
 
 - **Every deliverable the user asks for is a task**, recorded the moment it is asked: a plan, a doc, a skill change, a code change, a fix, small ones and ones delegated to a subagent included. Name the deliverable, such as "Create v2 phone engine", never a step of one or your own todo list (\`task add "<name>"\`). Close it when it is finished and checked, saying in a line or two what was delivered and where (\`task done <id> "<what was delivered>"\`), or when it is abandoned, saying why (\`task drop <id> "<why>"\`).
-- **Every question the user asks is recorded**, in their words (\`question add "<question>"\`), unless your same short reply answers it fully.
-- **Answer a recorded question in both places**: write the answer in your reply, and record the same answer with \`question answer <id> -\`, the text on standard input. The user reads recorded answers on their own, so the text must make sense without the conversation. **A recorded answer, and a task's done or drop summary, is terse and specific**: only what answers it, with no hedging, no restating of the question, and no filler or obvious context; a short header per point with bullets under it, never paragraphs of prose.
-- **A recorded answer always matches the latest answer in the conversation**: when a later reply changes, corrects or extends it, such as after a follow-up like "are you sure?", record it again with \`question answer <id> -\` in the same turn, before ending it. A stale recorded answer is wrong.
-- The user can record a question or a task themselves with the plugin's question and task commands. Do not expect them to: recording what they ask is your job either way.
-- Before ending a turn in a session that has anything recorded, run \`list\` and answer what you can now. Leave the rest open; \`question stale <id>\` marks one that no longer matters.
-- **When the session's work is all delivered, or the user says it is done, close it with the plugin's done skill**: it checks the features, the tickets and the cleanup, then records them with \`done\`. A session is never marked done with a task open or a question unanswered.`;
+- **Every question the user asks is recorded as an answer to give**, in their words (\`answer add "<their question>"\`), unless your same short reply answers it fully.
+- **Answer it in both places**: write the answer in your reply, and record the same answer with \`answer write <id> -\`, the text on standard input. The user reads recorded answers on their own, so the text must make sense without the conversation. **A recorded answer, and a task's done or drop summary, is terse and specific**: only what answers it, with no hedging, no restating of the question, and no filler or obvious context; a short header per point with bullets under it, never paragraphs of prose.
+- **A recorded answer always matches the latest answer in the conversation**: when a later reply changes, corrects or extends it, such as after a follow-up like "are you sure?", record it again with \`answer write <id> -\` in the same turn, before ending it. A stale recorded answer is wrong.
+- **Every question you ask the user is recorded**, the moment you ask it (\`question add "<question>"\`): a decision only they can make, something you need from them, a choice you offer. It stays listed as waiting for them. When they answer, record what they answered in the same turn (\`question answered <id> "<their answer>"\`); \`question stale <id>\` marks one that no longer needs them.
+- The user can record these themselves with the plugin's task, answer and question commands. Do not expect them to: recording is your job either way.
+- Before ending a turn in a session that has anything recorded, run \`list\` and answer what you can now. Leave the rest open; \`answer stale <id>\` marks a question of theirs that no longer matters.
+- **When the session's work is all delivered, or the user says it is done, close it with the plugin's done skill**: it checks the features, the tickets and the cleanup, then records them with \`done\`. A session is never marked done with a task open, a question of the user's unanswered, or a question to the user waiting for them.`;
 
 /**
  * What a plugin hook prints into the session: the instructions and what is recorded when it starts, and with each
- * prompt only what is still open, so a long session is reminded of exactly what it owes.
+ * prompt only what is still open, so a long session is reminded of exactly what it owes and what waits for the user.
  */
 export function hookText(event: string, notes: SessionNotes): string {
   const open = [
     ...notes.tasks.filter((t) => t.state === 'open').map((t) => `  task ${t.id}: ${t.text}`),
-    ...notes.questions.filter((q) => q.state === 'open').map((q) => `  question ${q.id} (unanswered): ${q.text}`),
+    ...notes.answers.filter((a) => a.state === 'open').map((a) => `  answer ${a.id} (not answered yet): ${a.text}`),
+    ...notes.questions.filter((q) => q.state === 'open').map((q) => `  question ${q.id} (waiting for the user): ${q.text}`),
   ];
-  if (event === 'session-start') return [INSTRUCTIONS, ...(notes.tasks.length || notes.questions.length || notes.done ? ['', 'Recorded for this session so far:', formatNotes(notes)] : [])].join('\n');
+  if (event === 'session-start') return [INSTRUCTIONS, ...(notes.tasks.length || notes.answers.length || notes.questions.length || notes.done ? ['', 'Recorded for this session so far:', formatNotes(notes)] : [])].join('\n');
   if (event !== 'prompt') throw new NoteError('hook takes session-start or prompt');
   if (!open.length) return '';
-  return [`Agent Sessions: this session still has open (\`${COMMAND} list\`):`, ...open, 'Close a task when it is delivered and answer a question in your reply and with `question answer`. Before working on this message, record each deliverable it asks for as a task and each question it asks, unless your same short reply answers it fully.'].join('\n');
+  return [
+    `Agent Sessions: this session still has open (\`${COMMAND} list\`):`,
+    ...open,
+    'Close a task when it is delivered, and answer a question of the user\'s in your reply and with `answer write`. If this message answers a question waiting for the user, record it with `question answered`. Before working on this message, record each deliverable it asks for as a task and each question it asks as an answer to give, unless your same short reply answers it fully.',
+  ].join('\n');
 }
 
 /** The session a hook runs for: both tools hand their hooks the session's id on standard input. */
@@ -125,10 +134,11 @@ export function sessionOf(env: Env, named: string | undefined, nearest: () => To
 }
 
 export function formatNotes(notes: SessionNotes): string {
-  if (!notes.tasks.length && !notes.questions.length && !notes.done) return 'Nothing recorded for this session.';
+  if (!notes.tasks.length && !notes.answers.length && !notes.questions.length && !notes.done) return 'Nothing recorded for this session.';
   const lines: string[] = [];
   if (notes.tasks.length) lines.push('Tasks', ...notes.tasks.map((t) => `  ${t.id} [${t.state}] ${t.text}`));
-  if (notes.questions.length) lines.push('Questions', ...notes.questions.map((q) => `  ${q.id} [${q.state}] ${q.text}`));
+  if (notes.answers.length) lines.push("Answers (the user's questions)", ...notes.answers.map((a) => `  ${a.id} [${a.state}] ${a.text}`));
+  if (notes.questions.length) lines.push('Questions (asked of the user)', ...notes.questions.map((q) => `  ${q.id} [${q.state === 'open' ? 'waiting for the user' : q.state}] ${q.text}`));
   if (notes.done) lines.push('Session done', ...DONE_PARTS.map((part) => `  ${part}: ${notes.done![part]}`));
   return lines.join('\n');
 }
@@ -175,14 +185,34 @@ export function runCommand(file: string, args: readonly string[], stdin: () => s
     case 'task drop':
       change((n) => `${setTaskState(n, id(rest[0]), 'dropped', text(rest.slice(1), 'why the task was abandoned')).id} dropped`);
       break;
+    case 'answer add':
+      change((n) => `${addAnswer(n, text(rest, 'the question')).id} added; answer it with: agent-sessions answer write <id> <answer>`);
+      break;
+    case 'answer write':
+      change((n) => `${writeAnswer(n, id(rest[0]), text(rest.slice(1), 'the answer')).id} answered`);
+      break;
     case 'question add':
-      change((n) => `${addQuestion(n, text(rest, 'the question')).id} added; answer it with: agent-sessions question answer <id> <answer>`);
+      change((n) => `${addQuestion(n, text(rest, 'the question')).id} added; when the user answers, record it with: agent-sessions question answered <id> <their answer>`);
       break;
+    case 'question answered':
+      change((n) => `${answerQuestion(n, id(rest[0]), text(rest.slice(1), "what the user answered")).id} answered`);
+      break;
+    // Before answers had their name, the user's questions were answered with `question answer`; a session told so then
+    // is still understood.
     case 'question answer':
-      change((n) => `${answerQuestion(n, id(rest[0]), text(rest.slice(1), 'the answer')).id} answered`);
+      change((n) => {
+        const target = id(rest[0]);
+        const answer = text(rest.slice(1), 'the answer');
+        return `${(kindOf(n, target) === 'question' ? answerQuestion(n, target, answer) : writeAnswer(n, target, answer)).id} answered`;
+      });
       break;
+    case 'answer stale':
     case 'question stale':
-      change((n) => `${setQuestionStale(n, id(rest[0]), true).id} marked stale`);
+      change((n) => {
+        const target = id(rest[0]);
+        const kind = kindOf(n, target);
+        return `${setStale(n, kind === 'answer' || kind === 'question' ? kind : group === 'answer' ? 'answer' : 'question', target, true).id} marked stale`;
+      });
       break;
     case 'done':
       change((n) => {
@@ -215,7 +245,7 @@ export function main(): void {
     // A hook never fails its session: with no session to name, or anything wrong, it says nothing.
     try {
       const session = hookSession(fs.readFileSync(0, 'utf8'), process.env);
-      const text = hookText(args[1] ?? '', session ? readNotes(notesFile(notesDir(), session.tool, session.id)) : { seq: 0, tasks: [], questions: [] });
+      const text = hookText(args[1] ?? '', session ? readNotes(notesFile(notesDir(), session.tool, session.id)) : emptyNotes());
       if (text) console.log(text);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));

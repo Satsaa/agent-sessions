@@ -13,7 +13,7 @@ await build({
   stdin: { contents: `export * from './src/notes.ts'; export * from './src/notes-cli.ts'; export * from './src/notes-install.ts';`, resolveDir: process.cwd() },
   bundle: true, platform: 'node', format: 'cjs', outfile: bundle,
 });
-const { runCommand, sessionOf, readNotes, notesFile, noteCounts, updateNotes, setQuestionStale, setTaskState, removeNote, markAnswerRead, NoteError, installNotes, uninstallNotes, notesInstalled, notesOutdated, hookText, hookSession } = createRequire(import.meta.url)(bundle);
+const { runCommand, sessionOf, readNotes, notesFile, noteCounts, updateNotes, setStale, setTaskState, answerQuestion, removeNote, markAnswerRead, NoteError, installNotes, uninstallNotes, notesInstalled, notesOutdated, hookText, hookSession } = createRequire(import.meta.url)(bundle);
 after(() => rm(directory, { recursive: true, force: true }));
 const noStdin = () => { throw new Error('standard input was not expected'); };
 
@@ -28,37 +28,69 @@ test('the command names its session from the variables each tool gives its shell
   assert.deepEqual(sessionOf(both, 'codex:other'), { tool: 'codex', id: 'other' }, '--session wins');
 });
 
-test('a question is asked, answered, read and marked stale, and counts on its row until it is read', () => {
+test('a question of the user’s is recorded, answered, read and marked stale, and counts on its row until it is read', () => {
   const file = notesFile(join(directory, 'a'), 'claude', 's1');
   assert.match(runCommand(file, ['task', 'add', 'Create', 'v2', 'phone', 'engine'], noStdin), /^t1 added/);
-  assert.match(runCommand(file, ['question', 'add', '-'], () => 'Does it "handle" barge-in?\n'), /^q2 added/);
-  assert.deepEqual(noteCounts(readNotes(file)), { tasksOpen: 1, tasksDone: 0, questionsOpen: 1, answersUnread: 0 });
-  assert.equal(readNotes(file).questions[0].text, 'Does it "handle" barge-in?', 'a text on standard input keeps its quotes');
+  assert.match(runCommand(file, ['answer', 'add', '-'], () => 'Does it "handle" barge-in?\n'), /^a2 added/);
+  assert.deepEqual(noteCounts(readNotes(file)), { tasksOpen: 1, tasksDone: 0, answersOpen: 1, answersUnread: 0, questionsOpen: 0 });
+  assert.equal(readNotes(file).answers[0].text, 'Does it "handle" barge-in?', 'a text on standard input keeps its quotes');
 
-  runCommand(file, ['question', 'answer', 'q2', '-'], () => 'Yes.\n\nThe reply is cut like a barge-in.');
-  assert.deepEqual(noteCounts(readNotes(file)), { tasksOpen: 1, tasksDone: 0, questionsOpen: 0, answersUnread: 1 }, 'an answer nobody opened is what the row counts');
-  updateNotes(file, (n) => markAnswerRead(n, 'q2'));
+  runCommand(file, ['answer', 'write', 'a2', '-'], () => 'Yes.\n\nThe reply is cut like a barge-in.');
+  assert.deepEqual(noteCounts(readNotes(file)), { tasksOpen: 1, tasksDone: 0, answersOpen: 0, answersUnread: 1, questionsOpen: 0 }, 'an answer nobody opened is what the row counts');
+  updateNotes(file, (n) => markAnswerRead(n, 'a2'));
   assert.equal(noteCounts(readNotes(file)).answersUnread, 0);
-  runCommand(file, ['question', 'answer', 'q2', 'Yes,', 'and', 'the', 'call', 'ends', 'after', 'three.'], noStdin);
+  runCommand(file, ['answer', 'write', 'a2', 'Yes,', 'and', 'the', 'call', 'ends', 'after', 'three.'], noStdin);
   assert.equal(noteCounts(readNotes(file)).answersUnread, 1, 'a new answer is unread again');
 
-  runCommand(file, ['question', 'stale', 'q2'], noStdin);
-  assert.deepEqual([readNotes(file).questions[0].state, noteCounts(readNotes(file)).answersUnread], ['stale', 0], 'a stale question counts nowhere');
-  updateNotes(file, (n) => setQuestionStale(n, 'q2', false));
-  assert.equal(readNotes(file).questions[0].state, 'answered', 'reopened, it is where it was: answered, with its answer');
+  runCommand(file, ['answer', 'stale', 'a2'], noStdin);
+  assert.deepEqual([readNotes(file).answers[0].state, noteCounts(readNotes(file)).answersUnread], ['stale', 0], 'a stale answer counts nowhere');
+  updateNotes(file, (n) => setStale(n, 'answer', 'a2', false));
+  assert.equal(readNotes(file).answers[0].state, 'answered', 'reopened, it is where it was: answered, with its answer');
 
   assert.throws(() => runCommand(file, ['task', 'done', 't1'], noStdin), /what was delivered/, 'a task is closed with what there is to say of it');
   runCommand(file, ['task', 'done', 't1', 'The', 'cascade', 'engine,', 'behind', 'the', 'phoneV2', 'switch.'], noStdin);
   assert.deepEqual([readNotes(file).tasks[0].state, readNotes(file).tasks[0].resolution], ['done', 'The cascade engine, behind the phoneV2 switch.']);
-  assert.match(runCommand(file, ['list'], noStdin), /t1 \[done\] Create v2 phone engine\nQuestions\n {2}q2 \[answered\]/);
+  assert.match(runCommand(file, ['list'], noStdin), /t1 \[done\] Create v2 phone engine\nAnswers \(the user's questions\)\n {2}a2 \[answered\]/);
   assert.throws(() => runCommand(file, ['task', 'done', 't9', 'x'], noStdin), /no task t9 in this session \(it has t1\)/);
   assert.throws(() => runCommand(file, ['task', 'drop', 't1'], noStdin), /why the task was abandoned/);
   runCommand(file, ['task', 'drop', 't1', '-'], () => 'Replaced by the vendor’s engine.');
   assert.deepEqual([readNotes(file).tasks[0].state, noteCounts(readNotes(file)).tasksDone], ['dropped', 0], 'a dropped task stays listed with why, and counts nowhere');
   updateNotes(file, (n) => setTaskState(n, 't1', 'open'));
   assert.equal(readNotes(file).tasks[0].resolution, undefined, 'reopened, it has no resolution');
-  assert.throws(() => runCommand(file, ['question', 'add'], noStdin), NoteError);
+  assert.throws(() => runCommand(file, ['answer', 'add'], noStdin), NoteError);
   assert.throws(() => runCommand(file, ['tasks'], noStdin), /agent-sessions task add/, 'an unknown command prints the usage');
+});
+
+test('a question asked of the user waits for them until they answer it, and counts on the row meanwhile', () => {
+  const file = notesFile(join(directory, 'asked'), 'claude', 's5');
+  assert.match(runCommand(file, ['question', 'add', 'Keep', 'the', 'old', 'engine?'], noStdin), /^q1 added/);
+  assert.equal(noteCounts(readNotes(file)).questionsOpen, 1);
+  assert.match(hookText('prompt', readNotes(file)), /question q1 \(waiting for the user\): Keep the old engine\?/);
+  assert.throws(() => runCommand(file, ['question', 'answered', 'q1'], noStdin), /what the user answered/, 'the agent records what the user said');
+  runCommand(file, ['question', 'answered', 'q1', 'No,', 'remove', 'it.'], noStdin);
+  assert.deepEqual([readNotes(file).questions[0].state, readNotes(file).questions[0].answer, noteCounts(readNotes(file)).questionsOpen], ['answered', 'No, remove it.', 0]);
+  runCommand(file, ['question', 'add', 'Which board?'], noStdin);
+  updateNotes(file, (n) => answerQuestion(n, 'q2'));
+  assert.deepEqual([readNotes(file).questions[1].state, readNotes(file).questions[1].answer], ['answered', undefined], 'a person marking it answered in the view says nothing');
+  runCommand(file, ['question', 'add', 'Ship today?'], noStdin);
+  runCommand(file, ['question', 'stale', 'q3'], noStdin);
+  updateNotes(file, (n) => setStale(n, 'question', 'q3', false));
+  assert.equal(readNotes(file).questions[2].state, 'open', 'reopened, an unanswered question waits again');
+});
+
+test('a file from before answers had their name keeps the user’s questions as answers, and earlier sessions’ commands still land', async () => {
+  const dir = join(directory, 'legacy');
+  const file = notesFile(dir, 'claude', 's6');
+  await mkdir(dir, { recursive: true });
+  await writeFile(file, JSON.stringify({ seq: 2, tasks: [{ id: 't1', text: 'Port it', state: 'open', at: 1 }], questions: [{ id: 'q2', text: 'Is it fast?', state: 'open', at: 2 }] }));
+  assert.deepEqual([readNotes(file).answers.map((a) => a.id), readNotes(file).questions.length], [['q2'], 0], 'the stored questions are the user’s own');
+  runCommand(file, ['question', 'answer', 'q2', 'Yes.'], noStdin);
+  assert.equal(readNotes(file).answers[0].answer, 'Yes.', 'a session told to answer with `question answer` still answers');
+  runCommand(file, ['question', 'stale', 'q2'], noStdin);
+  assert.equal(readNotes(file).answers[0].state, 'stale', '`question stale` finds the answer by its id');
+  runCommand(file, ['question', 'add', 'Merge now?'], noStdin);
+  const raw = JSON.parse(await readFile(file, 'utf8'));
+  assert.deepEqual([raw.questions.map((x) => x.id), raw.asked.map((x) => x.id)], [['q2'], ['q3']], 'a window still running an earlier version finds the user’s questions where they were');
 });
 
 test('a removed note’s id is not given to the next one, and an emptied file goes', () => {
@@ -76,17 +108,19 @@ test('a session is marked done with its features, tickets and cleanup, never wit
   const file = notesFile(join(directory, 'done'), 'claude', 's3');
   const done = ['done', '--features', 'v2 engine merged to dev', '--tickets', '#12 implemented', '--cleanup', 'worktree', 'removed'];
   runCommand(file, ['task', 'add', 'Create v2 phone engine'], noStdin);
-  runCommand(file, ['question', 'add', 'Does it record calls?'], noStdin);
-  assert.throws(() => runCommand(file, done, noStdin), /t1 "Create v2 phone engine", q2 "Does it record calls\?" are still open/, 'an open task and an unanswered question both hold it');
+  runCommand(file, ['answer', 'add', 'Does it record calls?'], noStdin);
+  runCommand(file, ['question', 'add', 'Remove the old engine?'], noStdin);
+  assert.throws(() => runCommand(file, done, noStdin), /t1 "Create v2 phone engine", a2 "Does it record calls\?", q3 "Remove the old engine\?" are still open/, 'an open task, an unanswered question and one waiting for the user all hold it');
   runCommand(file, ['task', 'done', 't1', 'merged'], noStdin);
-  runCommand(file, ['question', 'stale', 'q2'], noStdin);
+  runCommand(file, ['answer', 'stale', 'a2'], noStdin);
+  runCommand(file, ['question', 'answered', 'q3', 'yes'], noStdin);
   assert.throws(() => runCommand(file, ['done', '--features', 'x', '--tickets', 'none'], noStdin), /--cleanup is missing/, 'every part is said, none included');
   assert.equal(runCommand(file, done, noStdin), 'session marked done');
   assert.deepEqual({ ...readNotes(file).done, at: 0 }, { at: 0, features: 'v2 engine merged to dev', tickets: '#12 implemented', cleanup: 'worktree removed' });
   assert.match(runCommand(file, ['list'], noStdin), /Session done\n  features: v2 engine merged to dev/);
   runCommand(file, ['task', 'add', 'One more thing'], noStdin);
   assert.equal(readNotes(file).done, undefined, 'a new task reopens the session');
-  runCommand(file, ['task', 'drop', 't3', 'not needed'], noStdin);
+  runCommand(file, ['task', 'drop', 't4', 'not needed'], noStdin);
   runCommand(file, done, noStdin);
   assert.equal(runCommand(file, ['reopen'], noStdin), 'session reopened');
   assert.equal(readNotes(file).done, undefined);
@@ -98,11 +132,11 @@ test('the hooks tell a session the rules when it starts and afterwards only what
   assert.doesNotMatch(hookText('session-start', readNotes(file)), /Recorded for this session/);
   assert.equal(hookText('prompt', readNotes(file)), '', 'a session with nothing open is told nothing more with each prompt');
   runCommand(file, ['task', 'add', 'Create v2 phone engine'], noStdin);
-  runCommand(file, ['question', 'add', 'Does it record calls?'], noStdin);
-  runCommand(file, ['question', 'answer', 'q2', 'Yes.'], noStdin);
+  runCommand(file, ['answer', 'add', 'Does it record calls?'], noStdin);
+  runCommand(file, ['answer', 'write', 'a2', 'Yes.'], noStdin);
   const prompt = hookText('prompt', readNotes(file));
   assert.match(prompt, /task t1: Create v2 phone engine/);
-  assert.doesNotMatch(prompt, /q2/, 'an answered question is no longer owed');
+  assert.doesNotMatch(prompt, /a2/, 'an answered question is no longer owed');
   assert.match(hookText('session-start', readNotes(file)), /Recorded for this session so far:\nTasks\n  t1 \[open\]/, 'a resumed or compacted session gets back what it recorded');
 
   assert.deepEqual(hookSession(JSON.stringify({ session_id: 'abc', transcript_path: '/home/x/.codex/sessions/r.jsonl' }), {}, () => undefined), { tool: 'codex', id: 'abc' });
@@ -155,5 +189,5 @@ test('the plugin carries the extension’s version, names the command at its fix
   const hooks = (await json('plugin/hooks/hooks.json')).hooks;
   assert.match(hooks.SessionStart[0].hooks[0].command, /\.agent-sessions\/bin\/agent-sessions.*hook session-start/);
   assert.match(hooks.UserPromptSubmit[0].hooks[0].command, /hook prompt/);
-  for (const skill of ['question', 'task', 'done']) assert.match(await readFile(`plugin/skills/${skill}/SKILL.md`, 'utf8'), new RegExp(`^---\\nname: ${skill}\\n[\\s\\S]*~/\\.agent-sessions/bin/agent-sessions`));
+  for (const skill of ['answer', 'question', 'task', 'done']) assert.match(await readFile(`plugin/skills/${skill}/SKILL.md`, 'utf8'), new RegExp(`^---\\nname: ${skill}\\n[\\s\\S]*~/\\.agent-sessions/bin/agent-sessions`));
 });

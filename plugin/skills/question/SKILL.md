@@ -1,12 +1,13 @@
 ---
 name: question
-description: Record a question the user asks so it stays listed under this session until it is answered. Use when the user asks with /question, and whenever they ask a question your same short reply will not answer fully; when in doubt, record it.
-argument-hint: <question>
+description: Record a question you ask the user so it stays listed under this session, waiting for them, until they answer it. Use whenever you ask the user something (a decision only they can make, something you need from them, a choice you offer), and when the user runs /question to see what is waiting for them.
+argument-hint: "[question]"
 ---
-The question is what the user wrote with this command.
+A question here is one **you** ask the user. The user sees it listed under the session, marked as waiting for them, until it is answered.
 
-1. Record it first, in the same turn, before any work, in their words: `~/.agent-sessions/bin/agent-sessions question add -`, the question on standard input. It prints the question's id.
-2. Answer it. Write the answer in your reply, and record the same answer with `~/.agent-sessions/bin/agent-sessions question answer <id> -`, the text on standard input. The user reads recorded answers outside this conversation, so the text must make sense on its own.
-   **A recorded answer is terse and specific**: only what answers the question, with no hedging, no restating of the question, and no filler or obvious context. Give each point a short header with bullets under it, never paragraphs of prose.
-3. If the answer needs work you cannot finish in this turn, say so and leave the question open; answer it in both places when you have it.
-4. **A recorded answer always matches the latest answer in the conversation.** When a later reply changes, corrects or extends it (a follow-up such as "are you sure?" shifts the answer), record it again with `question answer <id> -` in the same turn, before ending it. A stale recorded answer is wrong.
+- **Asking.** Record each question the moment you ask it, in the same turn: `~/.agent-sessions/bin/agent-sessions question add -`, the question on standard input, worded to make sense on its own outside the conversation. One question per record; it prints its id.
+- **Answered.** When the user answers it, in the chat or by acting on it, record what they answered in the same turn: `~/.agent-sessions/bin/agent-sessions question answered <id> -`, their answer on standard input, terse. A question the user marked answered in the view is already settled.
+- **No longer needed.** `~/.agent-sessions/bin/agent-sessions question stale <id>` when the work moved on and it no longer needs them.
+- **Run by the user.** Without a question: run `~/.agent-sessions/bin/agent-sessions list` and ask again, one per line, each question still waiting for them. With a question: it is one they want you to put to them later; record it as above.
+
+A session is never marked done while a question waits for the user.

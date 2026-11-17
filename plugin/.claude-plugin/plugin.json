@@ -1,7 +1,7 @@
 {
   "name": "agent-sessions",
-  "version": "0.8.36",
-  "description": "Lists each session's tasks and the user's questions under it in the Agent Sessions view of VS Code, and closes a finished session with what it delivered, its tickets and its cleanup.",
+  "version": "0.8.37",
+  "description": "Lists each session's tasks, the answers to the user's questions, and the questions the agent asked the user under it in the Agent Sessions view of VS Code, and closes a finished session with what it delivered, its tickets and its cleanup.",
   "author": { "name": "Satsaa" },
   "homepage": "https://github.com/Satsaa/agent-sessions",
   "keywords": ["sessions", "tasks", "questions", "vscode"]

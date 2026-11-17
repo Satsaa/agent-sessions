@@ -4,7 +4,7 @@ import { isLive, toolLabel, type Session, type SessionState } from './types.js';
 import { relativeTime, repoRootOf } from './util.js';
 import { statsInline, type WorktreeStats } from './worktree.js';
 import { stateIcon, toolIcon } from './icons.js';
-import { hasNotes, noteCounts, type NoteKind, type Question, type SessionDone, type SessionNotes, type Task } from './notes.js';
+import { hasNotes, noteCounts, type Answer, type NoteKind, type Question, type SessionDone, type SessionNotes, type Task } from './notes.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
 
@@ -111,7 +111,7 @@ export interface ViewOptions {
   search: string;
   /** What a session's row says after its title, in this order (see `describe`). */
   rowDetails: readonly RowDetail[];
-  /** Each session's recorded tasks and questions, by `tool:id` (notes.ts). */
+  /** Each session's recorded tasks, answers and questions, by `tool:id` (notes.ts). */
   notes: ReadonlyMap<string, SessionNotes>;
 }
 
@@ -141,38 +141,37 @@ const oneLine = (text: string): string => {
   return line.length > 140 ? `${line.slice(0, 139)}…` : line;
 };
 
-/** One recorded task or question, under its session's Questions and Tasks row. */
+/** One recorded task, answer or question, under its session's notes row. */
 export class NoteItem extends vscode.TreeItem implements HoverTooltip {
   readonly children: readonly never[] = [];
   readonly tooltipOnHover: () => vscode.MarkdownString;
 
-  constructor(public readonly session: Session, public readonly kind: NoteKind, public readonly note: Task | Question, idPrefix: string) {
+  constructor(public readonly session: Session, public readonly kind: NoteKind, public readonly note: Task | Answer | Question, idPrefix: string) {
     super(oneLine(note.text), vscode.TreeItemCollapsibleState.None);
     this.id = `${idPrefix}/${note.id}`;
-    const unread = kind === 'question' && note.state === 'answered' && !(note as Question).read;
+    const unread = kind === 'answer' && note.state === 'answered' && !(note as Answer).read;
     // `note-<kind>-<state>[-unread]`: what the menus' when-clauses and the row action picker read (row-actions.ts).
     this.contextValue = `note-${kind}-${note.state}${unread ? '-unread' : ''}`;
     const faded = new vscode.ThemeColor('disabledForeground');
+    // The icon and its colour say the state, so the description is only how long ago it last changed.
     this.iconPath =
-      note.state === 'done' ? new vscode.ThemeIcon('pass', faded)
-      : note.state === 'stale' || note.state === 'dropped' ? new vscode.ThemeIcon('circle-slash', faded)
+      note.state === 'stale' || note.state === 'dropped' ? new vscode.ThemeIcon('circle-slash', faded)
+      : kind === 'task' ? (note.state === 'done' ? new vscode.ThemeIcon('pass', faded) : new vscode.ThemeIcon('circle-large-outline'))
+      : kind === 'question' ? new vscode.ThemeIcon('question', note.state === 'open' ? new vscode.ThemeColor('charts.red') : faded)
       : note.state === 'answered' ? (unread ? new vscode.ThemeIcon('mail', new vscode.ThemeColor('charts.green')) : new vscode.ThemeIcon('mail-read', faded))
-      : kind === 'question' ? new vscode.ThemeIcon('question', new vscode.ThemeColor('charts.yellow'))
-      : new vscode.ThemeIcon('circle-large-outline');
-    const answeredAt = kind === 'question' ? (note as Question).answeredAt : undefined;
-    this.description =
-      note.state === 'done' || note.state === 'dropped' || note.state === 'stale' ? note.state
-      : note.state === 'answered' ? `${unread ? 'new answer' : 'answered'} · ${relativeTime(answeredAt ?? note.at)}`
-      : relativeTime(note.at);
+      : new vscode.ThemeIcon('comment', new vscode.ThemeColor('charts.yellow'));
+    const said = kind === 'task' ? (note as Task).resolution : (note as Answer | Question).answer;
+    const changedAt = kind === 'task' ? (note as Task).closedAt : (note as Answer | Question).answeredAt;
+    this.description = relativeTime(note.state === 'stale' ? note.at : (changedAt ?? note.at));
     this.tooltipOnHover = () => {
       const md = new vscode.MarkdownString(undefined, true);
       md.appendMarkdown(`**${escapeMd(note.text)}**\n\n`);
-      const said = kind === 'question' ? (note as Question).answer : (note as Task).resolution;
+      if (kind === 'question' && note.state === 'open') md.appendMarkdown('Waiting for you\n\n');
       if (said !== undefined) md.appendMarkdown(`${said}\n\n`);
       md.appendMarkdown(`$(clock) ${new Date(note.at).toLocaleString()} · \`${note.id}\``);
       return md;
     };
-    // A note opens as a page with its answer or resolution; opening a question marks its answer read.
+    // A note opens as a page with what was said of it; opening an answer marks it read.
     this.command = { command: 'agentSessions.note.open', title: 'Open', arguments: [this] };
   }
 }
@@ -197,10 +196,10 @@ export class DoneItem extends vscode.TreeItem implements HoverTooltip {
   }
 }
 
-/** A session's Questions and Tasks row, holding both kinds of note. */
+/** A session's one row of notes: its questions, answers and tasks, named after the kinds it holds. */
 export class NoteGroupItem extends vscode.TreeItem {
-  constructor(public readonly children: NoteItem[], summary: string, idPrefix: string) {
-    super('Questions and Tasks', vscode.TreeItemCollapsibleState.Expanded);
+  constructor(public readonly children: NoteItem[], label: string, summary: string, idPrefix: string) {
+    super(label, vscode.TreeItemCollapsibleState.Expanded);
     this.id = `${idPrefix}/notes`;
     this.description = summary;
     this.iconPath = new vscode.ThemeIcon('checklist');
@@ -209,29 +208,36 @@ export class NoteGroupItem extends vscode.TreeItem {
 }
 
 /**
- * What wants you first: an unread answer, then what is open (questions before tasks), then what is settled,
- * and last what was set aside; each rank oldest first. A dropped task is no part of the count.
+ * What wants you first: a question waiting for you, then an unread answer, then what the agent still owes (answers
+ * before tasks), then what is settled, and last what was set aside; each rank oldest first. A dropped task is no part
+ * of the count.
  */
-const QUESTION_ORDER: Record<Question['state'], number> = { open: 1, answered: 3, stale: 4 };
-const TASK_ORDER: Record<Task['state'], number> = { open: 2, done: 3, dropped: 4 };
+const QUESTION_ORDER: Record<Question['state'], number> = { open: 0, answered: 4, stale: 5 };
+const ANSWER_ORDER: Record<Answer['state'], number> = { open: 2, answered: 4, stale: 5 };
+const TASK_ORDER: Record<Task['state'], number> = { open: 3, done: 4, dropped: 5 };
+
+const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
 function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix: string): (DoneItem | NoteGroupItem)[] {
   if (!notes) return [];
   const counts = noteCounts(notes);
   const groups: (DoneItem | NoteGroupItem)[] = [];
   if (notes.done) groups.push(new DoneItem(session, notes.done, idPrefix));
-  if (notes.questions.length || notes.tasks.length) {
+  if (notes.questions.length || notes.answers.length || notes.tasks.length) {
     const ranked = [
-      ...notes.questions.map((q) => ({ rank: q.state === 'answered' && !q.read ? 0 : QUESTION_ORDER[q.state], item: new NoteItem(session, 'question', q, idPrefix), at: q.at })),
+      ...notes.questions.map((q) => ({ rank: QUESTION_ORDER[q.state], item: new NoteItem(session, 'question', q, idPrefix), at: q.at })),
+      ...notes.answers.map((a) => ({ rank: a.state === 'answered' && !a.read ? 1 : ANSWER_ORDER[a.state], item: new NoteItem(session, 'answer', a, idPrefix), at: a.at })),
       ...notes.tasks.map((t) => ({ rank: TASK_ORDER[t.state], item: new NoteItem(session, 'task', t, idPrefix), at: t.at })),
     ].sort((a, b) => a.rank - b.rank || a.at - b.at);
+    const kinds = [notes.questions.length ? 'Questions' : '', notes.answers.length ? 'Answers' : '', notes.tasks.length ? 'Tasks' : ''].filter(Boolean);
+    const label = kinds.length > 1 ? `${kinds.slice(0, -1).join(', ')} and ${kinds.at(-1)}` : kinds[0]!;
     const tasks = counts.tasksOpen + counts.tasksDone;
     const summary = [
-      counts.answersUnread ? `${counts.answersUnread} new answer${counts.answersUnread === 1 ? '' : 's'}` : '',
-      counts.questionsOpen ? `${counts.questionsOpen} open question${counts.questionsOpen === 1 ? '' : 's'}` : '',
-      tasks ? `${counts.tasksDone}/${tasks} task${tasks === 1 ? '' : 's'} done` : '',
+      counts.questionsOpen ? `${plural(counts.questionsOpen, 'question')} for you` : '',
+      counts.answersUnread ? plural(counts.answersUnread, 'new answer') : '',
+      tasks ? `${counts.tasksDone}/${plural(tasks, 'task')} done` : '',
     ].filter(Boolean).join(' · ');
-    groups.push(new NoteGroupItem(ranked.map((r) => r.item), summary, idPrefix));
+    groups.push(new NoteGroupItem(ranked.map((r) => r.item), label, summary, idPrefix));
   }
   return groups;
 }
@@ -244,7 +250,7 @@ export interface RowContent {
 
 export class SessionItem extends vscode.TreeItem implements HoverTooltip {
   readonly tooltipOnHover: () => vscode.MarkdownString;
-  /** The session's Done and Questions and Tasks rows, listed before the sessions it spawned. */
+  /** The session's Done and notes rows, listed before the sessions it spawned. */
   readonly notes: (DoneItem | NoteGroupItem)[];
 
   constructor(
@@ -263,7 +269,7 @@ export class SessionItem extends vscode.TreeItem implements HoverTooltip {
     const archived = session.archived || archivedHere;
     this.id = `${idPrefix}${session.tool}:${session.id}${idSuffix}`;
     this.notes = noteGroups(session, content.notes, this.id);
-    // A session's thread opens collapsed, unless its Questions and Tasks row is the one thing under it;
+    // A session's thread opens collapsed, unless its notes row is the one thing under it;
     // inside a thread, every spawned session's own subtree is already open.
     const onlyNotes = !children.length && this.notes.some((row) => row instanceof NoteGroupItem);
     this.collapsibleState =
@@ -341,9 +347,9 @@ function describe(session: Session, content: RowContent, stats: WorktreeStats | 
   for (const detail of content.details) {
     switch (detail) {
       case 'questions':
-        // Unread answers before open questions: an answer is the one waiting for you.
-        if (counts.answersUnread) parts.push(`✉ ${counts.answersUnread}`);
+        // Questions waiting for you, then answers you have not read.
         if (counts.questionsOpen) parts.push(`? ${counts.questionsOpen}`);
+        if (counts.answersUnread) parts.push(`✉ ${counts.answersUnread}`);
         break;
       case 'tasks':
         if (counts.tasksOpen + counts.tasksDone) parts.push(`☑ ${counts.tasksDone}/${counts.tasksOpen + counts.tasksDone}`);
@@ -388,7 +394,8 @@ function tooltipFor(session: Session, archived: boolean, stats: WorktreeStats | 
   }
   const counts = noteCounts(notes);
   if (notes?.done) md.appendMarkdown(`$(pass-filled) Done ${new Date(notes.done.at).toLocaleString()}\n\n`);
-  if (counts.answersUnread + counts.questionsOpen) md.appendMarkdown(`$(comment-discussion) ${[counts.answersUnread ? `${counts.answersUnread} unread answer${counts.answersUnread === 1 ? '' : 's'}` : '', counts.questionsOpen ? `${counts.questionsOpen} open question${counts.questionsOpen === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ')}\n\n`);
+  if (counts.questionsOpen) md.appendMarkdown(`$(question) ${plural(counts.questionsOpen, 'question')} waiting for you\n\n`);
+  if (counts.answersUnread + counts.answersOpen) md.appendMarkdown(`$(comment-discussion) ${[counts.answersUnread ? plural(counts.answersUnread, 'unread answer') : '', counts.answersOpen ? `${plural(counts.answersOpen, 'question')} of yours not answered yet` : ''].filter(Boolean).join(', ')}\n\n`);
   if (counts.tasksOpen + counts.tasksDone) md.appendMarkdown(`$(checklist) ${counts.tasksDone} of ${counts.tasksOpen + counts.tasksDone} task${counts.tasksOpen + counts.tasksDone === 1 ? '' : 's'} done\n\n`);
   md.appendMarkdown(`$(clock) ${new Date(session.updatedAt).toLocaleString()}\n\n`);
   if (session.pid) md.appendMarkdown(`$(server-process) pid ${session.pid}\n\n`);
@@ -736,7 +743,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
 /** A tree row with the rows nested under it. */
 export interface Row extends vscode.TreeItem {
   readonly children: readonly Row[];
-  /** A session's Done and Questions and Tasks rows, listed before `children`. */
+  /** A session's Done and notes rows, listed before `children`. */
   readonly notes?: readonly Row[];
 }
 

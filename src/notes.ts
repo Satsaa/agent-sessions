@@ -19,8 +19,10 @@ export interface Task {
   resolution?: string;
 }
 
-export interface Question {
+/** A question the user asked, and the agent's answer to it. */
+export interface Answer {
   id: string;
+  /** The user's question. */
   text: string;
   /** `stale`: no longer worth an answer. It keeps the answer it had, and reopening returns it to where it was. */
   state: 'open' | 'answered' | 'stale';
@@ -29,6 +31,18 @@ export interface Question {
   answeredAt?: number;
   /** A person opened the answer; until then it counts on the session's row. */
   read?: boolean;
+}
+
+/** A question the agent asked the user, open until the user answers it. */
+export interface Question {
+  id: string;
+  text: string;
+  /** `stale`: no longer needs the user. Reopening returns it to where it was. */
+  state: 'open' | 'answered' | 'stale';
+  at: number;
+  /** What the user answered, as the agent recorded it; a person marking it answered says nothing. */
+  answer?: string;
+  answeredAt?: number;
 }
 
 /** A session its agent closed: what it delivered, what became of its tickets, and what it cleaned up after itself. */
@@ -46,12 +60,26 @@ export interface SessionNotes {
   /** The last number an id was made from, so a removed note's id is not given to another. */
   seq: number;
   tasks: Task[];
+  answers: Answer[];
   questions: Question[];
-  /** Set while the session is done; a new task or question takes it away. */
+  /** Set while the session is done; a new task, answer or question takes it away. */
   done?: SessionDone;
 }
 
-export type NoteKind = 'task' | 'question';
+export type NoteKind = 'task' | 'answer' | 'question';
+
+/**
+ * How a file stores the notes. The user's own questions were stored as `questions` before the agent could ask any, and
+ * stay there (`answers` in memory), so a window still running an earlier version reads and writes them as it did; the
+ * agent's questions to the user are `asked`, which such a window leaves out.
+ */
+interface StoredNotes {
+  seq: number;
+  tasks: Task[];
+  questions: Answer[];
+  asked: Question[];
+  done?: SessionDone;
+}
 
 export function notesDir(): string {
   return path.join(os.homedir(), '.agent-sessions', 'notes');
@@ -68,7 +96,7 @@ export function sessionKeyOfNotesFile(name: string): string | undefined {
   return m ? `${m[1]}:${m[2]}` : undefined;
 }
 
-export const emptyNotes = (): SessionNotes => ({ seq: 0, tasks: [], questions: [] });
+export const emptyNotes = (): SessionNotes => ({ seq: 0, tasks: [], answers: [], questions: [] });
 
 export function readNotes(file: string): SessionNotes {
   let raw: unknown;
@@ -78,10 +106,10 @@ export function readNotes(file: string): SessionNotes {
     // Missing: nothing recorded.
     return emptyNotes();
   }
-  const o = raw && typeof raw === 'object' ? (raw as Partial<SessionNotes>) : {};
+  const o = raw && typeof raw === 'object' ? (raw as Partial<StoredNotes>) : {};
   const rows = <T extends { id: string; text: string }>(v: unknown): T[] =>
     Array.isArray(v) ? v.filter((x): x is T => !!x && typeof x === 'object' && typeof (x as T).id === 'string' && typeof (x as T).text === 'string') : [];
-  const notes: SessionNotes = { seq: typeof o.seq === 'number' ? o.seq : 0, tasks: rows<Task>(o.tasks), questions: rows<Question>(o.questions) };
+  const notes: SessionNotes = { seq: typeof o.seq === 'number' ? o.seq : 0, tasks: rows<Task>(o.tasks), answers: rows<Answer>(o.questions), questions: rows<Question>(o.asked) };
   const d = o.done as Partial<SessionDone> | undefined;
   if (d && typeof d === 'object' && typeof d.at === 'number' && DONE_PARTS.every((part) => typeof d[part] === 'string')) {
     notes.done = { at: d.at, features: d.features!, tickets: d.tickets!, cleanup: d.cleanup! };
@@ -90,7 +118,11 @@ export function readNotes(file: string): SessionNotes {
 }
 
 /** Whether anything is recorded: a file with nothing in it is not kept, and a session with nothing has no rows. */
-export const hasNotes = (notes: SessionNotes | undefined): notes is SessionNotes => !!notes && (notes.tasks.length + notes.questions.length > 0 || !!notes.done);
+export const hasNotes = (notes: SessionNotes | undefined): notes is SessionNotes => !!notes && (notes.tasks.length + notes.answers.length + notes.questions.length > 0 || !!notes.done);
+
+function stored(notes: SessionNotes): StoredNotes {
+  return { seq: notes.seq, tasks: notes.tasks, questions: notes.answers, asked: notes.questions, ...(notes.done ? { done: notes.done } : {}) };
+}
 
 /** Apply one change to a session's file as it is now. A file left with nothing in it is removed. */
 export function updateNotes(file: string, change: (notes: SessionNotes) => void): SessionNotes {
@@ -103,7 +135,7 @@ export function updateNotes(file: string, change: (notes: SessionNotes) => void)
   fs.mkdirSync(path.dirname(file), { recursive: true });
   // Written beside and renamed over, so a reader never sees half a file.
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(notes, null, 2) + '\n');
+  fs.writeFileSync(tmp, JSON.stringify(stored(notes), null, 2) + '\n');
   fs.renameSync(tmp, file);
   return notes;
 }
@@ -144,6 +176,25 @@ export function setTaskState(notes: SessionNotes, id: string, state: Task['state
   return task;
 }
 
+/** The user asked a question; the agent owes it an answer. */
+export function addAnswer(notes: SessionNotes, question: string, now = Date.now()): Answer {
+  const answer: Answer = { id: `a${++notes.seq}`, text: clean(question, 'the question'), state: 'open', at: now };
+  notes.answers.push(answer);
+  delete notes.done;
+  return answer;
+}
+
+/** A new answer replaces the old one and is unread again; answering a stale question brings it back. */
+export function writeAnswer(notes: SessionNotes, id: string, text: string, now = Date.now()): Answer {
+  const answer = find(notes.answers, id, 'answer');
+  answer.answer = clean(text, 'the answer');
+  answer.answeredAt = now;
+  answer.state = 'answered';
+  delete answer.read;
+  return answer;
+}
+
+/** The agent asked the user a question; it waits for the user. */
 export function addQuestion(notes: SessionNotes, text: string, now = Date.now()): Question {
   const question: Question = { id: `q${++notes.seq}`, text: clean(text, 'the question'), state: 'open', at: now };
   notes.questions.push(question);
@@ -151,30 +202,37 @@ export function addQuestion(notes: SessionNotes, text: string, now = Date.now())
   return question;
 }
 
-/** A new answer replaces the old one and is unread again; answering a stale question brings it back. */
-export function answerQuestion(notes: SessionNotes, id: string, answer: string, now = Date.now()): Question {
+/** The user answered: with what they said when the agent records it, with nothing when a person marks it. */
+export function answerQuestion(notes: SessionNotes, id: string, text?: string, now = Date.now()): Question {
   const question = find(notes.questions, id, 'question');
-  question.answer = clean(answer, 'the answer');
+  delete question.answer;
+  if (text !== undefined) question.answer = clean(text, "the user's answer");
   question.answeredAt = now;
   question.state = 'answered';
-  delete question.read;
   return question;
 }
 
-export function setQuestionStale(notes: SessionNotes, id: string, stale: boolean): Question {
-  const question = find(notes.questions, id, 'question');
-  question.state = stale ? 'stale' : question.answer === undefined ? 'open' : 'answered';
-  return question;
+/** Set an answer or a question aside, or bring it back to where it was. */
+export function setStale(notes: SessionNotes, kind: 'answer' | 'question', id: string, stale: boolean): Answer | Question {
+  const row = kind === 'answer' ? find(notes.answers, id, 'answer') : find(notes.questions, id, 'question');
+  row.state = stale ? 'stale' : row.answeredAt === undefined && row.answer === undefined ? 'open' : 'answered';
+  return row;
+}
+
+/** Which list an id is in, for a command that names only the id. */
+export function kindOf(notes: SessionNotes, id: string): NoteKind | undefined {
+  return notes.tasks.some((x) => x.id === id) ? 'task' : notes.answers.some((x) => x.id === id) ? 'answer' : notes.questions.some((x) => x.id === id) ? 'question' : undefined;
 }
 
 /**
  * Close the session: what it delivered, what became of its tickets, and what it cleaned up, each said even when the
- * answer is "none". Refused while a task is open or a question unanswered, since those are what a done session leaves behind.
+ * answer is "none". Refused while a task is open, a question of the user's unanswered, or one asked of the user waiting
+ * for them, since those are what a done session leaves behind.
  */
 export function markSessionDone(notes: SessionNotes, parts: Partial<Record<DonePart, string>>, now = Date.now()): SessionDone {
-  const open = [...notes.tasks.filter((t) => t.state === 'open'), ...notes.questions.filter((q) => q.state === 'open')];
+  const open = [...notes.tasks, ...notes.answers, ...notes.questions].filter((x) => x.state === 'open');
   if (open.length) {
-    throw new NoteError(`this session is not done: ${open.map((x) => `${x.id} "${x.text}"`).join(', ')} ${open.length === 1 ? 'is' : 'are'} still open. Close each task with what came of it, and answer each question or mark it stale.`);
+    throw new NoteError(`this session is not done: ${open.map((x) => `${x.id} "${x.text}"`).join(', ')} ${open.length === 1 ? 'is' : 'are'} still open. Close each task with what came of it, answer each of the user's questions, record the user's answer to each question asked of them, or mark it stale.`);
   }
   const said = (part: DonePart): string => {
     const text = parts[part]?.trim();
@@ -195,34 +253,39 @@ export function reopenSession(notes: SessionNotes): void {
   delete notes.done;
 }
 
-export function markAnswerRead(notes: SessionNotes, id: string): Question {
-  const question = find(notes.questions, id, 'question');
-  if (question.answer !== undefined) question.read = true;
-  return question;
+export function markAnswerRead(notes: SessionNotes, id: string): Answer {
+  const answer = find(notes.answers, id, 'answer');
+  if (answer.answer !== undefined) answer.read = true;
+  return answer;
 }
 
 export function removeNote(notes: SessionNotes, kind: NoteKind, id: string): void {
-  if (kind === 'task') notes.tasks.splice(notes.tasks.indexOf(find(notes.tasks, id, 'task')), 1);
-  else notes.questions.splice(notes.questions.indexOf(find(notes.questions, id, 'question')), 1);
+  const remove = <T extends { id: string }>(list: T[]) => list.splice(list.indexOf(find(list, id, kind)), 1);
+  if (kind === 'task') remove(notes.tasks);
+  else if (kind === 'answer') remove(notes.answers);
+  else remove(notes.questions);
 }
 
 export interface NoteCounts {
   tasksOpen: number;
   tasksDone: number;
-  /** Questions with no answer yet. */
-  questionsOpen: number;
+  /** The user's questions with no answer yet. */
+  answersOpen: number;
   /** Answers nobody has opened. */
   answersUnread: number;
+  /** Questions asked of the user that wait for them. */
+  questionsOpen: number;
 }
 
 export function noteCounts(notes: SessionNotes | undefined): NoteCounts {
   const tasks = notes?.tasks ?? [];
-  const questions = notes?.questions ?? [];
+  const answers = notes?.answers ?? [];
   return {
     tasksOpen: tasks.filter((t) => t.state === 'open').length,
     tasksDone: tasks.filter((t) => t.state === 'done').length,
-    questionsOpen: questions.filter((q) => q.state === 'open').length,
-    answersUnread: questions.filter((q) => q.state === 'answered' && !q.read).length,
+    answersOpen: answers.filter((a) => a.state === 'open').length,
+    answersUnread: answers.filter((a) => a.state === 'answered' && !a.read).length,
+    questionsOpen: (notes?.questions ?? []).filter((q) => q.state === 'open').length,
   };
 }
 

@@ -283,7 +283,7 @@ test('a subagent of another agent’s session nests under that session, in the c
   provider.setSessions([main, handed, spawned]);
   const [row] = provider.getChildren()[0].children;
   assert.deepEqual([row.collapsibleState, row.children[0].collapsibleState], [1, 2], 'the thread opens collapsed, and everything inside it is expanded');
-  const notes = new Map([['claude:main', { seq: 1, tasks: [{ id: 't1', text: 'Hand the engine over', state: 'open', at: 1 }], questions: [] }]]);
+  const notes = new Map([['claude:main', { seq: 1, tasks: [{ id: 't1', text: 'Hand the engine over', state: 'open', at: 1 }], answers: [], questions: [] }]]);
   const withNotes = new SessionsProvider(options({ pinned: new Set(), notes }), () => {});
   withNotes.setSessions([main, handed, spawned]);
   assert.equal(withNotes.getChildren()[0].children[0].collapsibleState, 1, 'a thread holding spawned sessions beside its notes still opens collapsed');
@@ -320,34 +320,37 @@ test('a hovered Sessions view holds a background update for three seconds, and a
   assert.equal(fired, 3, 'and takes the held update with it');
 });
 
-test('a session lists its questions and tasks under it and counts them on its row, in the chosen details', () => {
+test('a session lists its questions, answers and tasks in one row under it and counts them on its row, in the chosen details', () => {
   const notes = new Map([['codex:a', {
-    seq: 4,
-    tasks: [{ id: 't0', text: 'Keep Twilio Media', state: 'dropped', resolution: 'Replaced.', at: 0 }, { id: 't1', text: 'Create v2 phone engine', state: 'done', resolution: 'Behind the phoneV2 switch.', at: 1 }, { id: 't4', text: 'Port the guard', state: 'open', at: 4 }],
-    questions: [
+    seq: 6,
+    tasks: [{ id: 't0', text: 'Keep Twilio Media', state: 'dropped', resolution: 'Replaced.', at: 0 }, { id: 't1', text: 'Create v2 phone engine', state: 'done', resolution: 'Behind the phoneV2 switch.', closedAt: 6, at: 1 }, { id: 't4', text: 'Port the guard', state: 'open', at: 4 }],
+    answers: [
       { id: 'q2', text: 'Is the old engine kept?', state: 'stale', at: 2 },
       { id: 'q3', text: 'Does it\nhandle barge-in?', state: 'answered', answer: 'Yes.', at: 3, answeredAt: 5 },
     ],
+    questions: [{ id: 'q5', text: 'Remove the old engine?', state: 'open', at: 5 }],
   }]]);
   const wt = { path: '/wt/phone', name: 'phone', branch: 'phone', repoRoot: '/repo' };
   const provider = new SessionsProvider(options({ pinned: new Set(), historyLimit: 10, notes }), () => {});
   provider.setSessions([session('a', { worktree: wt, updatedAt: Date.now() }), session('b', { updatedAt: Date.now() })]);
   const [a, b] = provider.getChildren()[0].children;
-  assert.match(a.description, /^✉ 1 · ☑ 1\/2 · ⎇ phone · /, 'an unread answer and the tasks done lead the row; the tool is the icon’s to say');
+  assert.match(a.description, /^\? 1 · ✉ 1 · ☑ 1\/2 · ⎇ phone · /, 'a question waiting for you, an unread answer and the tasks done lead the row; the tool is the icon’s to say');
   assert.doesNotMatch(b.description, /[✉?☑]|Codex/, 'a session with nothing recorded shows no counts');
   assert.equal(b.collapsibleState, 0);
-  assert.equal(a.collapsibleState, 2, 'a session whose Questions and Tasks row is all it holds opens by itself');
+  assert.equal(a.collapsibleState, 2, 'a session whose notes row is all it holds opens by itself');
 
   const [notesRow] = provider.getChildren(a);
-  assert.deepEqual([provider.getChildren(a).length, notesRow.label, notesRow.description, notesRow.collapsibleState], [1, 'Questions and Tasks', '1 new answer · 1/2 tasks done', 2], 'questions and tasks share one open row');
+  assert.deepEqual([provider.getChildren(a).length, notesRow.label, notesRow.description, notesRow.collapsibleState], [1, 'Questions, Answers and Tasks', '1 question for you · 1 new answer · 1/2 tasks done', 2], 'questions, answers and tasks share one open row');
   assert.deepEqual(notesRow.children.map((n) => [n.label, n.contextValue]), [
-    ['Does it handle barge-in?', 'note-question-answered-unread'],
+    ['Remove the old engine?', 'note-question-open'],
+    ['Does it handle barge-in?', 'note-answer-answered-unread'],
     ['Port the guard', 'note-task-open'],
     ['Create v2 phone engine', 'note-task-done'],
     ['Keep Twilio Media', 'note-task-dropped'],
-    ['Is the old engine kept?', 'note-question-stale'],
-  ], 'an unread answer comes first, then what is open, then what is settled, and what was set aside last, each oldest first');
-  const [answered, , done] = notesRow.children;
+    ['Is the old engine kept?', 'note-answer-stale'],
+  ], 'a question waiting for you comes first, then an unread answer, then what is open, then what is settled, and what was set aside last, each oldest first');
+  assert.ok(notesRow.children.every((n) => !/answer|done|dropped|stale/.test(n.description)), 'a note row says only its age: the icon says its state');
+  const [, answered, , done] = notesRow.children;
   assert.match(provider.resolveTreeItem(done, done).tooltip.value, /Behind the phoneV2 switch\./, 'a closed task says what came of it');
   assert.match(provider.resolveTreeItem(answered, answered).tooltip.value, /Yes\./, 'the answer is in the hover');
 
@@ -355,8 +358,12 @@ test('a session lists its questions and tasks under it and counts them on its ro
   assert.doesNotMatch(provider.getChildren()[0].children[0].description, /[✉☑⎇]/, 'only the chosen details are shown');
   let fired = 0;
   provider.changed.fire = () => { fired++; };
-  notes.get('codex:a').questions[1].read = true;
+  notes.get('codex:a').answers[1].read = true;
   provider.setOptions(options({ pinned: new Set(), historyLimit: 10, notes }));
   assert.equal(fired, 1, 'reading an answer redraws: the count leaves the row');
-  assert.match(provider.getChildren()[0].children[0].description, /^☑ 1\/2/);
+  assert.match(provider.getChildren()[0].children[0].description, /^\? 1 · ☑ 1\/2/);
+  notes.get('codex:a').questions = [];
+  notes.get('codex:a').answers = [];
+  provider.setOptions(options({ pinned: new Set(), historyLimit: 10, notes }));
+  assert.equal(provider.getChildren(provider.getChildren()[0].children[0])[0].label, 'Tasks', 'the row is named after the kinds it holds');
 });

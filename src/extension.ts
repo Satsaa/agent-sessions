@@ -23,7 +23,7 @@ import { closeCodexSession } from './close.js';
 import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
 import { DoneItem, NoteItem, ROW_DETAILS, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
-import { DONE_PARTS, editSessionDone, hasNotes, markAnswerRead, notesDir, notesFile, readAllNotes, removeNote, reopenSession, setQuestionStale, setTaskState, updateNotes, watchNotes, type Question, type SessionNotes, type Task } from './notes.js';
+import { DONE_PARTS, answerQuestion, editSessionDone, hasNotes, markAnswerRead, notesDir, notesFile, readAllNotes, removeNote, reopenSession, setStale, setTaskState, updateNotes, watchNotes, type Answer, type SessionNotes, type Task } from './notes.js';
 import { installNotes, marketplacePath, notesCommandPath, notesOutdated, uninstallNotes, type NotesInstallPaths } from './notes-install.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
 import { switchCodexAccount } from './codex-accounts-ui.js';
@@ -177,7 +177,7 @@ export function activate(context: vscode.ExtensionContext): void {
     for (const k of now) open.add(k);
     return true;
   };
-  // Each session's recorded tasks and questions (notes.ts), shared by reference with the view and kept current by the watch below.
+  // Each session's recorded tasks, answers and questions (notes.ts), shared by reference with the view and kept current by the watch below.
   const notesPath = notesDir();
   const notes = new Map<string, SessionNotes>();
   try {
@@ -688,7 +688,7 @@ export function activate(context: vscode.ExtensionContext): void {
     for (const f of failed) output.appendLine(`agent-sessions plugin, ${f.tool}: ${f.reason}`);
   };
   try {
-    writeNodeLauncher(notesCommandPath(), path.join(context.extensionPath, 'dist', 'session-notes.mjs'), "records a session's tasks and questions.", 'echo "agent-sessions: the Agent Sessions extension is not installed here" >&2; exit 1');
+    writeNodeLauncher(notesCommandPath(), path.join(context.extensionPath, 'dist', 'session-notes.mjs'), "records a session's tasks, answers and questions.", 'echo "agent-sessions: the Agent Sessions extension is not installed here" >&2; exit 1');
     if (notesOutdated(notesPaths())) void installNotes(notesPaths()).then((r) => reportPluginFailures(r.failed), (err) => output.appendLine(`agent-sessions plugin: ${err instanceof Error ? err.message : String(err)}`));
   } catch (err) {
     output.appendLine(`session notes command: ${err instanceof Error ? err.message : String(err)}`);
@@ -946,12 +946,23 @@ export function activate(context: vscode.ExtensionContext): void {
             '',
           ].join('\n\n');
         }
+        const a = mine?.answers.find((x) => `${x.id}.md` === file);
+        if (a) {
+          return [
+            `# ${a.text}`,
+            `You asked ${when(a.at)}${title ? ` in “${title}”` : ''}${a.state === 'stale' ? ' · marked stale' : ''}`,
+            a.answer === undefined ? '_Not answered yet._' : `## Answer\n\n${a.answer}\n\n_Answered ${when(a.answeredAt ?? a.at)}_`,
+            '',
+          ].join('\n\n');
+        }
         const q = mine?.questions.find((x) => `${x.id}.md` === file);
         if (!q) return '# This is no longer recorded.\n';
         return [
           `# ${q.text}`,
-          `Asked ${when(q.at)}${title ? ` in “${title}”` : ''}${q.state === 'stale' ? ' · marked stale' : ''}`,
-          q.answer === undefined ? '_Not answered yet._' : `## Answer\n\n${q.answer}\n\n_Answered ${when(q.answeredAt ?? q.at)}_`,
+          `Asked of you ${when(q.at)}${title ? ` in “${title}”` : ''}${q.state === 'stale' ? ' · marked stale' : ''}`,
+          q.state === 'open' ? '_Waiting for your answer._'
+          : q.answer === undefined ? `_Marked answered ${when(q.answeredAt ?? q.at)}._`
+          : `## Your answer\n\n${q.answer}\n\n_${when(q.answeredAt ?? q.at)}_`,
           '',
         ].join('\n\n');
       },
@@ -959,9 +970,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('agentSessions.note.open', async (arg: unknown) => {
       if (!(arg instanceof NoteItem || arg instanceof DoneItem)) return;
       await showMarkdown(noteUri(arg));
-      if (arg instanceof DoneItem || arg.kind !== 'question') return;
-      const q = arg.note as Question;
-      if (q.state === 'answered' && !q.read) changeNote(arg, (n) => void markAnswerRead(n, q.id));
+      if (arg instanceof DoneItem || arg.kind !== 'answer') return;
+      const a = arg.note as Answer;
+      if (a.state === 'answered' && !a.read) changeNote(arg, (n) => void markAnswerRead(n, a.id));
     }),
     // A closed task always says what came of it, whoever closes it; one text serves every task selected.
     vscode.commands.registerCommand('agentSessions.note.done', async (arg: unknown, selected: unknown) => {
@@ -979,13 +990,17 @@ export function activate(context: vscode.ExtensionContext): void {
       if (resolution !== undefined) changeNote(arg, (n) => void setTaskState(n, task.id, task.state, resolution, task.closedAt));
     }),
     vscode.commands.registerCommand('agentSessions.note.markRead', (arg: unknown, selected: unknown) => {
-      for (const item of noteItemsOf(arg, selected)) if (item.kind === 'question') changeNote(item, (n) => void markAnswerRead(n, item.note.id));
+      for (const item of noteItemsOf(arg, selected)) if (item.kind === 'answer') changeNote(item, (n) => void markAnswerRead(n, item.note.id));
+    }),
+    // A question you answered in the chat, or need not answer there; the agent records what you said when it reads it.
+    vscode.commands.registerCommand('agentSessions.note.answered', (arg: unknown, selected: unknown) => {
+      for (const item of noteItemsOf(arg, selected)) if (item.kind === 'question' && item.note.state === 'open') changeNote(item, (n) => void answerQuestion(n, item.note.id));
     }),
     vscode.commands.registerCommand('agentSessions.note.stale', (arg: unknown, selected: unknown) => {
-      for (const item of noteItemsOf(arg, selected)) if (item.kind === 'question') changeNote(item, (n) => void setQuestionStale(n, item.note.id, true));
+      for (const item of noteItemsOf(arg, selected)) if (item.kind !== 'task') changeNote(item, (n) => void setStale(n, item.kind === 'answer' ? 'answer' : 'question', item.note.id, true));
     }),
     vscode.commands.registerCommand('agentSessions.note.reopen', (arg: unknown, selected: unknown) => {
-      for (const item of noteItemsOf(arg, selected)) changeNote(item, (n) => void (item.kind === 'task' ? setTaskState(n, item.note.id, 'open') : setQuestionStale(n, item.note.id, false)));
+      for (const item of noteItemsOf(arg, selected)) changeNote(item, (n) => void (item.kind === 'task' ? setTaskState(n, item.note.id, 'open') : setStale(n, item.kind, item.note.id, false)));
     }),
     vscode.commands.registerCommand('agentSessions.note.remove', (arg: unknown, selected: unknown) => {
       for (const item of noteItemsOf(arg, selected)) changeNote(item, (n) => removeNote(n, item.kind, item.note.id));
@@ -1006,7 +1021,7 @@ export function activate(context: vscode.ExtensionContext): void {
         reportPluginFailures(failed);
         const tools = (['claude', 'codex'] as const).filter((t) => !failed.some((f) => f.tool === t)).map((t) => (t === 'claude' ? 'Claude Code' : 'Codex'));
         const left = failed.length ? ` Not installed in ${failed.map((f) => (f.tool === 'claude' ? 'Claude Code' : 'Codex')).join(' and ')}: see the Agent Sessions output.` : '';
-        if (tools.length) void vscode.window.showInformationMessage(`The Agent Sessions plugin is installed in ${tools.join(' and ')}: new sessions record their tasks and your questions, and have the question, task and done commands.${left}`);
+        if (tools.length) void vscode.window.showInformationMessage(`The Agent Sessions plugin is installed in ${tools.join(' and ')}: new sessions record their tasks, the answers to your questions and the questions they ask you, and have the task, answer, question and done commands.${left}`);
         else void vscode.window.showErrorMessage(`Could not install the Agent Sessions plugin.${left}`);
       } catch (err) {
         void vscode.window.showErrorMessage(`Could not install the Agent Sessions plugin: ${err instanceof Error ? err.message : String(err)}`);

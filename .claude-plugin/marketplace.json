@@ -5,7 +5,7 @@
     {
       "name": "agent-sessions",
       "source": "./plugin",
-      "description": "Lists each session's tasks and the user's questions under it in the Agent Sessions view of VS Code, and closes a finished session with what it delivered, its tickets and its cleanup. Every question the user asks and every deliverable they ask for is recorded in the same turn, before the work; when in doubt, record it."
+      "description": "Lists each session's tasks, the answers to the user's questions, and the questions the agent asked the user under it in the Agent Sessions view of VS Code, and closes a finished session with what it delivered, its tickets and its cleanup. Every question the user asks, every question asked of them and every deliverable they ask for is recorded in the same turn, before the work; when in doubt, record it."
     }
   ]
 }
