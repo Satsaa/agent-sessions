@@ -141,7 +141,7 @@ const oneLine = (text: string): string => {
   return line.length > 140 ? `${line.slice(0, 139)}…` : line;
 };
 
-/** One recorded task or question, under its session's Tasks or Questions row. */
+/** One recorded task or question, under its session's Questions and Tasks row. */
 export class NoteItem extends vscode.TreeItem implements HoverTooltip {
   readonly children: readonly never[] = [];
   readonly tooltipOnHover: () => vscode.MarkdownString;
@@ -197,36 +197,41 @@ export class DoneItem extends vscode.TreeItem implements HoverTooltip {
   }
 }
 
-/** A session's Questions or Tasks row, holding its notes. */
+/** A session's Questions and Tasks row, holding both kinds of note. */
 export class NoteGroupItem extends vscode.TreeItem {
-  constructor(public readonly kind: NoteKind, public readonly children: NoteItem[], summary: string, idPrefix: string) {
-    super(kind === 'question' ? 'Questions' : 'Tasks', vscode.TreeItemCollapsibleState.Expanded);
-    this.id = `${idPrefix}/${kind}s`;
+  constructor(public readonly children: NoteItem[], summary: string, idPrefix: string) {
+    super('Questions and Tasks', vscode.TreeItemCollapsibleState.Expanded);
+    this.id = `${idPrefix}/notes`;
     this.description = summary;
-    this.iconPath = new vscode.ThemeIcon(kind === 'question' ? 'comment-discussion' : 'checklist');
+    this.iconPath = new vscode.ThemeIcon('checklist');
     this.contextValue = 'notes';
   }
 }
 
-/** What is unanswered or unread first, then what is settled, each oldest first. */
-const QUESTION_ORDER: Record<Question['state'], number> = { open: 1, answered: 2, stale: 3 };
-/** A dropped task is no part of the count, and comes last. */
-const TASK_ORDER: Record<Task['state'], number> = { open: 0, done: 1, dropped: 2 };
+/**
+ * What wants you first: an unread answer, then what is open (questions before tasks), then what is settled,
+ * and last what was set aside; each rank oldest first. A dropped task is no part of the count.
+ */
+const QUESTION_ORDER: Record<Question['state'], number> = { open: 1, answered: 3, stale: 4 };
+const TASK_ORDER: Record<Task['state'], number> = { open: 2, done: 3, dropped: 4 };
 
 function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix: string): (DoneItem | NoteGroupItem)[] {
   if (!notes) return [];
   const counts = noteCounts(notes);
   const groups: (DoneItem | NoteGroupItem)[] = [];
   if (notes.done) groups.push(new DoneItem(session, notes.done, idPrefix));
-  if (notes.questions.length) {
-    const rank = (q: Question) => (q.state === 'answered' && !q.read ? 0 : QUESTION_ORDER[q.state]);
-    const rows = [...notes.questions].sort((a, b) => rank(a) - rank(b) || a.at - b.at);
-    const summary = [counts.answersUnread ? `${counts.answersUnread} new answer${counts.answersUnread === 1 ? '' : 's'}` : '', counts.questionsOpen ? `${counts.questionsOpen} open` : ''].filter(Boolean).join(' · ');
-    groups.push(new NoteGroupItem('question', rows.map((q) => new NoteItem(session, 'question', q, idPrefix)), summary, idPrefix));
-  }
-  if (notes.tasks.length) {
-    const rows = [...notes.tasks].sort((a, b) => TASK_ORDER[a.state] - TASK_ORDER[b.state] || a.at - b.at);
-    groups.push(new NoteGroupItem('task', rows.map((t) => new NoteItem(session, 'task', t, idPrefix)), `${counts.tasksDone}/${counts.tasksOpen + counts.tasksDone}`, idPrefix));
+  if (notes.questions.length || notes.tasks.length) {
+    const ranked = [
+      ...notes.questions.map((q) => ({ rank: q.state === 'answered' && !q.read ? 0 : QUESTION_ORDER[q.state], item: new NoteItem(session, 'question', q, idPrefix), at: q.at })),
+      ...notes.tasks.map((t) => ({ rank: TASK_ORDER[t.state], item: new NoteItem(session, 'task', t, idPrefix), at: t.at })),
+    ].sort((a, b) => a.rank - b.rank || a.at - b.at);
+    const tasks = counts.tasksOpen + counts.tasksDone;
+    const summary = [
+      counts.answersUnread ? `${counts.answersUnread} new answer${counts.answersUnread === 1 ? '' : 's'}` : '',
+      counts.questionsOpen ? `${counts.questionsOpen} open question${counts.questionsOpen === 1 ? '' : 's'}` : '',
+      tasks ? `${counts.tasksDone}/${tasks} task${tasks === 1 ? '' : 's'} done` : '',
+    ].filter(Boolean).join(' · ');
+    groups.push(new NoteGroupItem(ranked.map((r) => r.item), summary, idPrefix));
   }
   return groups;
 }
@@ -239,7 +244,7 @@ export interface RowContent {
 
 export class SessionItem extends vscode.TreeItem implements HoverTooltip {
   readonly tooltipOnHover: () => vscode.MarkdownString;
-  /** The session's Done, Questions and Tasks rows, listed before the sessions it spawned. */
+  /** The session's Done and Questions and Tasks rows, listed before the sessions it spawned. */
   readonly notes: (DoneItem | NoteGroupItem)[];
 
   constructor(
@@ -254,11 +259,17 @@ export class SessionItem extends vscode.TreeItem implements HoverTooltip {
     public readonly children: SessionItem[] = [],
     backlog = false,
   ) {
-    // A session's thread opens collapsed; inside it, every spawned session's own subtree is already open.
-    super(session.title, !children.length && !hasNotes(content.notes) ? vscode.TreeItemCollapsibleState.None : session.subagent ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+    super(session.title, vscode.TreeItemCollapsibleState.None);
     const archived = session.archived || archivedHere;
     this.id = `${idPrefix}${session.tool}:${session.id}${idSuffix}`;
     this.notes = noteGroups(session, content.notes, this.id);
+    // A session's thread opens collapsed, unless its Questions and Tasks row is the one thing under it;
+    // inside a thread, every spawned session's own subtree is already open.
+    const onlyNotes = !children.length && this.notes.some((row) => row instanceof NoteGroupItem);
+    this.collapsibleState =
+      !children.length && !hasNotes(content.notes) ? vscode.TreeItemCollapsibleState.None
+      : session.subagent || onlyNotes ? vscode.TreeItemCollapsibleState.Expanded
+      : vscode.TreeItemCollapsibleState.Collapsed;
     this.iconPath = stateIcon(session.tool, session.state, archived);
     this.description = `${pinned ? '📌 ' : ''}${describe(session, content, stats)}`;
     // Built on hover (`resolveTreeItem`), which is also how the view learns the pointer is over it.
@@ -725,7 +736,7 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
 /** A tree row with the rows nested under it. */
 export interface Row extends vscode.TreeItem {
   readonly children: readonly Row[];
-  /** A session's Questions and Tasks rows, listed before `children`. */
+  /** A session's Done and Questions and Tasks rows, listed before `children`. */
   readonly notes?: readonly Row[];
 }
 

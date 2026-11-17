@@ -283,6 +283,10 @@ test('a subagent of another agent’s session nests under that session, in the c
   provider.setSessions([main, handed, spawned]);
   const [row] = provider.getChildren()[0].children;
   assert.deepEqual([row.collapsibleState, row.children[0].collapsibleState], [1, 2], 'the thread opens collapsed, and everything inside it is expanded');
+  const notes = new Map([['claude:main', { seq: 1, tasks: [{ id: 't1', text: 'Hand the engine over', state: 'open', at: 1 }], questions: [] }]]);
+  const withNotes = new SessionsProvider(options({ pinned: new Set(), notes }), () => {});
+  withNotes.setSessions([main, handed, spawned]);
+  assert.equal(withNotes.getChildren()[0].children[0].collapsibleState, 1, 'a thread holding spawned sessions beside its notes still opens collapsed');
 });
 
 test('a hovered Sessions view holds a background update for three seconds, and a person’s own change for none', (t) => {
@@ -332,14 +336,20 @@ test('a session lists its questions and tasks under it and counts them on its ro
   assert.match(a.description, /^✉ 1 · ☑ 1\/2 · ⎇ phone · /, 'an unread answer and the tasks done lead the row; the tool is the icon’s to say');
   assert.doesNotMatch(b.description, /[✉?☑]|Codex/, 'a session with nothing recorded shows no counts');
   assert.equal(b.collapsibleState, 0);
-  assert.equal(a.collapsibleState, 1, 'notes alone give a session something to expand');
+  assert.equal(a.collapsibleState, 2, 'a session whose Questions and Tasks row is all it holds opens by itself');
 
-  const [questions, tasks] = provider.getChildren(a);
-  assert.deepEqual([questions.label, questions.description, tasks.label, tasks.description], ['Questions', '1 new answer', 'Tasks', '1/2']);
-  assert.deepEqual(questions.children.map((n) => [n.label, n.contextValue]), [['Does it handle barge-in?', 'note-question-answered'], ['Is the old engine kept?', 'note-question-stale']], 'an unread answer comes first, a stale question last');
-  assert.deepEqual(tasks.children.map((n) => n.contextValue), ['note-task-open', 'note-task-done', 'note-task-dropped'], 'a dropped task stays listed, last and outside the count');
-  assert.match(provider.resolveTreeItem(tasks.children[1], tasks.children[1]).tooltip.value, /Behind the phoneV2 switch\./, 'a closed task says what came of it');
-  assert.match(provider.resolveTreeItem(questions.children[0], questions.children[0]).tooltip.value, /Yes\./, 'the answer is in the hover');
+  const [notesRow] = provider.getChildren(a);
+  assert.deepEqual([provider.getChildren(a).length, notesRow.label, notesRow.description, notesRow.collapsibleState], [1, 'Questions and Tasks', '1 new answer · 1/2 tasks done', 2], 'questions and tasks share one open row');
+  assert.deepEqual(notesRow.children.map((n) => [n.label, n.contextValue]), [
+    ['Does it handle barge-in?', 'note-question-answered'],
+    ['Port the guard', 'note-task-open'],
+    ['Create v2 phone engine', 'note-task-done'],
+    ['Keep Twilio Media', 'note-task-dropped'],
+    ['Is the old engine kept?', 'note-question-stale'],
+  ], 'an unread answer comes first, then what is open, then what is settled, and what was set aside last, each oldest first');
+  const [answered, , done] = notesRow.children;
+  assert.match(provider.resolveTreeItem(done, done).tooltip.value, /Behind the phoneV2 switch\./, 'a closed task says what came of it');
+  assert.match(provider.resolveTreeItem(answered, answered).tooltip.value, /Yes\./, 'the answer is in the hover');
 
   provider.setOptions(options({ pinned: new Set(), historyLimit: 10, notes, rowDetails: ['age'] }));
   assert.doesNotMatch(provider.getChildren()[0].children[0].description, /[✉☑⎇]/, 'only the chosen details are shown');
