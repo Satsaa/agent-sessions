@@ -38,11 +38,12 @@ export const INSTRUCTIONS = `## Session tasks and questions (Agent Sessions)
 
 \`${COMMAND}\` records this session's tasks and the user's questions. The user sees them listed under the session, outside the chat, so nothing asked or agreed gets lost in a long conversation. \`${COMMAND} help\` lists the commands.
 
-This applies to every session and is not optional: a task or a question left unrecorded is one the user loses track of. When a rule below fits, record it before doing anything else.
+This applies to every session and is not optional: a task or a question left unrecorded is one the user loses track of. Record every time, in the same turn, before starting the work; when in doubt, record it.
 
-- **A task is a deliverable the user would name**, such as "Create v2 phone engine": never a step of one, and not your own plan or todo list. Most sessions have one to three. Add it when the work is agreed (\`task add "<name>"\`). Close it when it is finished and checked, saying in a line or two what was delivered and where (\`task done <id> "<what was delivered>"\`), or when it is abandoned, saying why (\`task drop <id> "<why>"\`).
-- **A question is something the user asked that could get lost**: asked beside other work, in the middle of a task, or not answered in the same reply. Record it in their words (\`question add "<question>"\`). A question you answer at once in a short reply needs no record.
-- **Answer a recorded question in both places**: write the answer in your reply, and record the same answer with \`question answer <id> -\`, the text on standard input. The user reads recorded answers on their own, so the text must make sense without the conversation.
+- **Every deliverable the user asks for is a task**, recorded the moment it is asked: a plan, a doc, a skill change, a code change, a fix, small ones and ones delegated to a subagent included. Name the deliverable, such as "Create v2 phone engine", never a step of one or your own todo list (\`task add "<name>"\`). Close it when it is finished and checked, saying in a line or two what was delivered and where (\`task done <id> "<what was delivered>"\`), or when it is abandoned, saying why (\`task drop <id> "<why>"\`).
+- **Every question the user asks is recorded**, in their words (\`question add "<question>"\`), unless your same short reply answers it fully.
+- **Answer a recorded question in both places**: write the answer in your reply, and record the same answer with \`question answer <id> -\`, the text on standard input. The user reads recorded answers on their own, so the text must make sense without the conversation. **A recorded answer, and a task's done or drop summary, is terse and specific**: only what answers it, with no hedging, no restating of the question, and no filler or obvious context; a short header per point with bullets under it, never paragraphs of prose.
+- **A recorded answer always matches the latest answer in the conversation**: when a later reply changes, corrects or extends it, such as after a follow-up like "are you sure?", record it again with \`question answer <id> -\` in the same turn, before ending it. A stale recorded answer is wrong.
 - The user can record a question or a task themselves with the plugin's question and task commands. Do not expect them to: recording what they ask is your job either way.
 - Before ending a turn in a session that has anything recorded, run \`list\` and answer what you can now. Leave the rest open; \`question stale <id>\` marks one that no longer matters.
 - **When the session's work is all delivered, or the user says it is done, close it with the plugin's done skill**: it checks the features, the tickets and the cleanup, then records them with \`done\`. A session is never marked done with a task open or a question unanswered.`;
@@ -59,7 +60,7 @@ export function hookText(event: string, notes: SessionNotes): string {
   if (event === 'session-start') return [INSTRUCTIONS, ...(notes.tasks.length || notes.questions.length || notes.done ? ['', 'Recorded for this session so far:', formatNotes(notes)] : [])].join('\n');
   if (event !== 'prompt') throw new NoteError('hook takes session-start or prompt');
   if (!open.length) return '';
-  return [`Agent Sessions: this session still has open (\`${COMMAND} list\`):`, ...open, 'Close a task when it is delivered and answer a question in your reply and with `question answer`. Record a new deliverable or a question that could get lost from this message before working on it.'].join('\n');
+  return [`Agent Sessions: this session still has open (\`${COMMAND} list\`):`, ...open, 'Close a task when it is delivered and answer a question in your reply and with `question answer`. Before working on this message, record each deliverable it asks for as a task and each question it asks, unless your same short reply answers it fully.'].join('\n');
 }
 
 /** The session a hook runs for: both tools hand their hooks the session's id on standard input. */
