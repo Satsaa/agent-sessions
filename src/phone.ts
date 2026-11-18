@@ -5,7 +5,7 @@ import { isAgentPanelTab } from './open.js';
 export const BLANK_DOC_PATH = '/blank';
 
 /** The views of the Sessions container, moved into the phone container for the maximized secondary side bar. */
-const VIEW_IDS = ['agentSessions.list', 'agentSessions.usage', 'agentSessions.worktrees'];
+const VIEW_IDS = ['agentSessions.list', 'agentSessions.current', 'agentSessions.usage', 'agentSessions.worktrees'];
 const PHONE_CONTAINER = 'workbench.view.extension.agentSessionsPhone';
 /** When session mode re-closes the side bar after entering, for a panel that reveals itself late. */
 const SESSION_SETTLE_MS = [400, 1200, 3000];

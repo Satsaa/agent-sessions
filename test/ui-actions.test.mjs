@@ -38,7 +38,7 @@ await build({
     build.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'module.exports = globalThis.__agentSessionsVSCode;' }));
   } }],
 });
-const { UsageProvider, usageStatusText, usageStatusColor, usageStatusTooltip, isUsageStale, SessionsProvider, WorktreesProvider, deleteWorktree } = createRequire(import.meta.url)(bundle);
+const { UsageProvider, usageStatusText, usageStatusColor, usageStatusTooltip, isUsageStale, SessionsProvider, CurrentSessionProvider, WorktreesProvider, deleteWorktree } = createRequire(import.meta.url)(bundle);
 after(() => rm(directory, { recursive: true, force: true }));
 const usage = (overrides = {}) => ({ tool: 'claude', plan: 'Max 20x', windows: [{ label: 'Session', percent: 95 }], asOf: Date.now(), source: 'test', error: undefined, ...overrides });
 
@@ -352,7 +352,7 @@ test('a session lists its questions and answers in one row and its tasks in anot
   assert.match(a.description, /^\? 1 · ✉ 1 · ☑ 1\/2 · ⎇ phone · /, 'a question waiting for you, an unread answer and the tasks done lead the row; the tool is the icon’s to say');
   assert.doesNotMatch(b.description, /[✉?☑]|Codex/, 'a session with nothing recorded shows no counts');
   assert.equal(b.collapsibleState, 0);
-  assert.equal(a.collapsibleState, 2, 'a session whose notes rows are all it holds opens by itself');
+  assert.equal(a.collapsibleState, 1, 'a session holding only notes opens collapsed: the Current Session view lists the active tab’s notes');
 
   const [notesRow, tasksRow] = provider.getChildren(a);
   assert.deepEqual(provider.getChildren(a).map((row) => [row.label, row.description, row.collapsibleState]), [
@@ -435,5 +435,23 @@ test('the current session’s row opens, every other one stays closed, and the p
   assert.deepEqual([second.a[1], second.b[1]], [1, 2], 'the previous session closes and the new one opens');
   assert.ok(second.a[0] !== before.a[0] && second.a[0] !== first.a[0], 'the previous row closes under an id the view has not seen open');
   provider.setOptions(options({ pinned: new Set(), historyLimit: 10, notes, expandCurrent: false, current: 'codex:b' }));
-  assert.deepEqual(Object.values(rows()).map(([, state]) => state), [2, 2], 'switched off, rows keep their own default');
+  assert.deepEqual(Object.values(rows()).map(([, state]) => state), [1, 1], 'switched off, every row holding notes opens collapsed');
+});
+
+test('the Current Session view lists the active tab’s notes as the Sessions row does, and redraws only when they change', () => {
+  const notes = { seq: 3, tasks: [{ id: 't1', text: 'Ship it', state: 'open', at: 1 }], answers: [{ id: 'q2', text: 'Kept?', state: 'open', at: 2 }], questions: [] };
+  const provider = new CurrentSessionProvider();
+  let fired = 0;
+  provider.changed.fire = () => { fired++; };
+  provider.set(session('a'), notes);
+  assert.deepEqual(provider.getChildren().map((row) => [row.label, row.children.map((n) => [n.label, n.contextValue])]), [
+    ['Answers', [['Kept?', 'note-answer-open']]],
+    ['Tasks', [['Ship it', 'note-task-open']]],
+  ], 'the same rows, and so the same note actions, as under the session’s row');
+  provider.set(session('a'), notes);
+  assert.equal(fired, 1, 'the same notes again draw nothing');
+  provider.set(session('b'), notes);
+  assert.equal(fired, 2, 'another session’s notes redraw, under its own ids');
+  provider.set(undefined, undefined);
+  assert.deepEqual([provider.getChildren(), fired], [[], 3], 'no agent tab active, nothing is listed');
 });

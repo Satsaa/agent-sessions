@@ -22,7 +22,7 @@ import { listCodexAccounts } from './codex-accounts.js';
 import { closeCodexSession } from './close.js';
 import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
-import { NoteItem, ROW_DETAILS, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
+import { CurrentSessionProvider, NoteItem, ROW_DETAILS, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
 import { DONE_PARTS, answerQuestion, editSessionDone, hasNotes, markAnswerRead, notesDir, notesFile, readAllNotes, removeNote, reopenSession, setStale, setTaskState, updateNotes, watchNotes, type Answer, type SessionNotes, type Task } from './notes.js';
 import { installNotes, marketplacePath, notesCommandPath, notesOutdated, uninstallNotes, type NotesInstallPaths } from './notes-install.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
@@ -83,7 +83,7 @@ function readConfig(): Config {
       subagentLayout: c.get<SubagentLayout>('subagentLayout', 'nested'),
       activeSort: c.get<ActiveSort>('activeSort', 'newest'),
       showActiveArchived: c.get<boolean>('showActiveArchived', true),
-      expandCurrent: c.get<boolean>('expandCurrentSession', true),
+      expandCurrent: c.get<boolean>('expandCurrentSession', false),
       showEmpty: c.get<boolean>('showEmpty', false),
       historyLimit: c.get<number>('historyLimit', 200),
       // A hand-edited setting may hold anything: only the details there are, each once.
@@ -220,7 +220,9 @@ export function activate(context: vscode.ExtensionContext): void {
   usageBar.command = 'agentSessions.usage.focus';
   const worktreesProvider = new WorktreesProvider();
   const worktreesView = vscode.window.createTreeView('agentSessions.worktrees', { treeDataProvider: worktreesProvider, showCollapseAll: true, canSelectMany: true });
-  context.subscriptions.push(output, view, statusBar, usageView, usageBar, worktreesView, { dispose: stopRunner });
+  const currentProvider = new CurrentSessionProvider();
+  const currentView = vscode.window.createTreeView('agentSessions.current', { treeDataProvider: currentProvider, canSelectMany: true });
+  context.subscriptions.push(output, view, statusBar, usageView, usageBar, worktreesView, currentView, { dispose: stopRunner });
   // The views with several rows selected, for the menus' when-clauses: single-row actions hide there (see row-actions.ts).
   const multiSelect = new Set<string>();
   const trackMultiSelect = <T>(id: string, tree: vscode.TreeView<T>) => tree.onDidChangeSelection((e) => {
@@ -230,7 +232,7 @@ export function activate(context: vscode.ExtensionContext): void {
     else multiSelect.delete(id);
     void vscode.commands.executeCommand('setContext', 'agentSessions.multiSelect', [...multiSelect]);
   });
-  context.subscriptions.push(trackMultiSelect('agentSessions.list', view), trackMultiSelect('agentSessions.worktrees', worktreesView));
+  context.subscriptions.push(trackMultiSelect('agentSessions.list', view), trackMultiSelect('agentSessions.worktrees', worktreesView), trackMultiSelect('agentSessions.current', currentView));
   void vscode.commands.executeCommand('setContext', 'agentSessions.multiSelect', []);
   // Its rows get git stats only while it shows (see refresh).
   context.subscriptions.push(worktreesView.onDidChangeVisibility((e) => e.visible && void refresh([])));
@@ -243,7 +245,16 @@ export function activate(context: vscode.ExtensionContext): void {
   // Revealing scrolls the view, so it happens once per change of active chat, never again on refreshes while the
   // same chat stays active: the selection itself survives refreshes through the row id.
   let revealedKey: string | undefined;
+  // The Current Session view follows the active tab whether or not the Sessions view shows: its own title names the session.
+  const showCurrentSession = (): void => {
+    const s = sessionOfActiveTab(latestSessions);
+    const n = s ? notes.get(`${s.tool}:${s.id}`) : undefined;
+    currentProvider.set(s, n);
+    currentView.description = s?.title ?? '';
+    currentView.message = !s ? 'No agent tab is active.' : n && (n.tasks.length || n.answers.length || n.questions.length) ? '' : 'This session has recorded no tasks, answers or questions.';
+  };
   const selectActiveTabSession = (): void => {
+    showCurrentSession();
     // Several rows selected by hand are the person's, for a bulk action: following the active tab would undo them.
     if (!view.visible || view.selection.length > 1) return;
     const s = sessionOfActiveTab(latestSessions);
@@ -673,6 +684,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const noteUri = (item: NoteItem | SessionItem) => vscode.Uri.from({ scheme: NOTE_SCHEME, path: `/${item.session.tool}/${item.session.id}/${item instanceof NoteItem ? item.note.id : 'done'}.md` });
   context.subscriptions.push(noteChanged, watchNotes(notesPath, notes, () => {
     provider.notesChanged(true);
+    showCurrentSession();
     for (const doc of vscode.workspace.textDocuments) if (doc.uri.scheme === NOTE_SCHEME) noteChanged.fire(doc.uri);
   }));
   /** One change to a note's file, shown at once rather than when the watch notices. */
@@ -687,6 +699,7 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
     }
     provider.notesChanged(false);
+    showCurrentSession();
     noteChanged.fire(noteUri(item));
   };
   /** What came of a task, in a person's words; undefined when they cancelled. */

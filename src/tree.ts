@@ -256,13 +256,12 @@ export class SessionItem extends vscode.TreeItem implements HoverTooltip {
     const archived = session.archived || archivedHere;
     this.id = `${idPrefix}${session.tool}:${session.id}${idSuffix}`;
     this.notes = noteGroups(session, content.notes, this.id);
-    // A session's thread opens collapsed, unless its notes row is the one thing under it;
-    // inside a thread, every spawned session's own subtree is already open.
-    const onlyNotes = !children.length && this.notes.length > 0;
+    // A session's row opens collapsed, its notes included: the current session's notes have a view of their own
+    // (`CurrentSessionProvider`). Inside a thread, every spawned session's own subtree is already open.
     this.collapsibleState =
       !children.length && !this.notes.length ? vscode.TreeItemCollapsibleState.None
       : expand !== undefined ? (expand ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed)
-      : session.subagent || onlyNotes ? vscode.TreeItemCollapsibleState.Expanded
+      : session.subagent ? vscode.TreeItemCollapsibleState.Expanded
       : vscode.TreeItemCollapsibleState.Collapsed;
     const counts = content.notes ? noteCounts(content.notes) : undefined;
     this.iconPath = stateIcon(session.tool, session.state, archived, !!counts && counts.tasksDone > 0 && counts.tasksOpen === 0);
@@ -304,6 +303,45 @@ export class GroupItem extends vscode.TreeItem {
 }
 
 type Node = SessionItem | GroupItem | NoteGroupItem | NoteItem;
+
+type NoteNode = NoteGroupItem | NoteItem;
+
+/**
+ * The Current Session view: the tasks, answers and questions of the session in the active agent tab, as the same
+ * rows its Sessions row holds, so every note action works there too. It follows the active tab, not the Sessions
+ * view, so it keeps up while that view is collapsed or scrolled elsewhere.
+ */
+export class CurrentSessionProvider implements vscode.TreeDataProvider<NoteNode> {
+  private readonly changed = new vscode.EventEmitter<NoteNode | undefined>();
+  readonly onDidChangeTreeData = this.changed.event;
+  private roots: NoteGroupItem[] = [];
+  private rendered = '';
+
+  /** Shows `session`'s notes; undefined when no agent tab is active or its session is unknown. */
+  set(session: Session | undefined, notes: SessionNotes | undefined): void {
+    this.roots = session ? noteGroups(session, notes, `current:${session.tool}:${session.id}`) : [];
+    const key = JSON.stringify(this.roots.map((g) => [g.id, g.description, g.children.map((n) => [n.id, n.label, n.description, n.contextValue])]));
+    if (key === this.rendered) return;
+    this.rendered = key;
+    this.changed.fire(undefined);
+  }
+
+  getTreeItem(element: NoteNode): vscode.TreeItem {
+    return element;
+  }
+
+  getChildren(element?: NoteNode): NoteNode[] {
+    return element ? [...element.children] : this.roots;
+  }
+
+  getParent(element: NoteNode): NoteNode | undefined {
+    return element instanceof NoteItem ? this.roots.find((g) => g.children.includes(element)) : undefined;
+  }
+
+  resolveTreeItem(item: vscode.TreeItem, element: NoteNode): vscode.TreeItem {
+    return resolveTooltip(item, element);
+  }
+}
 
 /** How long the view keeps still after the pointer reaches a row, so a row is not moved from under a click. */
 const HOVER_HOLD_MS = 3000;
