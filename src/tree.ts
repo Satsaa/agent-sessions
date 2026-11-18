@@ -285,7 +285,8 @@ export class SessionItem extends vscode.TreeItem implements HoverTooltip {
       : expand !== undefined ? (expand ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed)
       : session.subagent || onlyNotes ? vscode.TreeItemCollapsibleState.Expanded
       : vscode.TreeItemCollapsibleState.Collapsed;
-    this.iconPath = stateIcon(session.tool, session.state, archived);
+    const counts = content.notes ? noteCounts(content.notes) : undefined;
+    this.iconPath = stateIcon(session.tool, session.state, archived, !!counts && counts.tasksDone > 0 && counts.tasksOpen === 0);
     this.description = `${pinned ? '📌 ' : ''}${describe(session, content, stats)}`;
     // Built on hover (`resolveTreeItem`), which is also how the view learns the pointer is over it.
     this.tooltipOnHover = () => {

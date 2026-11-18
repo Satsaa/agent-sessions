@@ -17,8 +17,9 @@ export function toolIcon(tool: Tool): { light: vscode.Uri; dark: vscode.Uri } {
  * The state glyph (codicon shape and colour) with the tool's mark in the top-right corner — one file per tool × state × theme.
  * An archived session shows the archive box, except while running: then the spinner, in the archive's grey.
  */
-export function stateIcon(tool: Tool, state: SessionState, archived: boolean): { light: vscode.Uri; dark: vscode.Uri } {
-  const name = `${tool}-${archived ? (state === 'running' ? 'archived-running' : 'archived') : state}`;
+export function stateIcon(tool: Tool, state: SessionState, archived: boolean, tasksDone = false): { light: vscode.Uri; dark: vscode.Uri } {
+  // A replied session whose every task is done has its glyph green; the tool's mark keeps its own colour.
+  const name = `${tool}-${archived ? (state === 'running' ? 'archived-running' : 'archived') : state === 'replied' && tasksDone ? 'replied-done' : state}`;
   const file = (theme: 'light' | 'dark') => vscode.Uri.file(path.join(root, 'resources', 'state', `${name}-${theme}.svg`));
   return { light: file('light'), dark: file('dark') };
 }

@@ -389,6 +389,24 @@ test('a session lists its questions and answers in one row and its tasks in anot
   assert.equal(provider.getChildren(provider.getChildren()[0].children[0])[0].label, 'Tasks', 'with nothing asked, only the tasks row is left');
 });
 
+test('a replied session whose every task is done shows its glyph green, the tool’s mark unchanged', () => {
+  const task = (state) => ({ id: `t-${state}`, text: state, state, at: 1 });
+  const notes = new Map([
+    ['codex:done', { seq: 1, tasks: [task('done'), task('dropped')], answers: [], questions: [] }],
+    ['codex:open', { seq: 1, tasks: [task('done'), task('open')], answers: [], questions: [] }],
+    ['codex:dropped', { seq: 1, tasks: [task('dropped')], answers: [], questions: [] }],
+  ]);
+  const provider = new SessionsProvider(options({ pinned: new Set(), historyLimit: 10, notes }), () => {});
+  provider.setSessions(['done', 'open', 'dropped', 'none'].map((id) => session(id, { state: 'replied' })));
+  const icons = Object.fromEntries(provider.getChildren()[0].children.map((row) => [row.session.id, row.iconPath.dark.fsPath.split('/').at(-1)]));
+  assert.deepEqual(icons, {
+    done: 'codex-replied-done-dark.svg',
+    open: 'codex-replied-dark.svg',
+    dropped: 'codex-replied-dark.svg',
+    none: 'codex-replied-dark.svg',
+  }, 'green only when a task was done and none is open; a dropped task neither counts nor blocks');
+});
+
 test('the current session’s row opens, every other one stays closed, and the previous one closes when the current one changes', () => {
   const notes = new Map(['a', 'b'].map((id) => [`codex:${id}`, { seq: 1, tasks: [{ id: 't1', text: 'Ship it', state: 'open', at: 1 }], answers: [], questions: [] }]));
   const provider = new SessionsProvider(options({ pinned: new Set(), historyLimit: 10, notes, expandCurrent: true }), () => {});
