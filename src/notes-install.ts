@@ -5,8 +5,8 @@ import * as path from 'node:path';
 
 /**
  * The opt-in agent side of session notes (notes.ts) is the `agent-sessions` plugin in this repository's `plugin/`:
- * hooks that tell each session when to record a task or a question and remind it of what is open, and the question,
- * task and done skills. It is installed into Claude Code and Codex through their own plugin commands, from a copy of
+ * hooks that tell each session when to record a task or a question and remind it of what is open, and the task, ask,
+ * ask-user and done skills. It is installed into Claude Code and Codex through their own plugin commands, from a copy of
  * the marketplace this extension ships, kept at a fixed path so an extension update does not move it. The plugin's
  * text names the `agent-sessions` command at its fixed path, which every activation writes.
  */
