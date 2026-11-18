@@ -145,6 +145,12 @@ const oneLine = (text: string): string => {
   return line.length > 140 ? `${line.slice(0, 139)}…` : line;
 };
 
+/** When a note last changed: answered or closed, else recorded. A stale note keeps when it was recorded. */
+function noteChangedAt(kind: NoteKind, note: Task | Answer | Question): number {
+  if (note.state === 'stale') return note.at;
+  return (kind === 'task' ? (note as Task).closedAt : (note as Answer | Question).answeredAt) ?? note.at;
+}
+
 /** One recorded task, answer or question, under its session's notes row. */
 export class NoteItem extends vscode.TreeItem implements HoverTooltip {
   readonly children: readonly never[] = [];
@@ -165,8 +171,7 @@ export class NoteItem extends vscode.TreeItem implements HoverTooltip {
       : note.state === 'answered' ? (unread ? new vscode.ThemeIcon('mail', new vscode.ThemeColor('charts.green')) : new vscode.ThemeIcon('mail-read', faded))
       : new vscode.ThemeIcon('comment', new vscode.ThemeColor('charts.yellow'));
     const said = kind === 'task' ? (note as Task).resolution : (note as Answer | Question).answer;
-    const changedAt = kind === 'task' ? (note as Task).closedAt : (note as Answer | Question).answeredAt;
-    this.description = relativeTime(note.state === 'stale' ? note.at : (changedAt ?? note.at));
+    this.description = relativeTime(noteChangedAt(kind, note));
     this.tooltipOnHover = () => {
       const md = new vscode.MarkdownString(undefined, true);
       md.appendMarkdown(`**${escapeMd(note.text)}**\n\n`);
@@ -191,26 +196,21 @@ export class NoteGroupItem extends vscode.TreeItem {
   }
 }
 
-/**
- * What wants you first: a question waiting for you, then an unread answer, then what the agent still owes, then what
- * is settled, and last what was set aside; each rank oldest first. Tasks rank the same way in their own row. A dropped
- * task is no part of the count.
- */
-const QUESTION_ORDER: Record<Question['state'], number> = { open: 0, answered: 4, stale: 5 };
-const ANSWER_ORDER: Record<Answer['state'], number> = { open: 2, answered: 4, stale: 5 };
-const TASK_ORDER: Record<Task['state'], number> = { open: 3, done: 4, dropped: 5 };
-
+/** Each notes row lists its notes newest first, by when each last changed (the age its row shows). */
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
 function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix: string): NoteGroupItem[] {
   if (!notes) return [];
   const counts = noteCounts(notes);
   const groups: NoteGroupItem[] = [];
-  const ranked = (rows: { rank: number; item: NoteItem; at: number }[]) => rows.sort((a, b) => a.rank - b.rank || a.at - b.at).map((r) => r.item);
+  const newestFirst = (rows: NoteItem[]) => rows
+    .map((item) => ({ item, at: noteChangedAt(item.kind, item.note) }))
+    .sort((a, b) => b.at - a.at || b.item.note.at - a.item.note.at)
+    .map((r) => r.item);
   if (notes.questions.length || notes.answers.length) {
-    const items = ranked([
-      ...notes.questions.map((q) => ({ rank: QUESTION_ORDER[q.state], item: new NoteItem(session, 'question', q, idPrefix), at: q.at })),
-      ...notes.answers.map((a) => ({ rank: a.state === 'answered' && !a.read ? 1 : ANSWER_ORDER[a.state], item: new NoteItem(session, 'answer', a, idPrefix), at: a.at })),
+    const items = newestFirst([
+      ...notes.questions.map((q) => new NoteItem(session, 'question', q, idPrefix)),
+      ...notes.answers.map((a) => new NoteItem(session, 'answer', a, idPrefix)),
     ]);
     const label = [notes.questions.length ? 'Questions' : '', notes.answers.length ? 'Answers' : ''].filter(Boolean).join(' and ');
     const summary = [
@@ -220,7 +220,7 @@ function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix:
     groups.push(new NoteGroupItem(items, label, summary, idPrefix, 'notes'));
   }
   if (notes.tasks.length) {
-    const items = ranked(notes.tasks.map((t) => ({ rank: TASK_ORDER[t.state], item: new NoteItem(session, 'task', t, idPrefix), at: t.at })));
+    const items = newestFirst(notes.tasks.map((t) => new NoteItem(session, 'task', t, idPrefix)));
     const tasks = counts.tasksOpen + counts.tasksDone;
     groups.push(new NoteGroupItem(items, 'Tasks', tasks ? `${counts.tasksDone}/${plural(tasks, 'task')} done` : '', idPrefix, 'tasks'));
   }

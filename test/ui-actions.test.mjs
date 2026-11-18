@@ -341,7 +341,7 @@ test('a session lists its questions and answers in one row and its tasks in anot
     tasks: [{ id: 't0', text: 'Keep Twilio Media', state: 'dropped', resolution: 'Replaced.', at: 0 }, { id: 't1', text: 'Create v2 phone engine', state: 'done', resolution: 'Behind the phoneV2 switch.', closedAt: 6, at: 1 }, { id: 't4', text: 'Port the guard', state: 'open', at: 4 }],
     answers: [
       { id: 'q2', text: 'Is the old engine kept?', state: 'stale', at: 2 },
-      { id: 'q3', text: 'Does it\nhandle barge-in?', state: 'answered', answer: 'Yes.', at: 3, answeredAt: 5 },
+      { id: 'q3', text: 'Does it\nhandle barge-in?', state: 'answered', answer: 'Yes.', at: 3, answeredAt: 7 },
     ],
     questions: [{ id: 'q5', text: 'Remove the old engine?', state: 'open', at: 5 }],
   }]]);
@@ -360,18 +360,18 @@ test('a session lists its questions and answers in one row and its tasks in anot
     ['Tasks', '1/2 tasks done', 2],
   ], 'tasks are a subsection of their own, apart from the questions and answers');
   assert.deepEqual(notesRow.children.map((n) => [n.label, n.contextValue]), [
-    ['Remove the old engine?', 'note-question-open'],
     ['Does it handle barge-in?', 'note-answer-answered-unread'],
+    ['Remove the old engine?', 'note-question-open'],
     ['Is the old engine kept?', 'note-answer-stale'],
-  ], 'a question waiting for you comes first, then an unread answer, and what was set aside last');
+  ], 'newest first, by when each last changed: an answer by when it was answered, whatever its state');
   assert.deepEqual(tasksRow.children.map((n) => [n.label, n.contextValue]), [
-    ['Port the guard', 'note-task-open'],
     ['Create v2 phone engine', 'note-task-done'],
+    ['Port the guard', 'note-task-open'],
     ['Keep Twilio Media', 'note-task-dropped'],
-  ], 'what is open first, then what is settled, and what was set aside last');
+  ], 'newest first, by when each last changed: a task by when it was closed, else when it was given');
   assert.ok([...notesRow.children, ...tasksRow.children].every((n) => !/answer|done|dropped|stale/.test(n.description)), 'a note row says only its age: the icon says its state');
-  const [, answered] = notesRow.children;
-  const [, done] = tasksRow.children;
+  const [answered] = notesRow.children;
+  const [done] = tasksRow.children;
   assert.match(provider.resolveTreeItem(done, done).tooltip.value, /Behind the phoneV2 switch\./, 'a closed task says what came of it');
   assert.match(provider.resolveTreeItem(answered, answered).tooltip.value, /Yes\./, 'the answer is in the hover');
 
