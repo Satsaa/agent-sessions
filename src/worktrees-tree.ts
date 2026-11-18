@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { SessionItem, arrangeSubagents, renderKey, resolveTooltip, type SubagentLayout } from './tree.js';
+import { SessionItem, activeOrder, arrangeSubagents, renderKey, resolveTooltip, type ActiveSort, type SubagentLayout } from './tree.js';
 import { isLive, type Session } from './types.js';
 import { statsInline, type RepoWorktree, type WorktreeStats } from './worktree.js';
 
@@ -116,14 +116,6 @@ function tooltip(wt: RepoWorktree, stats: WorktreeStats | undefined, sessions: S
   return md;
 }
 
-/** Live sessions first (by start time, which holds still), then stopped ones by recency. */
-function byLiveThenTime(a: Session, b: Session): number {
-  const la = isLive(a.state) ? 0 : 1;
-  const lb = isLive(b.state) ? 0 : 1;
-  if (la !== lb) return la - lb;
-  return la === 0 ? b.startedAt - a.startedAt : b.updatedAt - a.updatedAt;
-}
-
 export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
   private readonly changed = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
@@ -132,7 +124,7 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
   private rendered = '';
 
   /** Every worktree found, with stats and the sessions bound to it. */
-  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>, showAllSubagents: boolean, layout: SubagentLayout = 'nested', backlog: ReadonlySet<string> = new Set()): void {
+  set(worktrees: RepoWorktree[], stats: Map<string, WorktreeStats>, sessions: Session[], locallyArchived: ReadonlySet<string>, pinned: ReadonlySet<string>, showAllSubagents: boolean, layout: SubagentLayout = 'nested', backlog: ReadonlySet<string> = new Set(), activeSort: ActiveSort = 'newest'): void {
     // Spawned sessions sit under their parent as in the Sessions view; only the root layout makes them rows of a worktree.
     const { rows: sessionRows, childrenOf } = arrangeSubagents(sessions, layout, showAllSubagents);
     const rowKeys = new Set(sessionRows.filter((s) => !s.subagent || layout === 'root').map((s) => `${s.tool}:${s.id}`));
@@ -146,11 +138,12 @@ export class WorktreesProvider implements vscode.TreeDataProvider<Node> {
     }
     const assigned = (wt: RepoWorktree): Session[] => {
       const isPinned = (s: Session) => pinned.has(`${s.tool}:${s.id}`);
-      const all = (byPath.get(wt.path) ?? []).filter((s) => !s.archived && !locallyArchived.has(`${s.tool}:${s.id}`) && rowKeys.has(`${s.tool}:${s.id}`))
-        .sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || byLiveThenTime(a, b));
+      const all = (byPath.get(wt.path) ?? []).filter((s) => !s.archived && !locallyArchived.has(`${s.tool}:${s.id}`) && rowKeys.has(`${s.tool}:${s.id}`));
       const working = (s: Session) => isLive(s.state) || (childrenOf.get(`${s.tool}:${s.id}`) ?? []).some((c) => isLive(c.state));
-      const active = all.filter((s) => working(s) || isPinned(s));
-      const stopped = all.filter((s) => !working(s) && !isPinned(s) && !s.empty).slice(0, RECENT_STOPPED);
+      // Working and pinned sessions follow the Active sort, as in the Sessions view; stopped ones come after by recency.
+      const order = activeOrder(activeSort, (s) => (s.state === 'stopped' && working(s) ? 'running' : s.state));
+      const active = all.filter((s) => working(s) || isPinned(s)).sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || order(a, b));
+      const stopped = all.filter((s) => !working(s) && !isPinned(s) && !s.empty).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, RECENT_STOPPED);
       return [...active, ...stopped];
     };
     // Any session not archived keeps its worktree in use, a stopped one included; one that never got a prompt

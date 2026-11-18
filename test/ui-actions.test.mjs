@@ -165,6 +165,23 @@ test('worktree rows retain pinned stopped sessions beyond the recent-session lim
   assert.match(rows[0].contextValue, /-pinned-/);
 });
 
+test('a worktree lists its working sessions in the Active sort, then stopped ones by recency', () => {
+  const provider = new WorktreesProvider();
+  const sessions = [
+    session('b-working', { cwd: worktree.path, state: 'running', startedAt: 30, updatedAt: 40 }),
+    session('a-replied', { cwd: worktree.path, state: 'replied', startedAt: 10, updatedAt: 60 }),
+    session('c-waiting', { cwd: worktree.path, state: 'waiting', startedAt: 20, updatedAt: 50 }),
+    session('stopped', { cwd: worktree.path, startedAt: 40, updatedAt: 70 }),
+  ];
+  const order = (activeSort) => {
+    provider.set([worktree], new Map(), sessions, new Set(), new Set(), false, 'nested', new Set(), activeSort);
+    return provider.getChildren()[0].children.map(row => row.session.id);
+  };
+  assert.deepEqual(order('newest'), ['b-working', 'c-waiting', 'a-replied', 'stopped'], 'the Worktrees view follows the Active sort setting: newest started first');
+  assert.deepEqual(order('activity'), ['a-replied', 'c-waiting', 'b-working', 'stopped'], 'the Worktrees view follows the Active sort setting: the session that wrote last first');
+  assert.deepEqual(order('attention'), ['c-waiting', 'a-replied', 'b-working', 'stopped'], 'the Worktrees view follows the Active sort setting: waiting, then replied, then working');
+});
+
 test('inactive worktrees are grouped last, ignoring archived sessions but counts stopped ones', () => {
   const wt = (name) => ({ path: `/repo-wt/${name}`, repoRoot: '/repo', name, isMain: false });
   const main = { path: '/repo', repoRoot: '/repo', name: 'repo', isMain: true };

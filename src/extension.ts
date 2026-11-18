@@ -444,7 +444,7 @@ export function activate(context: vscode.ExtensionContext): void {
         forceStats = false;
         const stats = await loadWorktreeStats([...sessionWorktrees(provider.visible()), ...(worktreesView.visible ? worktrees : [])], mains, live, force);
         provider.setWorktreeStats(stats);
-        worktreesProvider.set(worktrees, stats, sessions, archived, pinned, config.view.showSubagents, config.view.subagentLayout, backlog);
+        worktreesProvider.set(worktrees, stats, sessions, archived, pinned, config.view.showSubagents, config.view.subagentLayout, backlog, config.view.activeSort);
         const linked = worktrees.filter((w) => !w.isMain).length;
         worktreesView.description = linked ? `${linked}` : '';
       } finally {
