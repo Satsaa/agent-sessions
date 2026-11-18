@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { toolLabel, type Session, type Tool } from './types.js';
-import { titleMatchesLabel } from './util.js';
+import { likeliestSession, titleMatchesLabel } from './util.js';
 import { moveHereIfHeldElsewhere } from './session-host.js';
 import { seedSessionMode } from './claude-modes.js';
 import * as fs from 'node:fs';
@@ -376,17 +376,17 @@ export function isAgentPanelTab(tab: vscode.Tab): boolean {
 }
 
 /** The session shown by the active editor tab, if it is a Claude or Codex panel (see `sessionOfTab`). */
-export function sessionOfActiveTab(sessions: readonly Session[]): Session | undefined {
+export function sessionOfActiveTab(sessions: readonly Session[], archived: (s: Session) => boolean): Session | undefined {
   const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
-  return tab && sessionOfTab(tab, sessions);
+  return tab && sessionOfTab(tab, sessions, archived);
 }
 
 /** Every session shown in a tab of this window, by `tool:id`. */
-export function openSessionKeys(sessions: readonly Session[]): Set<string> {
+export function openSessionKeys(sessions: readonly Session[], archived: (s: Session) => boolean): Set<string> {
   const out = new Set<string>();
   for (const group of vscode.window.tabGroups.all) {
     for (const tab of group.tabs) {
-      const s = sessionOfTab(tab, sessions);
+      const s = sessionOfTab(tab, sessions, archived);
       if (s) out.add(`${s.tool}:${s.id}`);
     }
   }
@@ -395,15 +395,17 @@ export function openSessionKeys(sessions: readonly Session[]): Set<string> {
 
 /**
  * The session a Claude or Codex panel tab shows. A Codex tab opened by id carries the id in its URI; a Claude panel
- * (a webview) and a Codex panel started fresh are known only by their title.
+ * (a webview) and a Codex panel started fresh are known only by their title, and of the sessions with that title the
+ * likeliest is taken (`likeliestSession`).
  */
-function sessionOfTab(tab: vscode.Tab, sessions: readonly Session[]): Session | undefined {
+function sessionOfTab(tab: vscode.Tab, sessions: readonly Session[], archived: (s: Session) => boolean): Session | undefined {
   const input = tab.input;
+  const byTitle = (tool: Session['tool']) => likeliestSession(sessions.filter((s) => s.tool === tool && titleMatchesLabel(s.title, tab.label)), archived);
   if (input instanceof vscode.TabInputCustom && input.uri.scheme === 'openai-codex') {
-    return sessions.find((s) => s.tool === 'codex' && input.uri.path.includes(s.id)) ?? sessions.find((s) => s.tool === 'codex' && titleMatchesLabel(s.title, tab.label));
+    return sessions.find((s) => s.tool === 'codex' && input.uri.path.includes(s.id)) ?? byTitle('codex');
   }
   if (input instanceof vscode.TabInputWebview && /claude/i.test(input.viewType)) {
-    return sessions.find((s) => s.tool === 'claude' && titleMatchesLabel(s.title, tab.label));
+    return byTitle('claude');
   }
   return undefined;
 }

@@ -12,7 +12,7 @@ const directory = await mkdtemp(join(tmpdir(), 'agent-sessions-rename-test-'));
 // The session listings cache what they read under the home folder (file-cache.ts); a test's own stays in its directory.
 process.env.HOME = directory;
 const bundle = join(directory, 'rename.cjs');
-await build({ stdin: { contents: `export * from './src/rename.ts'; export * from './src/claude.ts'; export { titleMatchesLabel } from './src/util.ts';`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'cjs', outfile: bundle, external: ['vscode', 'node:sqlite'] });
+await build({ stdin: { contents: `export * from './src/rename.ts'; export * from './src/claude.ts'; export { titleMatchesLabel, likeliestSession } from './src/util.ts';`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'cjs', outfile: bundle, external: ['vscode', 'node:sqlite'] });
 const { renameSession, listClaudeSessions } = require(bundle);
 after(() => rm(directory, { recursive: true, force: true }));
 
@@ -67,6 +67,17 @@ test('renaming a Codex thread in a state database without a name column still se
   const check = new DatabaseSync(join(home, 'state_5.sqlite'), { readOnly: true });
   assert.equal(check.prepare('SELECT title FROM threads WHERE id = ?').all('thread-1')[0].title, 'Legacy rename');
   check.close();
+});
+
+test('a tab title shared by several sessions names the live one, then a stopped one, an archived one last, newest first', () => {
+  const { likeliestSession } = require(bundle);
+  const s = (id, state, updatedAt, archived = false) => ({ id, state, updatedAt, archived });
+  const none = () => false;
+  assert.equal(likeliestSession([s('old-live', 'replied', 1), s('new-stopped', 'stopped', 9)], none).id, 'old-live', 'a live session before a stopped one, however recent');
+  assert.equal(likeliestSession([s('archived', 'stopped', 9, true), s('stopped', 'stopped', 1)], none).id, 'stopped', 'an archived session last');
+  assert.equal(likeliestSession([s('marked', 'running', 9), s('stopped', 'stopped', 1)], (x) => x.id === 'marked').id, 'stopped', 'archived here counts as archived, live or not');
+  assert.equal(likeliestSession([s('a', 'stopped', 1), s('b', 'stopped', 5), s('c', 'stopped', 3)], none).id, 'b', 'the most recent first among equals');
+  assert.equal(likeliestSession([], none), undefined);
 });
 
 test('tab labels match titles across the vendors’ truncation and whitespace differences', async () => {

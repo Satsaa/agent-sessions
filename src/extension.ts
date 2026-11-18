@@ -150,6 +150,8 @@ export function activate(context: vscode.ExtensionContext): void {
   }));
   // Filled from the shared marks file (see marks.ts); the sets are shared by reference with the views.
   const archived = new Set<string>();
+  /** Archived by this install's marks, as the view shows it: a tab's title prefers any other session (`likeliestSession`). */
+  const archivedHere = (s: Session) => archived.has(`${s.tool}:${s.id}`);
   const pinned = new Set<string>();
   const backlog = new Set<string>();
   const detached = new Set<string>();
@@ -176,7 +178,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // Sessions shown in this window's tabs, shared by reference with the view like the marks; kept current by the list and tab changes.
   const open = new Set<string>();
   const takeOpen = (sessions: readonly Session[]): boolean => {
-    const now = openSessionKeys(sessions);
+    const now = openSessionKeys(sessions, archivedHere);
     if (now.size === open.size && [...now].every((k) => open.has(k))) return false;
     open.clear();
     for (const k of now) open.add(k);
@@ -253,7 +255,7 @@ export function activate(context: vscode.ExtensionContext): void {
   let revealedKey: string | undefined;
   // The Current view follows the active tab whether or not the Sessions view shows: its own title names the session.
   const showCurrentSession = (): void => {
-    const s = sessionOfActiveTab(latestSessions);
+    const s = sessionOfActiveTab(latestSessions, archivedHere);
     const n = s ? notes.get(`${s.tool}:${s.id}`) : undefined;
     currentProvider.set(s, n);
     currentView.description = s?.title ?? '';
@@ -263,7 +265,7 @@ export function activate(context: vscode.ExtensionContext): void {
     showCurrentSession();
     // Several rows selected by hand are the person's, for a bulk action: following the active tab would undo them.
     if (!view.visible || view.selection.length > 1) return;
-    const s = sessionOfActiveTab(latestSessions);
+    const s = sessionOfActiveTab(latestSessions, archivedHere);
     const setCurrent = (key: string | undefined) => {
       if (key === current) return;
       current = key;

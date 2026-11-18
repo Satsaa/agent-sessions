@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { isLive, type Session } from './types.js';
 
 export function expandHome(p: string): string {
   if (p === '~') return os.homedir();
@@ -209,3 +210,13 @@ export function titleMatchesLabel(title: string, label: string): boolean {
   return cut && shorter.length >= 8 && longer.startsWith(shorter);
 }
 
+
+/**
+ * Of the sessions a tab's title matches, the one the tab most likely shows: a live session before a stopped one, an
+ * archived one (by its tool, or by `archived`, this install's own marks) last, and the most recently active first
+ * among equals. Old sessions often share a title with the one being worked on, and the list's own order says nothing.
+ */
+export function likeliestSession<S extends Pick<Session, 'state' | 'updatedAt' | 'archived'>>(candidates: readonly S[], archived: (s: S) => boolean): S | undefined {
+  const rank = (s: S) => (s.archived || archived(s) ? 2 : isLive(s.state) ? 0 : 1);
+  return [...candidates].sort((a, b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt)[0];
+}
