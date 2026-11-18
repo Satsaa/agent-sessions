@@ -1080,6 +1080,11 @@
           "default": "newest",
           "description": "The order of the Active sessions (working or pinned), wherever they are listed. Pinned sessions come first in any order."
         },
+        "agentSessions.expandCurrentSession": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the row of the session in the active agent tab, and keep every other session's row closed: the previous session's row closes when another session becomes current."
+        },
         "agentSessions.showActiveArchived": {
           "type": "boolean",
           "default": true,

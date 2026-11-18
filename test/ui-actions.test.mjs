@@ -69,7 +69,7 @@ test('age warning begins after ten minutes and clears on a successful fresh read
 });
 
 const session = (id, overrides = {}) => ({ tool: 'codex', id, title: id, state: 'stopped', startedAt: 1, updatedAt: 1, archived: false, subagent: false, empty: false, ...overrides });
-const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, subagentLayout: 'nested', activeSort: 'newest', showActiveArchived: true, showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), backlog: new Set(), open: new Set(), search: '', rowDetails: ['questions', 'tasks', 'worktree', 'edits', 'age'], notes: new Map(), ...overrides });
+const options = (overrides = {}) => ({ groupBy: 'activity', scope: 'all', showArchived: false, showSubagents: false, subagentLayout: 'nested', activeSort: 'newest', showActiveArchived: true, showEmpty: false, historyLimit: 1, locallyArchived: new Set(), pinned: new Set(['codex:old']), backlog: new Set(), open: new Set(), search: '', rowDetails: ['questions', 'tasks', 'worktree', 'edits', 'age'], notes: new Map(), expandCurrent: false, current: undefined, ...overrides });
 
 test('pinned stopped sessions stay in Active outside the history cap without becoming live', () => {
   const provider = new SessionsProvider(options(), () => {});
@@ -335,7 +335,7 @@ test('a hovered Sessions view holds a background update for three seconds, and a
   assert.equal(fired, 3, 'and takes the held update with it');
 });
 
-test('a session lists its questions, answers and tasks in one row under it and counts them on its row, in the chosen details', () => {
+test('a session lists its questions and answers in one row and its tasks in another under it, and counts them on its row, in the chosen details', () => {
   const notes = new Map([['codex:a', {
     seq: 6,
     tasks: [{ id: 't0', text: 'Keep Twilio Media', state: 'dropped', resolution: 'Replaced.', at: 0 }, { id: 't1', text: 'Create v2 phone engine', state: 'done', resolution: 'Behind the phoneV2 switch.', closedAt: 6, at: 1 }, { id: 't4', text: 'Port the guard', state: 'open', at: 4 }],
@@ -352,20 +352,26 @@ test('a session lists its questions, answers and tasks in one row under it and c
   assert.match(a.description, /^\? 1 · ✉ 1 · ☑ 1\/2 · ⎇ phone · /, 'a question waiting for you, an unread answer and the tasks done lead the row; the tool is the icon’s to say');
   assert.doesNotMatch(b.description, /[✉?☑]|Codex/, 'a session with nothing recorded shows no counts');
   assert.equal(b.collapsibleState, 0);
-  assert.equal(a.collapsibleState, 2, 'a session whose notes row is all it holds opens by itself');
+  assert.equal(a.collapsibleState, 2, 'a session whose notes rows are all it holds opens by itself');
 
-  const [notesRow] = provider.getChildren(a);
-  assert.deepEqual([provider.getChildren(a).length, notesRow.label, notesRow.description, notesRow.collapsibleState], [1, 'Questions, Answers and Tasks', '1 question for you · 1 new answer · 1/2 tasks done', 2], 'questions, answers and tasks share one open row');
+  const [notesRow, tasksRow] = provider.getChildren(a);
+  assert.deepEqual(provider.getChildren(a).map((row) => [row.label, row.description, row.collapsibleState]), [
+    ['Questions and Answers', '1 question for you · 1 new answer', 2],
+    ['Tasks', '1/2 tasks done', 2],
+  ], 'tasks are a subsection of their own, apart from the questions and answers');
   assert.deepEqual(notesRow.children.map((n) => [n.label, n.contextValue]), [
     ['Remove the old engine?', 'note-question-open'],
     ['Does it handle barge-in?', 'note-answer-answered-unread'],
+    ['Is the old engine kept?', 'note-answer-stale'],
+  ], 'a question waiting for you comes first, then an unread answer, and what was set aside last');
+  assert.deepEqual(tasksRow.children.map((n) => [n.label, n.contextValue]), [
     ['Port the guard', 'note-task-open'],
     ['Create v2 phone engine', 'note-task-done'],
     ['Keep Twilio Media', 'note-task-dropped'],
-    ['Is the old engine kept?', 'note-answer-stale'],
-  ], 'a question waiting for you comes first, then an unread answer, then what is open, then what is settled, and what was set aside last, each oldest first');
-  assert.ok(notesRow.children.every((n) => !/answer|done|dropped|stale/.test(n.description)), 'a note row says only its age: the icon says its state');
-  const [, answered, , done] = notesRow.children;
+  ], 'what is open first, then what is settled, and what was set aside last');
+  assert.ok([...notesRow.children, ...tasksRow.children].every((n) => !/answer|done|dropped|stale/.test(n.description)), 'a note row says only its age: the icon says its state');
+  const [, answered] = notesRow.children;
+  const [, done] = tasksRow.children;
   assert.match(provider.resolveTreeItem(done, done).tooltip.value, /Behind the phoneV2 switch\./, 'a closed task says what came of it');
   assert.match(provider.resolveTreeItem(answered, answered).tooltip.value, /Yes\./, 'the answer is in the hover');
 
@@ -380,5 +386,24 @@ test('a session lists its questions, answers and tasks in one row under it and c
   notes.get('codex:a').questions = [];
   notes.get('codex:a').answers = [];
   provider.setOptions(options({ pinned: new Set(), historyLimit: 10, notes }));
-  assert.equal(provider.getChildren(provider.getChildren()[0].children[0])[0].label, 'Tasks', 'the row is named after the kinds it holds');
+  assert.equal(provider.getChildren(provider.getChildren()[0].children[0])[0].label, 'Tasks', 'with nothing asked, only the tasks row is left');
+});
+
+test('the current session’s row opens, every other one stays closed, and the previous one closes when the current one changes', () => {
+  const notes = new Map(['a', 'b'].map((id) => [`codex:${id}`, { seq: 1, tasks: [{ id: 't1', text: 'Ship it', state: 'open', at: 1 }], answers: [], questions: [] }]));
+  const provider = new SessionsProvider(options({ pinned: new Set(), historyLimit: 10, notes, expandCurrent: true }), () => {});
+  provider.setSessions([session('a', { state: 'running' }), session('b', { state: 'running' })]);
+  const rows = () => Object.fromEntries(provider.getChildren()[0].children.map((row) => [row.session.id, [row.id, row.collapsibleState]]));
+  const before = rows();
+  assert.deepEqual([before.a[1], before.b[1]], [1, 1], 'with no current session, even a session holding only notes stays closed');
+  provider.setOptions(options({ pinned: new Set(), historyLimit: 10, notes, expandCurrent: true, current: 'codex:a' }));
+  const first = rows();
+  assert.equal(first.a[1], 2, 'the current session opens');
+  assert.notEqual(first.a[0], before.a[0], 'under a fresh id, since the view keeps the expansion it knew for an id');
+  provider.setOptions(options({ pinned: new Set(), historyLimit: 10, notes, expandCurrent: true, current: 'codex:b' }));
+  const second = rows();
+  assert.deepEqual([second.a[1], second.b[1]], [1, 2], 'the previous session closes and the new one opens');
+  assert.ok(second.a[0] !== before.a[0] && second.a[0] !== first.a[0], 'the previous row closes under an id the view has not seen open');
+  provider.setOptions(options({ pinned: new Set(), historyLimit: 10, notes, expandCurrent: false, current: 'codex:b' }));
+  assert.deepEqual(Object.values(rows()).map(([, state]) => state), [2, 2], 'switched off, rows keep their own default');
 });

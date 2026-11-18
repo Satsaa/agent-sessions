@@ -113,6 +113,10 @@ export interface ViewOptions {
   rowDetails: readonly RowDetail[];
   /** Each session's recorded tasks, answers and questions, by `tool:id` (notes.ts). */
   notes: ReadonlyMap<string, SessionNotes>;
+  /** The current session's row opens and every other session's row stays closed; the previous one closes when the current one changes. */
+  expandCurrent: boolean;
+  /** The session of the active agent tab, by `tool:id`. */
+  current: string | undefined;
 }
 
 /**
@@ -196,21 +200,21 @@ export class DoneItem extends vscode.TreeItem implements HoverTooltip {
   }
 }
 
-/** A session's one row of notes: its questions, answers and tasks, named after the kinds it holds. */
+/** A session's rows of notes: one of its questions and answers, named after the kinds it holds, and one of its tasks. */
 export class NoteGroupItem extends vscode.TreeItem {
-  constructor(public readonly children: NoteItem[], label: string, summary: string, idPrefix: string) {
+  constructor(public readonly children: NoteItem[], label: string, summary: string, idPrefix: string, part: 'notes' | 'tasks') {
     super(label, vscode.TreeItemCollapsibleState.Expanded);
-    this.id = `${idPrefix}/notes`;
+    this.id = `${idPrefix}/${part}`;
     this.description = summary;
-    this.iconPath = new vscode.ThemeIcon('checklist');
+    this.iconPath = new vscode.ThemeIcon(part === 'tasks' ? 'checklist' : 'comment-discussion');
     this.contextValue = 'notes';
   }
 }
 
 /**
- * What wants you first: a question waiting for you, then an unread answer, then what the agent still owes (answers
- * before tasks), then what is settled, and last what was set aside; each rank oldest first. A dropped task is no part
- * of the count.
+ * What wants you first: a question waiting for you, then an unread answer, then what the agent still owes, then what
+ * is settled, and last what was set aside; each rank oldest first. Tasks rank the same way in their own row. A dropped
+ * task is no part of the count.
  */
 const QUESTION_ORDER: Record<Question['state'], number> = { open: 0, answered: 4, stale: 5 };
 const ANSWER_ORDER: Record<Answer['state'], number> = { open: 2, answered: 4, stale: 5 };
@@ -223,21 +227,23 @@ function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix:
   const counts = noteCounts(notes);
   const groups: (DoneItem | NoteGroupItem)[] = [];
   if (notes.done) groups.push(new DoneItem(session, notes.done, idPrefix));
-  if (notes.questions.length || notes.answers.length || notes.tasks.length) {
-    const ranked = [
+  const ranked = (rows: { rank: number; item: NoteItem; at: number }[]) => rows.sort((a, b) => a.rank - b.rank || a.at - b.at).map((r) => r.item);
+  if (notes.questions.length || notes.answers.length) {
+    const items = ranked([
       ...notes.questions.map((q) => ({ rank: QUESTION_ORDER[q.state], item: new NoteItem(session, 'question', q, idPrefix), at: q.at })),
       ...notes.answers.map((a) => ({ rank: a.state === 'answered' && !a.read ? 1 : ANSWER_ORDER[a.state], item: new NoteItem(session, 'answer', a, idPrefix), at: a.at })),
-      ...notes.tasks.map((t) => ({ rank: TASK_ORDER[t.state], item: new NoteItem(session, 'task', t, idPrefix), at: t.at })),
-    ].sort((a, b) => a.rank - b.rank || a.at - b.at);
-    const kinds = [notes.questions.length ? 'Questions' : '', notes.answers.length ? 'Answers' : '', notes.tasks.length ? 'Tasks' : ''].filter(Boolean);
-    const label = kinds.length > 1 ? `${kinds.slice(0, -1).join(', ')} and ${kinds.at(-1)}` : kinds[0]!;
-    const tasks = counts.tasksOpen + counts.tasksDone;
+    ]);
+    const label = [notes.questions.length ? 'Questions' : '', notes.answers.length ? 'Answers' : ''].filter(Boolean).join(' and ');
     const summary = [
       counts.questionsOpen ? `${plural(counts.questionsOpen, 'question')} for you` : '',
       counts.answersUnread ? plural(counts.answersUnread, 'new answer') : '',
-      tasks ? `${counts.tasksDone}/${plural(tasks, 'task')} done` : '',
     ].filter(Boolean).join(' · ');
-    groups.push(new NoteGroupItem(ranked.map((r) => r.item), label, summary, idPrefix));
+    groups.push(new NoteGroupItem(items, label, summary, idPrefix, 'notes'));
+  }
+  if (notes.tasks.length) {
+    const items = ranked(notes.tasks.map((t) => ({ rank: TASK_ORDER[t.state], item: new NoteItem(session, 'task', t, idPrefix), at: t.at })));
+    const tasks = counts.tasksOpen + counts.tasksDone;
+    groups.push(new NoteGroupItem(items, 'Tasks', tasks ? `${counts.tasksDone}/${plural(tasks, 'task')} done` : '', idPrefix, 'tasks'));
   }
   return groups;
 }
@@ -264,6 +270,8 @@ export class SessionItem extends vscode.TreeItem implements HoverTooltip {
     /** Subagents and teammates this session spawned, shown under it. */
     public readonly children: SessionItem[] = [],
     backlog = false,
+    /** Open or closed whatever the row holds; undefined leaves it to the default below. */
+    expand?: boolean,
   ) {
     super(session.title, vscode.TreeItemCollapsibleState.None);
     const archived = session.archived || archivedHere;
@@ -274,6 +282,7 @@ export class SessionItem extends vscode.TreeItem implements HoverTooltip {
     const onlyNotes = !children.length && this.notes.some((row) => row instanceof NoteGroupItem);
     this.collapsibleState =
       !children.length && !hasNotes(content.notes) ? vscode.TreeItemCollapsibleState.None
+      : expand !== undefined ? (expand ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed)
       : session.subagent || onlyNotes ? vscode.TreeItemCollapsibleState.Expanded
       : vscode.TreeItemCollapsibleState.Collapsed;
     this.iconPath = stateIcon(session.tool, session.state, archived);
@@ -452,6 +461,8 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   private rendered = '';
   /** Per session, how many times its row identity was retired to drop a selection (see `dropSelection`). */
   private readonly retired = new Map<string, number>();
+  /** How many times the current session changed: the current row's id carries it, so the view opens it afresh each time. */
+  private currentGeneration = 0;
   /** How many rows the search found, while there is one. */
   private found: number | undefined;
   /** Whether the first scan has landed, and whether the view has been told (see `announceLoaded`). */
@@ -494,7 +505,13 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   }
 
   setOptions(options: ViewOptions): void {
+    const was = this.options.current;
     this.options = options;
+    // The view keeps a row's expansion by id, so the rows open and close under fresh ids (see `dropSelection`).
+    if (options.expandCurrent && options.current !== was) {
+      if (was) this.retired.set(was, (this.retired.get(was) ?? 0) + 1);
+      this.currentGeneration++;
+    }
     this.rebuild();
   }
 
@@ -676,9 +693,11 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     const backlog = all.filter(inBacklog).sort(byRecency);
     const history = all.filter((s) => !inBacklog(s) && !working(s) && !isPinned(s)).sort(byRecency).slice(0, o.historyLimit);
     const shown = [...active, ...backlog, ...history];
+    const isCurrent = (s: Session) => o.expandCurrent && o.current === `${s.tool}:${s.id}`;
     const item = (s: Session): SessionItem =>
-      new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), { details: o.rowDetails, notes: o.notes.get(`${s.tool}:${s.id}`) }, s.worktree ? this.stats.get(s.worktree.path) : undefined, '', isPinned(s), retiredSuffix(s),
-        (childrenOf.get(`${s.tool}:${s.id}`) ?? []).map((c) => item(c)), inBacklog(s));
+      new SessionItem(s, o.locallyArchived.has(`${s.tool}:${s.id}`), { details: o.rowDetails, notes: o.notes.get(`${s.tool}:${s.id}`) }, s.worktree ? this.stats.get(s.worktree.path) : undefined, '', isPinned(s),
+        `${retiredSuffix(s)}${isCurrent(s) ? `@current${this.currentGeneration}` : ''}`,
+        (childrenOf.get(`${s.tool}:${s.id}`) ?? []).map((c) => item(c)), inBacklog(s), o.expandCurrent && !s.subagent ? isCurrent(s) : undefined);
     const retiredSuffix = (s: Session) => {
       const n = this.retired.get(`${s.tool}:${s.id}`);
       return n ? `#${n}` : '';

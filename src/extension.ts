@@ -55,7 +55,7 @@ interface Config {
   keepSessionsRunning: boolean;
   idleStopMinutes: number;
   usage: { enabled: boolean; claudeNetwork: boolean; codexNetwork: boolean; refreshInterval: number };
-  view: Omit<ViewOptions, 'locallyArchived' | 'pinned' | 'backlog' | 'open' | 'search' | 'notes'>;
+  view: Omit<ViewOptions, 'locallyArchived' | 'pinned' | 'backlog' | 'open' | 'search' | 'notes' | 'current'>;
 }
 
 function readConfig(): Config {
@@ -83,6 +83,7 @@ function readConfig(): Config {
       subagentLayout: c.get<SubagentLayout>('subagentLayout', 'nested'),
       activeSort: c.get<ActiveSort>('activeSort', 'newest'),
       showActiveArchived: c.get<boolean>('showActiveArchived', true),
+      expandCurrent: c.get<boolean>('expandCurrentSession', true),
       showEmpty: c.get<boolean>('showEmpty', false),
       historyLimit: c.get<number>('historyLimit', 200),
       // A hand-edited setting may hold anything: only the details there are, each once.
@@ -185,7 +186,9 @@ export function activate(context: vscode.ExtensionContext): void {
   } catch (err) {
     output.appendLine(`reading ${notesPath} failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned, backlog, open, search, notes });
+  // The session of the active agent tab, which the view opens (see `selectActiveTabSession`).
+  let current: string | undefined;
+  const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned, backlog, open, search, notes, current });
 
   const provider = new SessionsProvider(options(), () => void vscode.commands.executeCommand('setContext', 'agentSessions.loaded', true));
   const view = vscode.window.createTreeView('agentSessions.list', { treeDataProvider: provider, showCollapseAll: true, canSelectMany: true });
@@ -244,17 +247,25 @@ export function activate(context: vscode.ExtensionContext): void {
     // Several rows selected by hand are the person's, for a bulk action: following the active tab would undo them.
     if (!view.visible || view.selection.length > 1) return;
     const s = sessionOfActiveTab(latestSessions);
-    const item = s && provider.itemFor(s.tool, s.id);
-    if (!item) {
+    const setCurrent = (key: string | undefined) => {
+      if (key === current) return;
+      current = key;
+      provider.setOptions(options());
+    };
+    if (!s || !provider.itemFor(s.tool, s.id)) {
       // An agent panel showing no known session (a fresh Codex panel, a title matching nothing): a selection left
       // over from the previous tab would point at the wrong row, so it is cleared rather than kept.
       if (activeTabIsAgentPanel()) {
         revealedKey = undefined;
+        setCurrent(undefined);
         for (const sel of view.selection) if (sel instanceof SessionItem) provider.dropSelection(sel);
       }
       return;
     }
     const key = `${s.tool}:${s.id}`;
+    setCurrent(key);
+    const item = provider.itemFor(s.tool, s.id);
+    if (!item) return;
     if (key === revealedKey) return;
     revealedKey = key;
     void view.reveal(item, { select: true, focus: false, expand: false }).then(undefined, () => undefined);
