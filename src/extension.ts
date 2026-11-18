@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { claudeHome, claudeWatchPaths, listClaudeSessions } from './claude.js';
 import { codexHome, codexWatchPaths, listCodexSessions } from './codex.js';
 import { PhoneLayout, windowFolder } from './phone.js';
-import { rowActionsFor } from './row-actions.js';
+import { NOTE_GROUP_ACTIONS, noteGroupFits, rowActionsFor } from './row-actions.js';
 import { applyKeepSessionsRunning, publishIdleStop, writeNodeLauncher } from './session-host.js';
 import {
   type ClaudePermissionSettings,
@@ -23,7 +23,7 @@ import { closeCodexSession } from './close.js';
 import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
 import { rememberOpenSections, trackOpenSections } from './open-sections.js';
-import { CurrentSessionProvider, NoteItem, ROW_DETAILS, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
+import { CurrentSessionProvider, NoteGroupItem, NoteItem, ROW_DETAILS, noteChangedAt, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
 import { DONE_PARTS, answerQuestion, editSessionDone, hasNotes, markAnswerRead, notesDir, notesFile, readAllNotes, removeNote, reopenSession, setStale, setTaskState, updateNotes, watchNotes, type Answer, type SessionNotes, type Task } from './notes.js';
 import { installNotes, marketplacePath, notesCommandPath, notesOutdated, uninstallNotes, type NotesInstallPaths } from './notes-install.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
@@ -93,7 +93,10 @@ function readConfig(): Config {
   };
 }
 
-/** A recorded question with its answer, or a task with its resolution, as a read-only page: `agent-sessions-note:/<tool>/<id>/<note id>.md`. */
+/**
+ * A recorded question with its answer, or a task with its resolution, as a read-only page: `agent-sessions-note:/<tool>/<id>/<note id>.md`.
+ * A session's completion record is `done.md` beside them, and every answer of the session on one page `answers.md`.
+ */
 const NOTE_SCHEME = 'agent-sessions-note';
 
 /** Read-only transcript documents: `agent-sessions-transcript:/<tool>/<id>/<title>.md`. */
@@ -683,15 +686,16 @@ export function activate(context: vscode.ExtensionContext): void {
   // Another window (the phone, or a second desktop window) archived or pinned something.
   // A session recorded a task or a question, or another window marked one.
   const noteChanged = new vscode.EventEmitter<vscode.Uri>();
-  // A session's completion record is its own page, `done.md`, beside its notes'.
-  const noteUri = (item: NoteItem | SessionItem) => vscode.Uri.from({ scheme: NOTE_SCHEME, path: `/${item.session.tool}/${item.session.id}/${item instanceof NoteItem ? item.note.id : 'done'}.md` });
+  // A session's completion record is its own page, `done.md`, beside its notes', and its answers are all on `answers.md`.
+  const noteUri = (item: NoteItem | SessionItem | NoteGroupItem) =>
+    vscode.Uri.from({ scheme: NOTE_SCHEME, path: `/${item.session.tool}/${item.session.id}/${item instanceof NoteItem ? item.note.id : item instanceof NoteGroupItem ? 'answers' : 'done'}.md` });
   context.subscriptions.push(noteChanged, watchNotes(notesPath, notes, () => {
     provider.notesChanged(true);
     showCurrentSession();
     for (const doc of vscode.workspace.textDocuments) if (doc.uri.scheme === NOTE_SCHEME) noteChanged.fire(doc.uri);
   }));
   /** One change to a note's file, shown at once rather than when the watch notices. */
-  const changeNote = (item: NoteItem | SessionItem, change: (n: SessionNotes) => void): void => {
+  const changeNote = (item: NoteItem | SessionItem | NoteGroupItem, change: (n: SessionNotes) => void): void => {
     const key = `${item.session.tool}:${item.session.id}`;
     try {
       const now = updateNotes(notesFile(notesPath, item.session.tool, item.session.id), change);
@@ -703,7 +707,9 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     provider.notesChanged(false);
     showCurrentSession();
-    noteChanged.fire(noteUri(item));
+    // Every open page of the session, its answers page among them, shows the change.
+    const pages = `/${item.session.tool}/${item.session.id}/`;
+    for (const doc of vscode.workspace.textDocuments) if (doc.uri.scheme === NOTE_SCHEME && doc.uri.path.startsWith(pages)) noteChanged.fire(doc.uri);
   };
   /** What came of a task, in a person's words; undefined when they cancelled. */
   const askResolution = async (title: string, value: string): Promise<string | undefined> =>
@@ -965,6 +971,19 @@ export function activate(context: vscode.ExtensionContext): void {
           if (!mine?.done) return '# This session is not marked done.\n';
           return [`# Done${title ? `: ${title}` : ''}`, `Closed ${when(mine.done.at)}`, `## Features\n\n${mine.done.features}`, `## Tickets\n\n${mine.done.tickets}`, `## Cleanup\n\n${mine.done.cleanup}`, ''].join('\n\n');
         }
+        if (file === 'answers.md') {
+          const answers = [...(mine?.answers ?? [])].sort((x, y) => noteChangedAt('answer', y) - noteChangedAt('answer', x) || y.at - x.at);
+          if (!answers.length) return '# This session has no answers recorded.\n';
+          return [
+            `# Answers${title ? ` in “${title}”` : ''}`,
+            ...answers.map((a) => [
+              `## ${a.text}`,
+              `You asked ${when(a.at)}${a.state === 'stale' ? ' · marked stale' : ''}`,
+              a.answer === undefined ? '_Not answered yet._' : `${a.answer}\n\n_Answered ${when(a.answeredAt ?? a.at)}_`,
+            ].join('\n\n')),
+            '',
+          ].join('\n\n---\n\n');
+        }
         const t = mine?.tasks.find((x) => `${x.id}.md` === file);
         if (t) {
           return [
@@ -1009,6 +1028,20 @@ export function activate(context: vscode.ExtensionContext): void {
       const resolution = await askResolution(tasks.length === 1 ? `Done: ${tasks[0]!.note.text}` : `Done: ${tasks.length} tasks`, '');
       if (resolution === undefined) return;
       for (const item of tasks) changeNote(item, (n) => void setTaskState(n, item.note.id, 'done', resolution));
+    }),
+    // A notes row's bulk actions run the note's own action on every note under the selected rows that it fits.
+    ...NOTE_GROUP_ACTIONS.map((g) => vscode.commands.registerCommand(g.command, async (arg: unknown, selected: unknown) => {
+      const items = rowsOf(arg, selected).flatMap((row) => (row instanceof NoteGroupItem ? row.children : [])).filter((c) => noteGroupFits(g, c.contextValue));
+      if (!items.length) return;
+      if (g.confirm && (await vscode.window.showWarningMessage(g.confirm(items.length), { modal: true }, 'Remove')) !== 'Remove') return;
+      await vscode.commands.executeCommand(g.note, items[0], items);
+    })),
+    // Opening the session's answers reads every one of them, as opening one answer reads it.
+    vscode.commands.registerCommand('agentSessions.notes.viewAnswers', async (arg: unknown) => {
+      if (!(arg instanceof NoteGroupItem)) return;
+      await showMarkdown(noteUri(arg));
+      const unread = arg.children.filter((c) => c.kind === 'answer' && c.note.state === 'answered' && !(c.note as Answer).read);
+      if (unread.length) changeNote(arg, (n) => { for (const c of unread) markAnswerRead(n, c.note.id); });
     }),
     vscode.commands.registerCommand('agentSessions.note.editResolution', async (arg: unknown) => {
       if (!(arg instanceof NoteItem) || arg.kind !== 'task') return;

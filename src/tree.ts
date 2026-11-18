@@ -5,6 +5,7 @@ import { relativeTime, repoRootOf } from './util.js';
 import { statsInline, type WorktreeStats } from './worktree.js';
 import { stateIcon, toolIcon } from './icons.js';
 import { sectionState, type Section } from './open-sections.js';
+import { ANSWERS_FLAG, NOTE_GROUP_ACTIONS, noteGroupFits } from './row-actions.js';
 import { noteCounts, type Answer, type NoteKind, type Question, type SessionNotes, type Task } from './notes.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
@@ -147,7 +148,7 @@ const oneLine = (text: string): string => {
 };
 
 /** When a note last changed: answered or closed, else recorded. A stale note keeps when it was recorded. */
-function noteChangedAt(kind: NoteKind, note: Task | Answer | Question): number {
+export function noteChangedAt(kind: NoteKind, note: Task | Answer | Question): number {
   if (note.state === 'stale') return note.at;
   return (kind === 'task' ? (note as Task).closedAt : (note as Answer | Question).answeredAt) ?? note.at;
 }
@@ -191,14 +192,17 @@ export class NoteGroupItem extends vscode.TreeItem implements Section {
   /** Every session's row of this part in this view opens or closes as the last one was left. */
   readonly section: string;
 
-  constructor(public readonly children: NoteItem[], label: string, summary: string, idPrefix: string, part: 'notes' | 'tasks', view: NotesView) {
+  constructor(public readonly session: Session, public readonly children: NoteItem[], label: string, summary: string, idPrefix: string, part: 'notes' | 'tasks', view: NotesView) {
     const section = `${view}:${part}`;
     super(label, sectionState(section, true));
     this.section = section;
     this.id = `${idPrefix}/${part}`;
     this.description = summary;
     this.iconPath = new vscode.ThemeIcon(part === 'tasks' ? 'checklist' : 'comment-discussion');
-    this.contextValue = 'notes';
+    // `notes-<part>-<flag>…` (row-actions.ts): which of its bulk actions has a note to act on, and whether it holds answers.
+    const flags = NOTE_GROUP_ACTIONS.filter((g) => children.some((c) => noteGroupFits(g, c.contextValue))).map((g) => g.flag);
+    if (children.some((c) => c.kind === 'answer')) flags.push(ANSWERS_FLAG);
+    this.contextValue = ['notes', part, ...flags].join('-');
   }
 }
 
@@ -226,12 +230,12 @@ function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix:
       counts.questionsOpen ? `${plural(counts.questionsOpen, 'question')} for you` : '',
       counts.answersUnread ? plural(counts.answersUnread, 'new answer') : '',
     ].filter(Boolean).join(' · ');
-    groups.push(new NoteGroupItem(items, label, summary, idPrefix, 'notes', view));
+    groups.push(new NoteGroupItem(session, items, label, summary, idPrefix, 'notes', view));
   }
   if (notes.tasks.length) {
     const items = newestFirst(notes.tasks.map((t) => new NoteItem(session, 'task', t, idPrefix)));
     const tasks = counts.tasksOpen + counts.tasksDone;
-    groups.push(new NoteGroupItem(items, 'Tasks', tasks ? `${counts.tasksDone}/${plural(tasks, 'task')} done` : '', idPrefix, 'tasks', view));
+    groups.push(new NoteGroupItem(session, items, 'Tasks', tasks ? `${counts.tasksDone}/${plural(tasks, 'task')} done` : '', idPrefix, 'tasks', view));
   }
   return groups;
 }

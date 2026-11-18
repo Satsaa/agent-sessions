@@ -22,6 +22,43 @@ const mainThread = (cv: string) => session(cv) && !cv.includes('subagent');
 /** A session its agent marked done (notes.ts): it has a completion record. */
 const doneSession = (cv: string) => session(cv) && /-done(-|$)/.test(cv);
 const worktree = (cv: string) => /^worktree(-main)?$/.test(cv);
+/** A session's notes row (tree.ts `NoteGroupItem`): `notes-<part>`, then the `flag` of each action its notes allow. */
+const notesRow = (flag: string) => (cv: string) => cv.startsWith('notes-') && cv.split('-').includes(flag);
+
+/**
+ * A notes row's bulk actions: each runs a note's own action (`note`) on every note under the row it fits (`fits`,
+ * else that action's `applies`), so a row and its notes can never disagree on what a note allows.
+ */
+export interface NoteGroupAction {
+  command: string;
+  flag: string;
+  note: string;
+  fits?: (contextValue: string) => boolean;
+  /** Asks before acting: what it says. */
+  confirm?: (count: number) => string;
+}
+
+export const NOTE_GROUP_ACTIONS: NoteGroupAction[] = [
+  { command: 'agentSessions.notes.doneAll', flag: 'done', note: 'agentSessions.note.done' },
+  { command: 'agentSessions.notes.markAllRead', flag: 'read', note: 'agentSessions.note.markRead' },
+  { command: 'agentSessions.notes.answerAll', flag: 'answered', note: 'agentSessions.note.answered' },
+  { command: 'agentSessions.notes.staleAll', flag: 'stale', note: 'agentSessions.note.stale' },
+  {
+    command: 'agentSessions.notes.removeClosed', flag: 'closed', note: 'agentSessions.note.remove',
+    fits: (cv) => /^note-(task-done|task-dropped|answer-stale|question-stale)$/.test(cv),
+    confirm: (n) => `Remove ${n === 1 ? 'the closed note' : `${n} closed notes`} from the list?`,
+  },
+];
+
+/** Whether `action` acts on the note whose contextValue is `cv`. */
+export function noteGroupFits(action: NoteGroupAction, cv: string | undefined): boolean {
+  if (!cv) return false;
+  const fits = action.fits ?? ROW_ACTIONS.find((a) => a.command === action.note)?.applies;
+  return !!fits?.(cv);
+}
+
+/** The flag a notes row carries when its session has answers, for View All Answers. */
+export const ANSWERS_FLAG = 'answers';
 
 export const ROW_ACTIONS: RowAction[] = [
   { command: 'agentSessions.open', applies: mainThread },
@@ -52,6 +89,8 @@ export const ROW_ACTIONS: RowAction[] = [
   { command: 'agentSessions.note.stale', applies: (cv) => /^note-(answer|question)-(open|answered)/.test(cv), bulk: true },
   { command: 'agentSessions.note.reopen', applies: (cv) => /^note-(task-done|task-dropped|answer-stale|question-stale)$/.test(cv), bulk: true },
   { command: 'agentSessions.note.remove', applies: (cv) => /^note-(task|answer|question)-/.test(cv), bulk: true },
+  ...NOTE_GROUP_ACTIONS.map((g): RowAction => ({ command: g.command, applies: notesRow(g.flag), bulk: true })),
+  { command: 'agentSessions.notes.viewAnswers', applies: notesRow(ANSWERS_FLAG) },
   { command: 'agentSessions.note.viewDone', applies: doneSession },
   { command: 'agentSessions.note.editDone', applies: doneSession },
   { command: 'agentSessions.note.reopenSession', applies: doneSession, bulk: true },

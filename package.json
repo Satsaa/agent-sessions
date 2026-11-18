@@ -465,6 +465,42 @@
         "title": "Reopen Session (Not Done)",
         "category": "Agent Sessions",
         "icon": "$(debug-restart)"
+      },
+      {
+        "command": "agentSessions.notes.viewAnswers",
+        "title": "View All Answers",
+        "category": "Agent Sessions",
+        "icon": "$(book)"
+      },
+      {
+        "command": "agentSessions.notes.doneAll",
+        "title": "Mark All Tasks Done",
+        "category": "Agent Sessions",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "agentSessions.notes.markAllRead",
+        "title": "Mark All Answers Read",
+        "category": "Agent Sessions",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "agentSessions.notes.answerAll",
+        "title": "Mark All Questions Answered",
+        "category": "Agent Sessions",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "agentSessions.notes.staleAll",
+        "title": "Mark All Stale",
+        "category": "Agent Sessions",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "agentSessions.notes.removeClosed",
+        "title": "Remove Closed from the List",
+        "category": "Agent Sessions",
+        "icon": "$(clear-all)"
       }
     ],
     "menus": {
@@ -820,7 +856,7 @@
         },
         {
           "command": "agentSessions.rowActions",
-          "when": "view =~ /^agentSessions\\.(list|worktrees|current)$/ && viewItem =~ /^(session|worktree|note-)/",
+          "when": "view =~ /^agentSessions\\.(list|worktrees|current)$/ && viewItem =~ /^(session|worktree|notes?-)/",
           "group": "inline@9"
         },
         {
@@ -837,6 +873,46 @@
           "command": "agentSessions.note.reopenSession",
           "when": "view =~ /^agentSessions\\.(list|worktrees)$/ && viewItem =~ /^session/ && viewItem =~ /-done(-|$)/",
           "group": "4_done@3"
+        },
+        {
+          "command": "agentSessions.notes.viewAnswers",
+          "when": "view =~ /^agentSessions\\.(list|current)$/ && viewItem =~ /^notes-.*-answers(-|$)/ && !agentSessions.phoneMode",
+          "group": "inline@1"
+        },
+        {
+          "command": "agentSessions.notes.markAllRead",
+          "when": "view =~ /^agentSessions\\.(list|current)$/ && viewItem =~ /^notes-.*-read(-|$)/ && !agentSessions.phoneMode",
+          "group": "inline@2"
+        },
+        {
+          "command": "agentSessions.notes.viewAnswers",
+          "when": "view =~ /^agentSessions\\.(list|current)$/ && viewItem =~ /^notes-.*-answers(-|$)/ && view not in agentSessions.multiSelect",
+          "group": "1_notes@0"
+        },
+        {
+          "command": "agentSessions.notes.doneAll",
+          "when": "view =~ /^agentSessions\\.(list|current)$/ && viewItem =~ /^notes-.*-done(-|$)/",
+          "group": "1_notes@1"
+        },
+        {
+          "command": "agentSessions.notes.markAllRead",
+          "when": "view =~ /^agentSessions\\.(list|current)$/ && viewItem =~ /^notes-.*-read(-|$)/",
+          "group": "1_notes@2"
+        },
+        {
+          "command": "agentSessions.notes.answerAll",
+          "when": "view =~ /^agentSessions\\.(list|current)$/ && viewItem =~ /^notes-.*-answered(-|$)/",
+          "group": "1_notes@3"
+        },
+        {
+          "command": "agentSessions.notes.staleAll",
+          "when": "view =~ /^agentSessions\\.(list|current)$/ && viewItem =~ /^notes-.*-stale(-|$)/",
+          "group": "1_notes@4"
+        },
+        {
+          "command": "agentSessions.notes.removeClosed",
+          "when": "view =~ /^agentSessions\\.(list|current)$/ && viewItem =~ /^notes-.*-closed(-|$)/",
+          "group": "1_notes@5"
         }
       ],
       "commandPalette": [
@@ -994,6 +1070,30 @@
         },
         {
           "command": "agentSessions.note.reopenSession",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.notes.viewAnswers",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.notes.doneAll",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.notes.markAllRead",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.notes.answerAll",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.notes.staleAll",
+          "when": "false"
+        },
+        {
+          "command": "agentSessions.notes.removeClosed",
           "when": "false"
         }
       ]

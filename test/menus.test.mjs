@@ -24,7 +24,7 @@ test('the row action picker covers every context-menu action', async () => {
   try {
     const out = join(dir, 'row-actions.cjs');
     await build({ entryPoints: ['src/row-actions.ts'], bundle: true, platform: 'node', format: 'cjs', outfile: out });
-    const { ROW_ACTIONS, rowActionsFor } = createRequire(import.meta.url)(out);
+    const { ROW_ACTIONS, NOTE_GROUP_ACTIONS, noteGroupFits, rowActionsFor } = createRequire(import.meta.url)(out);
     const listed = new Set(ROW_ACTIONS.map((a) => a.command));
     const contextMenu = new Set(contributes.menus['view/item/context'].filter((e) => !e.group?.startsWith('inline')).map((e) => e.command));
     assert.deepEqual([...contextMenu].filter((c) => !listed.has(c)), [], 'every context-menu action is in the picker');
@@ -38,6 +38,13 @@ test('the row action picker covers every context-menu action', async () => {
     assert.ok(rowActionsFor(['note-answer-answered-unread'], false).includes('agentSessions.note.markRead') && !rowActionsFor(['note-answer-answered'], false).includes('agentSessions.note.markRead') && !rowActionsFor(['note-answer-open'], false).includes('agentSessions.note.markRead'), 'only an unread answer can be marked read');
     assert.ok(rowActionsFor(['note-question-open'], false).includes('agentSessions.note.answered') && !rowActionsFor(['note-question-answered'], false).includes('agentSessions.note.answered') && !rowActionsFor(['note-answer-open'], false).includes('agentSessions.note.answered'), 'only a question waiting for you can be marked answered');
     assert.ok(rowActionsFor(['session-claude-stopped-done'], false).includes('agentSessions.note.viewDone') && rowActionsFor(['session-claude-live-done-subagent-linked'], false).includes('agentSessions.note.viewDone') && !rowActionsFor(['session-claude-stopped'], false).includes('agentSessions.note.viewDone'), 'only a session marked done offers its completion record');
+    const tasksRow = rowActionsFor(['notes-tasks-done-closed'], false);
+    assert.ok(tasksRow.includes('agentSessions.notes.doneAll') && tasksRow.includes('agentSessions.notes.removeClosed') && !tasksRow.includes('agentSessions.notes.markAllRead') && !tasksRow.includes('agentSessions.notes.viewAnswers'), 'a notes row offers only the bulk actions its notes allow');
+    assert.ok(rowActionsFor(['notes-notes-read-answers'], false).includes('agentSessions.notes.viewAnswers'), 'a notes row holding answers offers them on one page');
+    const removeClosed = NOTE_GROUP_ACTIONS.find((g) => g.command === 'agentSessions.notes.removeClosed');
+    assert.ok(noteGroupFits(removeClosed, 'note-task-dropped') && noteGroupFits(removeClosed, 'note-answer-stale') && !noteGroupFits(removeClosed, 'note-task-open') && !noteGroupFits(removeClosed, 'note-answer-answered-unread'), 'Remove Closed removes only done, dropped and stale notes');
+    const doneAll = NOTE_GROUP_ACTIONS.find((g) => g.command === 'agentSessions.notes.doneAll');
+    assert.ok(noteGroupFits(doneAll, 'note-task-open') && !noteGroupFits(doneAll, 'note-task-done'), 'Mark All Tasks Done leaves a closed task’s resolution alone');
     const many = rowActionsFor(['session-claude-live', 'session-codex-pinned-'], false);
     assert.ok(many.includes('agentSessions.archive') && !many.includes('agentSessions.rename'), 'several rows are offered the bulk actions, not the single-row ones');
     assert.ok(!many.includes('agentSessions.pin') && !many.includes('agentSessions.unpin'), 'several rows are offered only the actions that fit every one of them');
