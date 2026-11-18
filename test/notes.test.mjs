@@ -195,3 +195,17 @@ test('the plugin carries the extension’s version, names the command at its fix
   assert.match(hooks.UserPromptSubmit[0].hooks[0].command, /hook prompt/);
   for (const skill of ['ask', 'ask-user', 'task', 'done']) assert.match(await readFile(`plugin/skills/${skill}/SKILL.md`, 'utf8'), new RegExp(`^---\\nname: ${skill}\\n[\\s\\S]*~/\\.agent-sessions/bin/agent-sessions`));
 });
+
+test('a session is tagged with what it is about, one tag per key and value whatever its case', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'notes-tags-'));
+  const file = notesFile(dir, 'claude', 'tagged');
+  assert.equal(runCommand(file, ['tag', 'add', 'Tenant:', 'Kouvolan', 'Lakritsi'], noStdin), 'tagged tenant:Kouvolan Lakritsi', 'the key is lower-cased and the value keeps its case');
+  assert.equal(runCommand(file, ['tag', 'add', 'tenant:kouvolan lakritsi'], noStdin), 'already tagged', 'the same tag in another case is not added twice');
+  runCommand(file, ['tag', 'add', 'area:widget'], noStdin);
+  assert.deepEqual(readNotes(file).tags, ['tenant:Kouvolan Lakritsi', 'area:widget']);
+  assert.match(runCommand(file, ['list'], noStdin), /^Tags: tenant:Kouvolan Lakritsi, area:widget/, 'list shows the tags first');
+  assert.throws(() => runCommand(file, ['tag', 'remove', 'area:phone'], noStdin), /no tag area:phone \(it has tenant:Kouvolan Lakritsi, area:widget\)/);
+  runCommand(file, ['tag', 'remove', 'area:widget'], noStdin);
+  runCommand(file, ['tag', 'remove', 'tenant:Kouvolan Lakritsi'], noStdin);
+  assert.equal(existsSync(file), false, 'a file left with nothing in it is removed');
+});

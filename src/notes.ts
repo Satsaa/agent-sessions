@@ -64,6 +64,11 @@ export interface SessionNotes {
   questions: Question[];
   /** Set while the session is done; a new task, answer or question takes it away. */
   done?: SessionDone;
+  /**
+   * What the session is about, as its agent tagged it (`tenant:Kouvolan Lakritsi`, `area:widget`): `key:value`, or a
+   * bare word. Lists group and filter by them; a tag never closes or reopens anything.
+   */
+  tags: string[];
 }
 
 export type NoteKind = 'task' | 'answer' | 'question';
@@ -79,6 +84,7 @@ interface StoredNotes {
   questions: Answer[];
   asked: Question[];
   done?: SessionDone;
+  tags?: string[];
 }
 
 export function notesDir(): string {
@@ -96,7 +102,7 @@ export function sessionKeyOfNotesFile(name: string): string | undefined {
   return m ? `${m[1]}:${m[2]}` : undefined;
 }
 
-export const emptyNotes = (): SessionNotes => ({ seq: 0, tasks: [], answers: [], questions: [] });
+export const emptyNotes = (): SessionNotes => ({ seq: 0, tasks: [], answers: [], questions: [], tags: [] });
 
 export function readNotes(file: string): SessionNotes {
   let raw: unknown;
@@ -109,7 +115,7 @@ export function readNotes(file: string): SessionNotes {
   const o = raw && typeof raw === 'object' ? (raw as Partial<StoredNotes>) : {};
   const rows = <T extends { id: string; text: string }>(v: unknown): T[] =>
     Array.isArray(v) ? v.filter((x): x is T => !!x && typeof x === 'object' && typeof (x as T).id === 'string' && typeof (x as T).text === 'string') : [];
-  const notes: SessionNotes = { seq: typeof o.seq === 'number' ? o.seq : 0, tasks: rows<Task>(o.tasks), answers: rows<Answer>(o.questions), questions: rows<Question>(o.asked) };
+  const notes: SessionNotes = { seq: typeof o.seq === 'number' ? o.seq : 0, tasks: rows<Task>(o.tasks), answers: rows<Answer>(o.questions), questions: rows<Question>(o.asked), tags: Array.isArray(o.tags) ? o.tags.filter((t): t is string => typeof t === 'string' && !!t.trim()) : [] };
   const d = o.done as Partial<SessionDone> | undefined;
   if (d && typeof d === 'object' && typeof d.at === 'number' && DONE_PARTS.every((part) => typeof d[part] === 'string')) {
     notes.done = { at: d.at, features: d.features!, tickets: d.tickets!, cleanup: d.cleanup! };
@@ -121,14 +127,15 @@ export function readNotes(file: string): SessionNotes {
 export const hasNotes = (notes: SessionNotes | undefined): notes is SessionNotes => !!notes && (notes.tasks.length + notes.answers.length + notes.questions.length > 0 || !!notes.done);
 
 function stored(notes: SessionNotes): StoredNotes {
-  return { seq: notes.seq, tasks: notes.tasks, questions: notes.answers, asked: notes.questions, ...(notes.done ? { done: notes.done } : {}) };
+  return { seq: notes.seq, tasks: notes.tasks, questions: notes.answers, asked: notes.questions, ...(notes.done ? { done: notes.done } : {}), ...(notes.tags.length ? { tags: notes.tags } : {}) };
 }
 
 /** Apply one change to a session's file as it is now. A file left with nothing in it is removed. */
 export function updateNotes(file: string, change: (notes: SessionNotes) => void): SessionNotes {
   const notes = readNotes(file);
   change(notes);
-  if (!hasNotes(notes)) {
+  const kept = notes.tags.length > 0 || hasNotes(notes);
+  if (!kept) {
     fs.rmSync(file, { force: true });
     return notes;
   }
@@ -142,6 +149,37 @@ export function updateNotes(file: string, change: (notes: SessionNotes) => void)
 
 /** Thrown for what the caller got wrong (an unknown id, an empty text); the command prints its message. */
 export class NoteError extends Error {}
+
+/**
+ * A tag as stored: spaces collapsed, and a `key:value` tag's key lower-cased and trimmed, so `Tenant: Acme` and
+ * `tenant:Acme` are one tag. The value keeps its case: it is a name a person reads.
+ */
+export function normalizeTag(raw: string): string {
+  const text = raw.replace(/\s+/g, ' ').trim();
+  const m = /^([A-Za-z][\w-]*)\s*:\s*(.+)$/.exec(text);
+  return m ? `${m[1]!.toLowerCase()}:${m[2]}` : text;
+}
+
+/** Adds tags not already there (compared without case); returns the ones added. */
+export function addTags(notes: SessionNotes, raw: readonly string[]): string[] {
+  const added: string[] = [];
+  for (const tag of raw.map(normalizeTag)) {
+    if (!tag) throw new NoteError('the tag is missing');
+    if (notes.tags.some((t) => t.toLowerCase() === tag.toLowerCase())) continue;
+    notes.tags.push(tag);
+    added.push(tag);
+  }
+  return added;
+}
+
+/** Removes tags (compared without case); a tag the session does not have is an error naming the ones it has. */
+export function removeTags(notes: SessionNotes, raw: readonly string[]): void {
+  for (const tag of raw.map(normalizeTag)) {
+    const i = notes.tags.findIndex((t) => t.toLowerCase() === tag.toLowerCase());
+    if (i < 0) throw new NoteError(`this session has no tag ${tag}${notes.tags.length ? ` (it has ${notes.tags.join(', ')})` : ''}`);
+    notes.tags.splice(i, 1);
+  }
+}
 
 function clean(text: string, what: string): string {
   const t = text.trim();
