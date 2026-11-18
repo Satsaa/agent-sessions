@@ -22,7 +22,7 @@ import { listCodexAccounts } from './codex-accounts.js';
 import { closeCodexSession } from './close.js';
 import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
-import { DoneItem, NoteItem, ROW_DETAILS, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
+import { NoteItem, ROW_DETAILS, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
 import { DONE_PARTS, answerQuestion, editSessionDone, hasNotes, markAnswerRead, notesDir, notesFile, readAllNotes, removeNote, reopenSession, setStale, setTaskState, updateNotes, watchNotes, type Answer, type SessionNotes, type Task } from './notes.js';
 import { installNotes, marketplacePath, notesCommandPath, notesOutdated, uninstallNotes, type NotesInstallPaths } from './notes-install.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
@@ -669,13 +669,14 @@ export function activate(context: vscode.ExtensionContext): void {
   // Another window (the phone, or a second desktop window) archived or pinned something.
   // A session recorded a task or a question, or another window marked one.
   const noteChanged = new vscode.EventEmitter<vscode.Uri>();
-  const noteUri = (item: NoteItem | DoneItem) => vscode.Uri.from({ scheme: NOTE_SCHEME, path: `/${item.session.tool}/${item.session.id}/${item instanceof DoneItem ? 'done' : item.note.id}.md` });
+  // A session's completion record is its own page, `done.md`, beside its notes'.
+  const noteUri = (item: NoteItem | SessionItem) => vscode.Uri.from({ scheme: NOTE_SCHEME, path: `/${item.session.tool}/${item.session.id}/${item instanceof NoteItem ? item.note.id : 'done'}.md` });
   context.subscriptions.push(noteChanged, watchNotes(notesPath, notes, () => {
     provider.notesChanged(true);
     for (const doc of vscode.workspace.textDocuments) if (doc.uri.scheme === NOTE_SCHEME) noteChanged.fire(doc.uri);
   }));
   /** One change to a note's file, shown at once rather than when the watch notices. */
-  const changeNote = (item: NoteItem | DoneItem, change: (n: SessionNotes) => void): void => {
+  const changeNote = (item: NoteItem | SessionItem, change: (n: SessionNotes) => void): void => {
     const key = `${item.session.tool}:${item.session.id}`;
     try {
       const now = updateNotes(notesFile(notesPath, item.session.tool, item.session.id), change);
@@ -979,9 +980,9 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     }),
     vscode.commands.registerCommand('agentSessions.note.open', async (arg: unknown) => {
-      if (!(arg instanceof NoteItem || arg instanceof DoneItem)) return;
+      if (!(arg instanceof NoteItem)) return;
       await showMarkdown(noteUri(arg));
-      if (arg instanceof DoneItem || arg.kind !== 'answer') return;
+      if (arg.kind !== 'answer') return;
       const a = arg.note as Answer;
       if (a.state === 'answered' && !a.read) changeNote(arg, (n) => void markAnswerRead(n, a.id));
     }),
@@ -1016,14 +1017,18 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('agentSessions.note.remove', (arg: unknown, selected: unknown) => {
       for (const item of noteItemsOf(arg, selected)) changeNote(item, (n) => removeNote(n, item.kind, item.note.id));
     }),
+    vscode.commands.registerCommand('agentSessions.note.viewDone', async (arg: unknown) => {
+      if (arg instanceof SessionItem) await showMarkdown(noteUri(arg));
+    }),
     vscode.commands.registerCommand('agentSessions.note.reopenSession', (arg: unknown, selected: unknown) => {
-      for (const item of rowsOf(arg, selected)) if (item instanceof DoneItem) changeNote(item, reopenSession);
+      for (const item of rowsOf(arg, selected)) if (item instanceof SessionItem && notes.get(`${item.session.tool}:${item.session.id}`)?.done) changeNote(item, reopenSession);
     }),
     vscode.commands.registerCommand('agentSessions.note.editDone', async (arg: unknown) => {
-      if (!(arg instanceof DoneItem)) return;
-      const part = await vscode.window.showQuickPick(DONE_PARTS.map((p) => ({ label: p[0]!.toUpperCase() + p.slice(1), description: arg.done[p], part: p })), { title: 'Edit what the session said' });
+      const done = arg instanceof SessionItem ? notes.get(`${arg.session.tool}:${arg.session.id}`)?.done : undefined;
+      if (!(arg instanceof SessionItem) || !done) return;
+      const part = await vscode.window.showQuickPick(DONE_PARTS.map((p) => ({ label: p[0]!.toUpperCase() + p.slice(1), description: done[p], part: p })), { title: 'Edit the completion record' });
       if (!part) return;
-      const text = (await vscode.window.showInputBox({ title: part.label, value: arg.done[part.part], validateInput: (v) => (v.trim() ? undefined : 'Say what there is, or that there is none') }))?.trim();
+      const text = (await vscode.window.showInputBox({ title: part.label, value: done[part.part], validateInput: (v) => (v.trim() ? undefined : 'Say what there is, or that there is none') }))?.trim();
       if (text !== undefined) changeNote(arg, (n) => editSessionDone(n, part.part, text));
     }),
     vscode.commands.registerCommand('agentSessions.notes.install', async () => {

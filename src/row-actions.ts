@@ -19,6 +19,8 @@ export interface RowAction {
 
 const session = (cv: string) => cv.startsWith('session');
 const mainThread = (cv: string) => session(cv) && !cv.includes('subagent');
+/** A session its agent marked done (notes.ts): it has a completion record. */
+const doneSession = (cv: string) => session(cv) && /-done(-|$)/.test(cv);
 const worktree = (cv: string) => /^worktree(-main)?$/.test(cv);
 
 export const ROW_ACTIONS: RowAction[] = [
@@ -50,8 +52,9 @@ export const ROW_ACTIONS: RowAction[] = [
   { command: 'agentSessions.note.stale', applies: (cv) => /^note-(answer|question)-(open|answered)/.test(cv), bulk: true },
   { command: 'agentSessions.note.reopen', applies: (cv) => /^note-(task-done|task-dropped|answer-stale|question-stale)$/.test(cv), bulk: true },
   { command: 'agentSessions.note.remove', applies: (cv) => /^note-(task|answer|question)-/.test(cv), bulk: true },
-  { command: 'agentSessions.note.editDone', applies: (cv) => cv === 'note-done' },
-  { command: 'agentSessions.note.reopenSession', applies: (cv) => cv === 'note-done', bulk: true },
+  { command: 'agentSessions.note.viewDone', applies: doneSession },
+  { command: 'agentSessions.note.editDone', applies: doneSession },
+  { command: 'agentSessions.note.reopenSession', applies: doneSession, bulk: true },
   { command: 'agentSessions.worktree.openFolder', applies: worktree, notOnPhone: 'the phone has one window' },
   { command: 'agentSessions.worktree.openTerminal', applies: worktree, notOnPhone: 'the phone layout shows no terminal' },
   { command: 'agentSessions.worktree.copyPath', applies: worktree, bulk: true },

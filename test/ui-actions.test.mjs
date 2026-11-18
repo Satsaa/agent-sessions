@@ -407,6 +407,18 @@ test('a replied session whose every task is done shows its glyph green, the tool
   }, 'green only when a task was done and none is open; a dropped task neither counts nor blocks');
 });
 
+test('a session marked done says so on its row and in its context value, with no row of its own for the record', () => {
+  const done = { at: 1, features: 'Shipped', tickets: 'None', cleanup: 'None' };
+  const notes = new Map([['codex:a', { seq: 1, tasks: [], answers: [], questions: [], done }], ['codex:b', { seq: 1, tasks: [{ id: 't1', text: 'Ship', state: 'done', at: 1 }], answers: [], questions: [], done }]]);
+  const provider = new SessionsProvider(options({ pinned: new Set(), historyLimit: 10, notes }), () => {});
+  provider.setSessions([session('a'), session('b')]);
+  const [a, b] = provider.getChildren()[0].children;
+  assert.match(a.description, /✓ done/);
+  assert.match(a.contextValue, /-done(-|$)/, 'the context menu offers View Completion Record by this');
+  assert.equal(a.collapsibleState, 0, 'the record is no row: a session with nothing else under it has nothing to open');
+  assert.deepEqual(provider.getChildren(b).map((row) => row.label), ['Tasks'], 'only the notes are listed under a done session');
+});
+
 test('the current session’s row opens, every other one stays closed, and the previous one closes when the current one changes', () => {
   const notes = new Map(['a', 'b'].map((id) => [`codex:${id}`, { seq: 1, tasks: [{ id: 't1', text: 'Ship it', state: 'open', at: 1 }], answers: [], questions: [] }]));
   const provider = new SessionsProvider(options({ pinned: new Set(), historyLimit: 10, notes, expandCurrent: true }), () => {});

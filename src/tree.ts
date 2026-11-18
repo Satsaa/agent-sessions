@@ -4,7 +4,7 @@ import { isLive, toolLabel, type Session, type SessionState } from './types.js';
 import { relativeTime, repoRootOf } from './util.js';
 import { statsInline, type WorktreeStats } from './worktree.js';
 import { stateIcon, toolIcon } from './icons.js';
-import { hasNotes, noteCounts, type Answer, type NoteKind, type Question, type SessionDone, type SessionNotes, type Task } from './notes.js';
+import { noteCounts, type Answer, type NoteKind, type Question, type SessionNotes, type Task } from './notes.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
 
@@ -180,26 +180,6 @@ export class NoteItem extends vscode.TreeItem implements HoverTooltip {
   }
 }
 
-/** The row of a session its agent closed (notes.ts), opening what it said it delivered, did with its tickets and cleaned up. */
-export class DoneItem extends vscode.TreeItem implements HoverTooltip {
-  readonly children: readonly never[] = [];
-  readonly tooltipOnHover: () => vscode.MarkdownString;
-
-  constructor(public readonly session: Session, public readonly done: SessionDone, idPrefix: string) {
-    super('Done', vscode.TreeItemCollapsibleState.None);
-    this.id = `${idPrefix}/done`;
-    this.description = `${oneLine(done.features)} · ${relativeTime(done.at)}`;
-    this.iconPath = new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
-    this.contextValue = 'note-done';
-    this.tooltipOnHover = () => {
-      const md = new vscode.MarkdownString(undefined, true);
-      md.appendMarkdown(`**Features**\n\n${done.features}\n\n**Tickets**\n\n${done.tickets}\n\n**Cleanup**\n\n${done.cleanup}\n\n$(clock) ${new Date(done.at).toLocaleString()}`);
-      return md;
-    };
-    this.command = { command: 'agentSessions.note.open', title: 'Open', arguments: [this] };
-  }
-}
-
 /** A session's rows of notes: one of its questions and answers, named after the kinds it holds, and one of its tasks. */
 export class NoteGroupItem extends vscode.TreeItem {
   constructor(public readonly children: NoteItem[], label: string, summary: string, idPrefix: string, part: 'notes' | 'tasks') {
@@ -222,11 +202,10 @@ const TASK_ORDER: Record<Task['state'], number> = { open: 3, done: 4, dropped: 5
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
-function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix: string): (DoneItem | NoteGroupItem)[] {
+function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix: string): NoteGroupItem[] {
   if (!notes) return [];
   const counts = noteCounts(notes);
-  const groups: (DoneItem | NoteGroupItem)[] = [];
-  if (notes.done) groups.push(new DoneItem(session, notes.done, idPrefix));
+  const groups: NoteGroupItem[] = [];
   const ranked = (rows: { rank: number; item: NoteItem; at: number }[]) => rows.sort((a, b) => a.rank - b.rank || a.at - b.at).map((r) => r.item);
   if (notes.questions.length || notes.answers.length) {
     const items = ranked([
@@ -256,8 +235,8 @@ export interface RowContent {
 
 export class SessionItem extends vscode.TreeItem implements HoverTooltip {
   readonly tooltipOnHover: () => vscode.MarkdownString;
-  /** The session's Done and notes rows, listed before the sessions it spawned. */
-  readonly notes: (DoneItem | NoteGroupItem)[];
+  /** The session's notes rows, listed before the sessions it spawned. */
+  readonly notes: NoteGroupItem[];
 
   constructor(
     public readonly session: Session,
@@ -279,9 +258,9 @@ export class SessionItem extends vscode.TreeItem implements HoverTooltip {
     this.notes = noteGroups(session, content.notes, this.id);
     // A session's thread opens collapsed, unless its notes row is the one thing under it;
     // inside a thread, every spawned session's own subtree is already open.
-    const onlyNotes = !children.length && this.notes.some((row) => row instanceof NoteGroupItem);
+    const onlyNotes = !children.length && this.notes.length > 0;
     this.collapsibleState =
-      !children.length && !hasNotes(content.notes) ? vscode.TreeItemCollapsibleState.None
+      !children.length && !this.notes.length ? vscode.TreeItemCollapsibleState.None
       : expand !== undefined ? (expand ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed)
       : session.subagent || onlyNotes ? vscode.TreeItemCollapsibleState.Expanded
       : vscode.TreeItemCollapsibleState.Collapsed;
@@ -298,7 +277,7 @@ export class SessionItem extends vscode.TreeItem implements HoverTooltip {
     };
     // `linked`: the parent comes from a marker (only then is `parentTool` set), so the row can be detached.
     const linked = session.subagent && session.parentTool !== undefined;
-    this.contextValue = ['session', session.tool, archived ? 'archived' : '', pinned ? 'pinned' : '', backlog ? 'backlog' : '', isLive(session.state) ? 'live' : 'stopped', session.subagent ? 'subagent' : '', linked ? 'linked' : '', session.detached ? 'detached' : '']
+    this.contextValue = ['session', session.tool, archived ? 'archived' : '', pinned ? 'pinned' : '', backlog ? 'backlog' : '', isLive(session.state) ? 'live' : 'stopped', content.notes?.done ? 'done' : '', session.subagent ? 'subagent' : '', linked ? 'linked' : '', session.detached ? 'detached' : '']
       .filter(Boolean)
       .join('-');
     // A spawned agent has no panel of its own to resume; its transcript is what there is to see.
@@ -324,7 +303,7 @@ export class GroupItem extends vscode.TreeItem {
   }
 }
 
-type Node = SessionItem | GroupItem | NoteGroupItem | NoteItem | DoneItem;
+type Node = SessionItem | GroupItem | NoteGroupItem | NoteItem;
 
 /** How long the view keeps still after the pointer reaches a row, so a row is not moved from under a click. */
 const HOVER_HOLD_MS = 3000;
@@ -334,7 +313,7 @@ const ACTIVE_HOLD_MS = 5000;
 
 /** Fill in a hovered row's tooltip. */
 export function resolveTooltip(item: vscode.TreeItem, element: unknown): vscode.TreeItem {
-  if (element instanceof SessionItem || element instanceof NoteItem || element instanceof DoneItem) item.tooltip = element.tooltipOnHover();
+  if (element instanceof SessionItem || element instanceof NoteItem) item.tooltip = element.tooltipOnHover();
   return item;
 }
 
