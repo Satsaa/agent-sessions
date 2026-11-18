@@ -319,6 +319,9 @@ type Node = SessionItem | GroupItem | NoteGroupItem | NoteItem | DoneItem;
 /** How long the view keeps still after the pointer reaches a row, so a row is not moved from under a click. */
 const HOVER_HOLD_MS = 3000;
 
+/** How long a session that stops working stays in Active, so a moment's stop (opening it rewrites its transcript) does not move it to History and back. */
+const ACTIVE_HOLD_MS = 5000;
+
 /** Fill in a hovered row's tooltip. */
 export function resolveTooltip(item: vscode.TreeItem, element: unknown): vscode.TreeItem {
   if (element instanceof SessionItem || element instanceof NoteItem || element instanceof DoneItem) item.tooltip = element.tooltipOnHover();
@@ -457,6 +460,9 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
   /** When the pointer last reached a row, and the update waiting for it to leave the rows alone. */
   private hoveredAt = -Infinity;
   private held: ReturnType<typeof setTimeout> | undefined;
+  /** Per session, when a rebuild last saw it working, and the rebuild due when the first of them leaves Active (see `ACTIVE_HOLD_MS`). */
+  private readonly workedAt = new Map<string, number>();
+  private leaving: ReturnType<typeof setTimeout> | undefined;
 
   /** `onLoaded` runs once, when the view has the first scan's rows, so its empty state can stop saying "loading". */
   constructor(options: ViewOptions, private readonly onLoaded: () => void) {
@@ -653,7 +659,17 @@ export class SessionsProvider implements vscode.TreeDataProvider<Node> {
     // Pinning wins over Backlog, should both marks reach the file (each normally clears the other, see marks.ts).
     const inBacklog = (s: Session) => o.backlog.has(`${s.tool}:${s.id}`) && !isPinned(s);
     // A session another agent was handed keeps working after its parent stops; the parent stays with it in Active.
-    const working = (s: Session) => isLive(s.state) || (childrenOf.get(`${s.tool}:${s.id}`) ?? []).some((c) => isLive(c.state));
+    const live = (s: Session) => isLive(s.state) || (childrenOf.get(`${s.tool}:${s.id}`) ?? []).some((c) => isLive(c.state));
+    const now = Date.now();
+    const liveNow = new Set(all.filter(live).map((s) => `${s.tool}:${s.id}`));
+    for (const key of liveNow) this.workedAt.set(key, now);
+    for (const [key, at] of this.workedAt) if (now - at >= ACTIVE_HOLD_MS) this.workedAt.delete(key);
+    // One that stopped a moment ago is still working here: it moves to History only once it has stayed stopped.
+    const working = (s: Session) => this.workedAt.has(`${s.tool}:${s.id}`);
+    clearTimeout(this.leaving);
+    this.leaving = undefined;
+    const due = Math.min(...[...this.workedAt].filter(([key]) => !liveNow.has(key)).map(([, at]) => at)) + ACTIVE_HOLD_MS - now;
+    if (Number.isFinite(due)) this.leaving = setTimeout(() => this.rebuild(true), due);
     const order = activeOrder(o.activeSort, (s) => (s.state === 'stopped' && working(s) ? 'running' : s.state));
     const active = all.filter((s) => !inBacklog(s) && (working(s) || isPinned(s))).sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)) || order(a, b));
     // Backlog is parked work: a session stays there while it works, and is never cut by the history limit.

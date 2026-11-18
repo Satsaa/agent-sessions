@@ -289,6 +289,21 @@ test('a subagent of another agent’s session nests under that session, in the c
   assert.equal(withNotes.getChildren()[0].children[0].collapsibleState, 1, 'a thread holding spawned sessions beside its notes still opens collapsed');
 });
 
+test('a session that stops working stays in Active for five seconds before it moves to History', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const provider = new SessionsProvider(options({ pinned: new Set(), historyLimit: 10 }), () => {});
+  const sections = () => provider.getChildren().map(group => [group.label, group.children.map(row => row.session.id)]);
+  provider.setSessions([session('opened', { state: 'replied' }), session('old')]);
+  provider.setSessions([session('opened'), session('old')]);
+  assert.deepEqual(sections(), [['Active', ['opened']], ['History', ['old']]], 'a moment stopped, as opening a session does to it, is not a move to History');
+  provider.setSessions([session('opened', { state: 'replied' }), session('old')]);
+  provider.setSessions([session('opened'), session('old')]);
+  t.mock.timers.tick(4999);
+  assert.deepEqual(sections(), [['Active', ['opened']], ['History', ['old']]], 'working again restarts the five seconds');
+  t.mock.timers.tick(1);
+  assert.deepEqual(sections(), [['History', ['opened', 'old']]], 'stopped for five seconds, it moves to History by itself');
+});
+
 test('a hovered Sessions view holds a background update for three seconds, and a person’s own change for none', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   let fired = 0;
