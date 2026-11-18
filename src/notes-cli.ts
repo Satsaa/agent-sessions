@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import {
-  DONE_PARTS, NoteError, addAnswer, addTags, removeTags, addQuestion, addTask, answerQuestion, emptyNotes, kindOf, markSessionDone, notesDir, notesFile, readNotes, reopenSession, setStale, setTaskState,
+  DONE_PARTS, NoteError, addAnswer, clearSessionStatus, setSessionStatus, addTags, removeTags, addQuestion, addTask, answerQuestion, emptyNotes, kindOf, markSessionDone, notesDir, notesFile, readNotes, reopenSession, setStale, setTaskState,
   updateNotes, writeAnswer, type DonePart, type SessionNotes,
 } from './notes.js';
 import type { Tool } from './types.js';
@@ -23,6 +23,9 @@ const USAGE = `Records this session's tasks, answers and questions; the user see
                                           no longer needed
   agent-sessions tag add <tag>...         what the session is about: tenant:<company>, area:<product area>, report-to:<person>
   agent-sessions tag remove <tag>...
+  agent-sessions status partial <what is delivered and what is left>
+  agent-sessions status attention <what needs the user's look>
+  agent-sessions status clear             nothing needs saying any more
   agent-sessions list
   agent-sessions done --features <what was delivered and where> --tickets <each ticket and its status now> --cleanup <worktrees, branches and processes removed or left>
                                           closes the session; every part is said, "none" with the reason included
@@ -53,6 +56,7 @@ This applies to every session and is not optional: a task, an answer or a questi
 - The user can record these themselves with the plugin's commands: /task, /ask for a question of theirs to you, /ask-user to see what waits for them. A question the user writes is theirs, whichever command they wrote it with. Do not expect them to record anything: recording is your job either way.
 - Before ending a turn in a session that has anything recorded, run \`list\` and answer what you can now. Leave the rest open; \`ask stale <id>\` marks a question of theirs that no longer matters.
 - **Tag the session with what it is about**, as soon as you know it (\`tag add "<key>:<value>"\`): \`tenant:<company>\` when the work is for one customer company, named as its tenant is, \`area:<product area>\` for the part of the product it changes, and \`report-to:<person>\` for the person other than the user who waits for its outcome. The user's list groups sessions by them. Add a tag when the work reaches another one; remove one that turned out wrong (\`tag remove\`).
+- **Keep the session's status true** with the plugin's status skill: \`status partial "<what is left>"\` when part is delivered and the rest is not, \`status attention "<what needs the user>"\` when something needs the user's look (a failure, a decision, a result to check), and \`status clear\` as soon as it no longer holds. Done is the done skill.
 - **When the session's work is all delivered, or the user says it is done, close it with the plugin's done skill**: it checks the features, the tickets and the cleanup, then records them with \`done\`. A session is never marked done with a task open, a question of the user's unanswered, or a question to the user waiting for them.`;
 
 /**
@@ -65,7 +69,7 @@ export function hookText(event: string, notes: SessionNotes): string {
     ...notes.answers.filter((a) => a.state === 'open').map((a) => `  answer ${a.id} (not answered yet): ${a.text}`),
     ...notes.questions.filter((q) => q.state === 'open').map((q) => `  question ${q.id} (waiting for the user): ${q.text}`),
   ];
-  if (event === 'session-start') return [INSTRUCTIONS, ...(notes.tasks.length || notes.answers.length || notes.questions.length || notes.done || notes.tags.length ? ['', 'Recorded for this session so far:', formatNotes(notes)] : [])].join('\n');
+  if (event === 'session-start') return [INSTRUCTIONS, ...(notes.tasks.length || notes.answers.length || notes.questions.length || notes.done || notes.status || notes.tags.length ? ['', 'Recorded for this session so far:', formatNotes(notes)] : [])].join('\n');
   if (event !== 'prompt') throw new NoteError('hook takes session-start or prompt');
   if (!open.length) return '';
   return [
@@ -137,8 +141,9 @@ export function sessionOf(env: Env, named: string | undefined, nearest: () => To
 }
 
 export function formatNotes(notes: SessionNotes): string {
-  if (!notes.tasks.length && !notes.answers.length && !notes.questions.length && !notes.done && !notes.tags.length) return 'Nothing recorded for this session.';
+  if (!notes.tasks.length && !notes.answers.length && !notes.questions.length && !notes.done && !notes.status && !notes.tags.length) return 'Nothing recorded for this session.';
   const lines: string[] = [];
+  if (notes.status) lines.push(`Status: ${notes.status.state}: ${notes.status.text}`);
   if (notes.tags.length) lines.push(`Tags: ${notes.tags.join(', ')}`);
   if (notes.tasks.length) lines.push('Tasks', ...notes.tasks.map((t) => `  ${t.id} [${t.state}] ${t.text}`));
   if (notes.answers.length) lines.push("Answers (the user's questions)", ...notes.answers.map((a) => `  ${a.id} [${a.state}] ${a.text}`));
@@ -240,6 +245,18 @@ export function runCommand(file: string, args: readonly string[], stdin: () => s
         return 'tag removed';
       });
       break;
+    case 'status partial':
+    case 'status attention':
+      change((n) => `status ${setSessionStatus(n, verb as 'partial' | 'attention', text(rest, verb === 'partial' ? 'what is delivered and what is left' : "what needs the user's look")).state}`);
+      break;
+    case 'status clear':
+      change((n) => {
+        clearSessionStatus(n);
+        return 'status cleared';
+      });
+      break;
+    case 'status done':
+      throw new NoteError('a session is marked done with the done skill (`agent-sessions done --features … --tickets … --cleanup …`), which checks that nothing is left open');
     case 'done':
       change((n) => {
         markSessionDone(n, doneParts(verb === undefined ? [] : [verb, ...rest]));

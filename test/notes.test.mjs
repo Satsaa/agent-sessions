@@ -209,3 +209,19 @@ test('a session is tagged with what it is about, one tag per key and value whate
   runCommand(file, ['tag', 'remove', 'tenant:Kouvolan Lakritsi'], noStdin);
   assert.equal(existsSync(file), false, 'a file left with nothing in it is removed');
 });
+
+test('a session’s status is set and cleared by its agent, and done replaces it', () => {
+  const file = notesFile(directory, 'claude', 'status-session');
+  assert.equal(runCommand(file, ['status', 'partial', 'the UI is in; the deploy is left'], noStdin), 'status partial');
+  assert.deepEqual({ ...readNotes(file).status, at: 0 }, { state: 'partial', text: 'the UI is in; the deploy is left', at: 0 });
+  assert.match(runCommand(file, ['list'], noStdin), /^Status: partial: the UI is in/, 'the list says the status first');
+  assert.throws(() => runCommand(file, ['status', 'done'], noStdin), NoteError, 'done is the done command, which checks nothing is left open');
+  runCommand(file, ['status', 'attention', 'the deploy went red'], noStdin);
+  assert.equal(readNotes(file).status.state, 'attention');
+  runCommand(file, ['done', '--features', 'x', '--tickets', 'none', '--cleanup', 'none'], noStdin);
+  assert.equal(readNotes(file).status, undefined, 'marking the session done replaces its status');
+  runCommand(file, ['status', 'partial', 'one more thing'], noStdin);
+  assert.equal(readNotes(file).done, undefined, 'a status takes done away');
+  runCommand(file, ['status', 'clear'], noStdin);
+  assert.equal(existsSync(file), false, 'a file with nothing left in it goes');
+});

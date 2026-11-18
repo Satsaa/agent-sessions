@@ -53,6 +53,18 @@ export interface SessionDone {
   cleanup: string;
 }
 
+/**
+ * What the session's agent says of where it stands, short of done: `partial` (part delivered, the rest left), or
+ * `attention` (something needs the user's look). Set and cleared by the agent; done replaces it.
+ */
+export interface SessionStatus {
+  state: 'partial' | 'attention';
+  text: string;
+  at: number;
+}
+
+export const STATUS_STATES = ['partial', 'attention'] as const;
+
 export const DONE_PARTS = ['features', 'tickets', 'cleanup'] as const;
 export type DonePart = (typeof DONE_PARTS)[number];
 
@@ -64,6 +76,8 @@ export interface SessionNotes {
   questions: Question[];
   /** Set while the session is done; a new task, answer or question takes it away. */
   done?: SessionDone;
+  /** Where the session stands when it is not done; none when nothing needs saying. */
+  status?: SessionStatus;
   /**
    * What the session is about, as its agent tagged it (`tenant:Kouvolan Lakritsi`, `area:widget`): `key:value`, or a
    * bare word. Lists group and filter by them; a tag never closes or reopens anything.
@@ -84,6 +98,7 @@ interface StoredNotes {
   questions: Answer[];
   asked: Question[];
   done?: SessionDone;
+  status?: SessionStatus;
   tags?: string[];
 }
 
@@ -120,14 +135,18 @@ export function readNotes(file: string): SessionNotes {
   if (d && typeof d === 'object' && typeof d.at === 'number' && DONE_PARTS.every((part) => typeof d[part] === 'string')) {
     notes.done = { at: d.at, features: d.features!, tickets: d.tickets!, cleanup: d.cleanup! };
   }
+  const st = o.status as Partial<SessionStatus> | undefined;
+  if (st && typeof st === 'object' && STATUS_STATES.includes(st.state as SessionStatus['state']) && typeof st.text === 'string' && typeof st.at === 'number') {
+    notes.status = { state: st.state!, text: st.text, at: st.at };
+  }
   return notes;
 }
 
 /** Whether anything is recorded: a file with nothing in it is not kept, and a session with nothing has no rows. */
-export const hasNotes = (notes: SessionNotes | undefined): notes is SessionNotes => !!notes && (notes.tasks.length + notes.answers.length + notes.questions.length > 0 || !!notes.done);
+export const hasNotes = (notes: SessionNotes | undefined): notes is SessionNotes => !!notes && (notes.tasks.length + notes.answers.length + notes.questions.length > 0 || !!notes.done || !!notes.status);
 
 function stored(notes: SessionNotes): StoredNotes {
-  return { seq: notes.seq, tasks: notes.tasks, questions: notes.answers, asked: notes.questions, ...(notes.done ? { done: notes.done } : {}), ...(notes.tags.length ? { tags: notes.tags } : {}) };
+  return { seq: notes.seq, tasks: notes.tasks, questions: notes.answers, asked: notes.questions, ...(notes.done ? { done: notes.done } : {}), ...(notes.status ? { status: notes.status } : {}), ...(notes.tags.length ? { tags: notes.tags } : {}) };
 }
 
 /** Apply one change to a session's file as it is now. A file left with nothing in it is removed. */
@@ -278,7 +297,19 @@ export function markSessionDone(notes: SessionNotes, parts: Partial<Record<DoneP
     return text;
   };
   notes.done = { at: now, features: said('features'), tickets: said('tickets'), cleanup: said('cleanup') };
+  delete notes.status;
   return notes.done;
+}
+
+/** The agent says where the session stands short of done, which it no longer is. */
+export function setSessionStatus(notes: SessionNotes, state: SessionStatus['state'], text: string, now = Date.now()): SessionStatus {
+  notes.status = { state, text: clean(text, state === 'partial' ? 'what is left' : 'what needs the user'), at: now };
+  delete notes.done;
+  return notes.status;
+}
+
+export function clearSessionStatus(notes: SessionNotes): void {
+  delete notes.status;
 }
 
 /** A person's correction of one part of what a done session said. */
