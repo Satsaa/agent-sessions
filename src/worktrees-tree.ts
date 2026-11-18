@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { SessionItem, arrangeSubagents, renderKey, resolveTooltip, type SubagentLayout } from './tree.js';
+import { sectionState, type Section } from './open-sections.js';
 import { isLive, type Session } from './types.js';
 import { statsInline, type RepoWorktree, type WorktreeStats } from './worktree.js';
 
@@ -34,12 +35,15 @@ export class WorktreeItem extends vscode.TreeItem {
 }
 
 /** A repository's linked worktrees that no session uses, collapsed as its last row. */
-class InactiveItem extends vscode.TreeItem {
+class InactiveItem extends vscode.TreeItem implements Section {
+  readonly section: string;
+
   constructor(
     root: string,
     public readonly children: WorktreeItem[],
   ) {
-    super('Inactive', vscode.TreeItemCollapsibleState.Collapsed);
+    super('Inactive', sectionState(`worktree-inactive:${root}`, false));
+    this.section = `worktree-inactive:${root}`;
     this.id = `worktree-inactive:${root}`;
     this.contextValue = 'worktree-group';
     this.iconPath = new vscode.ThemeIcon('folder');
@@ -48,13 +52,16 @@ class InactiveItem extends vscode.TreeItem {
   }
 }
 
-class RepoItem extends vscode.TreeItem {
+class RepoItem extends vscode.TreeItem implements Section {
+  readonly section: string;
+
   constructor(
     public readonly root: string,
     public readonly children: (WorktreeItem | InactiveItem)[],
     linked: number,
   ) {
-    super(path.basename(root) || root, vscode.TreeItemCollapsibleState.Expanded);
+    super(path.basename(root) || root, sectionState(`worktree-repo:${root}`, true));
+    this.section = `worktree-repo:${root}`;
     this.id = `worktree-repo:${root}`;
     this.contextValue = 'worktree-repo';
     this.iconPath = new vscode.ThemeIcon('repo');

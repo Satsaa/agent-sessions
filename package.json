@@ -63,7 +63,7 @@
         },
         {
           "id": "agentSessions.current",
-          "name": "Current Session",
+          "name": "Current",
           "icon": "resources/icon.svg",
           "contextualTitle": "The active agent tab's tasks, answers and questions"
         },
@@ -1094,7 +1094,7 @@
         "agentSessions.expandCurrentSession": {
           "type": "boolean",
           "default": false,
-          "description": "Open the row of the session in the active agent tab, and keep every other session's row closed: the previous session's row closes when another session becomes current. Off by default: the Current Session view lists that session's notes."
+          "description": "Open the row of the session in the active agent tab, and keep every other session's row closed: the previous session's row closes when another session becomes current. Off by default: the Current view lists that session's notes."
         },
         "agentSessions.showActiveArchived": {
           "type": "boolean",

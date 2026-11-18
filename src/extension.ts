@@ -22,6 +22,7 @@ import { listCodexAccounts } from './codex-accounts.js';
 import { closeCodexSession } from './close.js';
 import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
+import { rememberOpenSections, trackOpenSections } from './open-sections.js';
 import { CurrentSessionProvider, NoteItem, ROW_DETAILS, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
 import { DONE_PARTS, answerQuestion, editSessionDone, hasNotes, markAnswerRead, notesDir, notesFile, readAllNotes, removeNote, reopenSession, setStale, setTaskState, updateNotes, watchNotes, type Answer, type SessionNotes, type Task } from './notes.js';
 import { installNotes, marketplacePath, notesCommandPath, notesOutdated, uninstallNotes, type NotesInstallPaths } from './notes-install.js';
@@ -190,6 +191,7 @@ export function activate(context: vscode.ExtensionContext): void {
   let current: string | undefined;
   const options = (): ViewOptions => ({ ...config.view, locallyArchived: archived, pinned, backlog, open, search, notes, current });
 
+  rememberOpenSections(context.globalState);
   const provider = new SessionsProvider(options(), () => void vscode.commands.executeCommand('setContext', 'agentSessions.loaded', true));
   const view = vscode.window.createTreeView('agentSessions.list', { treeDataProvider: provider, showCollapseAll: true, canSelectMany: true });
   // While searching, the view says how many sessions matched, so an empty result is not taken for no sessions at all.
@@ -223,6 +225,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const currentProvider = new CurrentSessionProvider();
   const currentView = vscode.window.createTreeView('agentSessions.current', { treeDataProvider: currentProvider, canSelectMany: true });
   context.subscriptions.push(output, view, statusBar, usageView, usageBar, worktreesView, currentView, { dispose: stopRunner });
+  context.subscriptions.push(trackOpenSections(view), trackOpenSections(worktreesView), trackOpenSections(currentView));
   // The views with several rows selected, for the menus' when-clauses: single-row actions hide there (see row-actions.ts).
   const multiSelect = new Set<string>();
   const trackMultiSelect = <T>(id: string, tree: vscode.TreeView<T>) => tree.onDidChangeSelection((e) => {
@@ -245,7 +248,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // Revealing scrolls the view, so it happens once per change of active chat, never again on refreshes while the
   // same chat stays active: the selection itself survives refreshes through the row id.
   let revealedKey: string | undefined;
-  // The Current Session view follows the active tab whether or not the Sessions view shows: its own title names the session.
+  // The Current view follows the active tab whether or not the Sessions view shows: its own title names the session.
   const showCurrentSession = (): void => {
     const s = sessionOfActiveTab(latestSessions);
     const n = s ? notes.get(`${s.tool}:${s.id}`) : undefined;

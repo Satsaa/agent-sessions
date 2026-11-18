@@ -4,6 +4,7 @@ import { isLive, toolLabel, type Session, type SessionState } from './types.js';
 import { relativeTime, repoRootOf } from './util.js';
 import { statsInline, type WorktreeStats } from './worktree.js';
 import { stateIcon, toolIcon } from './icons.js';
+import { sectionState, type Section } from './open-sections.js';
 import { noteCounts, type Answer, type NoteKind, type Question, type SessionNotes, type Task } from './notes.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
@@ -186,9 +187,14 @@ export class NoteItem extends vscode.TreeItem implements HoverTooltip {
 }
 
 /** A session's rows of notes: one of its questions and answers, named after the kinds it holds, and one of its tasks. */
-export class NoteGroupItem extends vscode.TreeItem {
-  constructor(public readonly children: NoteItem[], label: string, summary: string, idPrefix: string, part: 'notes' | 'tasks') {
-    super(label, vscode.TreeItemCollapsibleState.Expanded);
+export class NoteGroupItem extends vscode.TreeItem implements Section {
+  /** Every session's row of this part in this view opens or closes as the last one was left. */
+  readonly section: string;
+
+  constructor(public readonly children: NoteItem[], label: string, summary: string, idPrefix: string, part: 'notes' | 'tasks', view: NotesView) {
+    const section = `${view}:${part}`;
+    super(label, sectionState(section, true));
+    this.section = section;
     this.id = `${idPrefix}/${part}`;
     this.description = summary;
     this.iconPath = new vscode.ThemeIcon(part === 'tasks' ? 'checklist' : 'comment-discussion');
@@ -199,7 +205,10 @@ export class NoteGroupItem extends vscode.TreeItem {
 /** Each notes row lists its notes newest first, by when each last changed (the age its row shows). */
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
-function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix: string): NoteGroupItem[] {
+/** The views listing a session's notes rows. */
+type NotesView = 'sessions' | 'current';
+
+function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix: string, view: NotesView): NoteGroupItem[] {
   if (!notes) return [];
   const counts = noteCounts(notes);
   const groups: NoteGroupItem[] = [];
@@ -217,12 +226,12 @@ function noteGroups(session: Session, notes: SessionNotes | undefined, idPrefix:
       counts.questionsOpen ? `${plural(counts.questionsOpen, 'question')} for you` : '',
       counts.answersUnread ? plural(counts.answersUnread, 'new answer') : '',
     ].filter(Boolean).join(' · ');
-    groups.push(new NoteGroupItem(items, label, summary, idPrefix, 'notes'));
+    groups.push(new NoteGroupItem(items, label, summary, idPrefix, 'notes', view));
   }
   if (notes.tasks.length) {
     const items = newestFirst(notes.tasks.map((t) => new NoteItem(session, 'task', t, idPrefix)));
     const tasks = counts.tasksOpen + counts.tasksDone;
-    groups.push(new NoteGroupItem(items, 'Tasks', tasks ? `${counts.tasksDone}/${plural(tasks, 'task')} done` : '', idPrefix, 'tasks'));
+    groups.push(new NoteGroupItem(items, 'Tasks', tasks ? `${counts.tasksDone}/${plural(tasks, 'task')} done` : '', idPrefix, 'tasks', view));
   }
   return groups;
 }
@@ -255,7 +264,7 @@ export class SessionItem extends vscode.TreeItem implements HoverTooltip {
     super(session.title, vscode.TreeItemCollapsibleState.None);
     const archived = session.archived || archivedHere;
     this.id = `${idPrefix}${session.tool}:${session.id}${idSuffix}`;
-    this.notes = noteGroups(session, content.notes, this.id);
+    this.notes = noteGroups(session, content.notes, this.id, 'sessions');
     // A session's row opens collapsed, its notes included: the current session's notes have a view of their own
     // (`CurrentSessionProvider`). Inside a thread, every spawned session's own subtree is already open.
     this.collapsibleState =
@@ -286,15 +295,19 @@ export class SessionItem extends vscode.TreeItem implements HoverTooltip {
   }
 }
 
-export class GroupItem extends vscode.TreeItem {
+export class GroupItem extends vscode.TreeItem implements Section {
+  readonly section: string;
+
   constructor(
     public readonly key: string,
     label: string,
     public readonly children: SessionItem[],
     icon: vscode.ThemeIcon | { light: vscode.Uri; dark: vscode.Uri } | undefined,
+    /** Open unless the person left this group closed. */
     expanded: boolean,
   ) {
-    super(label, expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+    super(label, sectionState(`group:${key}`, expanded));
+    this.section = `group:${key}`;
     this.id = `group:${key}`;
     this.description = String(children.length);
     if (icon) this.iconPath = icon;
@@ -307,7 +320,7 @@ type Node = SessionItem | GroupItem | NoteGroupItem | NoteItem;
 type NoteNode = NoteGroupItem | NoteItem;
 
 /**
- * The Current Session view: the tasks, answers and questions of the session in the active agent tab, as the same
+ * The Current view: the tasks, answers and questions of the session in the active agent tab, as the same
  * rows its Sessions row holds, so every note action works there too. It follows the active tab, not the Sessions
  * view, so it keeps up while that view is collapsed or scrolled elsewhere.
  */
@@ -319,7 +332,7 @@ export class CurrentSessionProvider implements vscode.TreeDataProvider<NoteNode>
 
   /** Shows `session`'s notes; undefined when no agent tab is active or its session is unknown. */
   set(session: Session | undefined, notes: SessionNotes | undefined): void {
-    this.roots = session ? noteGroups(session, notes, `current:${session.tool}:${session.id}`) : [];
+    this.roots = session ? noteGroups(session, notes, `current:${session.tool}:${session.id}`, 'current') : [];
     const key = JSON.stringify(this.roots.map((g) => [g.id, g.description, g.children.map((n) => [n.id, n.label, n.description, n.contextValue])]));
     if (key === this.rendered) return;
     this.rendered = key;
