@@ -3,6 +3,7 @@ import { after, before, test } from 'node:test';
 import { spawn } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { connect } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,8 +19,14 @@ before(async () => {
   wrapper = join(dir, 'claude-wrapper.mjs');
   log = join(dir, 'fake-claude.log');
   await chmod(FAKE, 0o755);
-  const { SessionHost } = await import(join(dir, 'host.mjs'));
   await mkdir(join(dir, '.agent-sessions', 'host'), { recursive: true });
+  if (process.env.AGENT_SESSIONS_HOST_BIN) {
+    // The Rust host, started as the extension starts it, speaks the same protocol on the same socket.
+    host = spawn(process.env.AGENT_SESSIONS_HOST_BIN, [], { env: { ...process.env, HOME: dir }, stdio: 'ignore' });
+    for (let i = 0; i < 50 && !(await sessions().catch(() => undefined)); i++) await new Promise((r) => setTimeout(r, 100));
+    return;
+  }
+  const { SessionHost } = await import(join(dir, 'host.mjs'));
   host = new SessionHost({
     socketPath: join(dir, '.agent-sessions', 'host', 'host.sock'),
     idleStopMs: 60_000,
@@ -31,9 +38,24 @@ before(async () => {
 });
 
 after(async () => {
-  await host.close();
+  if (process.env.AGENT_SESSIONS_HOST_BIN) {
+    host.kill('SIGTERM');
+    await new Promise((r) => host.on('exit', r));
+  } else await host.close();
   await rm(dir, { recursive: true, force: true });
 });
+
+/** The host's sessions, as a status request reads them. */
+function sessions() {
+  return new Promise((resolve, reject) => {
+    const s = connect(join(dir, '.agent-sessions', 'host', 'host.sock'));
+    let text = '';
+    s.on('connect', () => s.write(`${JSON.stringify({ op: 'status', protocol: 1 })}\n`));
+    s.on('data', (chunk) => (text += chunk));
+    s.on('end', () => resolve(JSON.parse(text).sessions));
+    s.on('error', reject);
+  });
+}
 
 const PANEL_ARGS = ['--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json'];
 
@@ -118,7 +140,7 @@ test('an idle session reopened starts afresh with the new window’s command lin
   const lines = (await readFile(log, 'utf8')).split('\n').filter((l) => l.split(' ')[1] === id);
   assert.equal(lines.length, 2);
   assert.match(lines[1], /--model other/, 'an idle reopen restarts with the arguments the new panel asked for');
-  assert.equal(host.sessions().filter((s) => s.sessionId === id).length, 1, 'the old process is gone before the new one starts');
+  assert.equal((await sessions()).filter((s) => s.sessionId === id).length, 1, 'the old process is gone before the new one starts');
   await b.close();
 });
 
@@ -158,7 +180,7 @@ test('with no window connected, hooks are answered so the turn finishes', async 
   await b.waitFor((m) => m.type === 'control_request');
   await b.close();
   await settle();
-  const hosted = host.sessions().find((s) => s.sessionId === id);
+  const hosted = (await sessions()).find((s) => s.sessionId === id);
   assert.equal(hosted?.state, 'idle', 'the hook the panel would have answered got an empty answer and the turn ended');
 });
 
@@ -170,7 +192,7 @@ test('a permission question asked while no window is connected is asked again in
   const asked = await a.waitFor((m) => m.type === 'control_request' && m.request.subtype === 'can_use_tool');
   await a.close();
   await settle();
-  assert.equal(host.sessions().find((s) => s.sessionId === id)?.state, 'waiting');
+  assert.equal((await sessions()).find((s) => s.sessionId === id)?.state, 'waiting');
 
   const b = panel('the phone view', ['--resume', id]);
   b.initialize('b1');
@@ -203,15 +225,15 @@ test('two windows opening the same session at once start one process', async () 
 });
 
 test('a panel closed before its first message leaves no process behind', async () => {
-  const count = () => host.sessions().filter((s) => !s.sessionId).length;
-  const before = count();
+  const count = async () => (await sessions()).filter((s) => !s.sessionId).length;
+  const before = await count();
   const a = panel('the desktop');
   a.initialize('a1');
   await a.waitFor((m) => m.type === 'control_response');
-  assert.equal(count(), before + 1);
+  assert.equal(await count(), before + 1);
   await a.close();
   await settle();
-  assert.equal(count(), before, 'nothing can reopen a session that never announced its id, so it stops at once');
+  assert.equal(await count(), before, 'nothing can reopen a session that never announced its id, so it stops at once');
 });
 
 test('an idle session with no window is stopped after the time its window asked for, or never at 0', async () => {
@@ -226,7 +248,7 @@ test('an idle session with no window is stopped after the time its window asked 
   await brief.close();
   await kept.close();
   await new Promise((r) => setTimeout(r, 1000));
-  const hosted = host.sessions().map((s) => s.sessionId);
+  const hosted = (await sessions()).map((s) => s.sessionId);
   assert.ok(!hosted.includes(briefId), 'the window\'s own idle stop time applies, not the host\'s default');
   assert.ok(hosted.includes(keptId), '0 keeps an idle session until a window reopens it');
 });

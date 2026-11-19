@@ -150,7 +150,12 @@ effect keeps its old process until it reloads; in the phone view the setting liv
 load after installing writes it and the next one uses it.
 
 **Claude Code** (`claudeCode.claudeProcessWrapper`) runs the panel's `claude` under a session host
-(`~/.agent-sessions/host`, a systemd user unit where available).
+(`~/.agent-sessions/host`, a systemd user unit where available). The host is this extension's own Node program, or
+the native `~/.agent-sessions/bin/agent-sessions-host` when it is installed (the agentio repo's
+`services/agent-sessions-host`, which speaks the same protocol on the same socket).
+
+- The kernel's OOM killer taking one session's process (a runaway build, say) leaves the others running: the unit
+  runs with `OOMPolicy=continue`, where systemd's default would stop every session with it.
 
 - A turn keeps running with no window attached. The next window to open the session joins the same process and sees
   the rest of the turn; a permission question asked meanwhile is asked again there. Hooks and the panel's own tools

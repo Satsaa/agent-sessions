@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -45,18 +46,38 @@ function connect(file: string): Promise<net.Socket | undefined> {
 }
 
 /**
+ * The native host (`agent-sessions-host`, from the agentio repo's `pnpm cli agent-sessions install`), started in place
+ * of this extension's own when it is installed: a few megabytes instead of a Node process, speaking the same protocol.
+ */
+const NATIVE_HOST = path.join(os.homedir(), '.agent-sessions', 'bin', 'agent-sessions-host');
+
+function hostCommand(): { command: string; args: string[] } {
+  try {
+    fs.accessSync(NATIVE_HOST, fs.constants.X_OK);
+    return { command: NATIVE_HOST, args: [] };
+  } catch {
+    return { command: process.execPath, args: [HOST_SCRIPT] };
+  }
+}
+
+/**
  * The host must outlive the VS Code server that starts it, and a systemd service stops its whole cgroup, so it runs
  * as its own transient user unit where systemd is there, and as a detached session leader elsewhere.
+ *
+ * Every session's process (and whatever it runs: builds, tests, MCP servers) is in that unit, so when the kernel's OOM
+ * killer takes one of them, systemd's default `OOMPolicy=stop` would stop the whole unit and every session with it;
+ * `continue` leaves the rest running.
  */
 function startHost(): void {
   fs.mkdirSync(hostDir(), { recursive: true, mode: 0o700 });
+  const { command, args } = hostCommand();
   const viaSystemd = spawnSync(
     'systemd-run',
-    ['--user', '--unit=agent-sessions-host', '--collect', '--quiet', process.execPath, HOST_SCRIPT],
+    ['--user', '--unit=agent-sessions-host', '--collect', '--quiet', '--property=OOMPolicy=continue', command, ...args],
     { stdio: 'ignore', timeout: 3000 },
   );
   if (viaSystemd.status === 0) return;
-  const child = spawn(process.execPath, [HOST_SCRIPT], { detached: true, stdio: 'ignore', env: process.env });
+  const child = spawn(command, args, { detached: true, stdio: 'ignore', env: process.env });
   child.unref();
 }
 
