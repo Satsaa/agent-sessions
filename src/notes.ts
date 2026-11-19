@@ -8,9 +8,17 @@ import type { Tool } from './types.js';
  * (notes-cli.ts), and a person reads under the session's row. One file per session under the user's home, like the
  * marks (marks.ts), so every window and the command itself share it. A tool's own transcript is never written.
  */
+/**
+ * How much a note matters to the person: `low` ones are listed only on asking, `high` ones first. Missing is `normal`,
+ * which is never stored.
+ */
+export const PRIORITIES = ['low', 'normal', 'high'] as const;
+export type Priority = (typeof PRIORITIES)[number];
+
 export interface Task {
   id: string;
   text: string;
+  priority?: Priority;
   /** `dropped`: abandoned. It stays listed, with why. */
   state: 'open' | 'done' | 'dropped';
   at: number;
@@ -24,6 +32,7 @@ export interface Answer {
   id: string;
   /** The user's question. */
   text: string;
+  priority?: Priority;
   /** `stale`: no longer worth an answer. It keeps the answer it had, and reopening returns it to where it was. */
   state: 'open' | 'answered' | 'stale';
   at: number;
@@ -37,6 +46,7 @@ export interface Answer {
 export interface Question {
   id: string;
   text: string;
+  priority?: Priority;
   /** `stale`: no longer needs the user. Reopening returns it to where it was. */
   state: 'open' | 'answered' | 'stale';
   at: number;
@@ -320,6 +330,14 @@ export function editSessionDone(notes: SessionNotes, part: DonePart, text: strin
 
 export function reopenSession(notes: SessionNotes): void {
   delete notes.done;
+}
+
+/** Sets how much a note matters; `normal` is stored as nothing. */
+export function setPriority(notes: SessionNotes, kind: NoteKind, id: string, priority: Priority): Task | Answer | Question {
+  const row = kind === 'task' ? find(notes.tasks, id, 'task') : kind === 'answer' ? find(notes.answers, id, 'answer') : find(notes.questions, id, 'question');
+  if (priority === 'normal') delete row.priority;
+  else row.priority = priority;
+  return row;
 }
 
 export function markAnswerRead(notes: SessionNotes, id: string): Answer {

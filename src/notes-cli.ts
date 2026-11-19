@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import {
-  DONE_PARTS, NoteError, addAnswer, clearSessionStatus, setSessionStatus, addTags, removeTags, addQuestion, addTask, answerQuestion, emptyNotes, kindOf, markSessionDone, notesDir, notesFile, readNotes, reopenSession, setStale, setTaskState,
+  DONE_PARTS, NoteError, PRIORITIES, setPriority, type Priority, addAnswer, clearSessionStatus, setSessionStatus, addTags, removeTags, addQuestion, addTask, answerQuestion, emptyNotes, kindOf, markSessionDone, notesDir, notesFile, readNotes, reopenSession, setStale, setTaskState,
   updateNotes, writeAnswer, type DonePart, type SessionNotes,
 } from './notes.js';
 import type { Tool } from './types.js';
@@ -21,6 +21,8 @@ const USAGE = `Records this session's tasks, answers and questions; the user see
   agent-sessions ask-user answered <id> <what the user answered>
   agent-sessions ask stale <id>, ask-user stale <id>
                                           no longer needed
+  agent-sessions task|ask|ask-user priority <id> low|normal|high
+                                          how much it matters; low ones are listed only on asking
   agent-sessions tag add <tag>...         what the session is about: tenant:<company>, area:<product area>, issue:#<id> <name>, report-to:<person>
   agent-sessions tag remove <tag>...
   agent-sessions status partial <what is delivered and what is left>
@@ -145,9 +147,10 @@ export function formatNotes(notes: SessionNotes): string {
   const lines: string[] = [];
   if (notes.status) lines.push(`Status: ${notes.status.state}: ${notes.status.text}`);
   if (notes.tags.length) lines.push(`Tags: ${notes.tags.join(', ')}`);
-  if (notes.tasks.length) lines.push('Tasks', ...notes.tasks.map((t) => `  ${t.id} [${t.state}] ${t.text}`));
-  if (notes.answers.length) lines.push("Answers (the user's questions)", ...notes.answers.map((a) => `  ${a.id} [${a.state}] ${a.text}`));
-  if (notes.questions.length) lines.push('Questions (asked of the user)', ...notes.questions.map((q) => `  ${q.id} [${q.state === 'open' ? 'waiting for the user' : q.state}] ${q.text}`));
+  const pri = (row: { priority?: Priority }): string => (row.priority ? ` (${row.priority} priority)` : '');
+  if (notes.tasks.length) lines.push('Tasks', ...notes.tasks.map((t) => `  ${t.id} [${t.state}]${pri(t)} ${t.text}`));
+  if (notes.answers.length) lines.push("Answers (the user's questions)", ...notes.answers.map((a) => `  ${a.id} [${a.state}]${pri(a)} ${a.text}`));
+  if (notes.questions.length) lines.push('Questions (asked of the user)', ...notes.questions.map((q) => `  ${q.id} [${q.state === 'open' ? 'waiting for the user' : q.state}]${pri(q)} ${q.text}`));
   if (notes.done) lines.push('Session done', ...DONE_PARTS.map((part) => `  ${part}: ${notes.done![part]}`));
   return lines.join('\n');
 }
@@ -229,6 +232,19 @@ export function runCommand(file: string, args: readonly string[], stdin: () => s
         const target = id(rest[0]);
         const kind = kindOf(n, target);
         return `${setStale(n, kind === 'answer' || kind === 'question' ? kind : group === 'ask' || group === 'answer' ? 'answer' : 'question', target, true).id} marked stale`;
+      });
+      break;
+    case 'task priority':
+    case 'ask priority':
+    case 'ask-user priority':
+    case 'answer priority':
+    case 'question priority':
+      change((n) => {
+        const target = id(rest[0]);
+        const level = rest[1];
+        if (rest.length !== 2 || !PRIORITIES.includes(level as Priority)) throw new NoteError(`priority takes the id and one of ${PRIORITIES.join(', ')}`);
+        const kind = group === 'task' ? 'task' : group === 'ask' || group === 'answer' ? 'answer' : 'question';
+        return `${setPriority(n, kind, target, level as Priority).id} priority ${level}`;
       });
       break;
     case 'tag add':

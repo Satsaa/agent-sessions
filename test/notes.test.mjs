@@ -78,6 +78,23 @@ test('a question asked of the user waits for them until they answer it, and coun
   assert.equal(readNotes(file).questions[2].state, 'open', 'reopened, an unanswered question waits again');
 });
 
+test('a note’s priority is set on its row, listed beside it, and normal is stored as nothing', () => {
+  const file = notesFile(join(directory, 'priority'), 'claude', 's7');
+  runCommand(file, ['task', 'add', 'Tidy', 'the', 'logs'], noStdin);
+  runCommand(file, ['ask', 'add', 'Why', 'is', 'it', 'slow?'], noStdin);
+  runCommand(file, ['ask-user', 'add', 'Ship', 'today?'], noStdin);
+  assert.equal(runCommand(file, ['task', 'priority', 't1', 'low'], noStdin), 't1 priority low');
+  runCommand(file, ['ask', 'priority', 'a2', 'high'], noStdin);
+  runCommand(file, ['ask-user', 'priority', 'q3', 'high'], noStdin);
+  const notes = readNotes(file);
+  assert.deepEqual([notes.tasks[0].priority, notes.answers[0].priority, notes.questions[0].priority], ['low', 'high', 'high']);
+  assert.match(runCommand(file, ['list'], noStdin), /t1 \[open\] \(low priority\) Tidy the logs/, 'the list says a priority other than normal');
+  runCommand(file, ['task', 'priority', 't1', 'normal'], noStdin);
+  assert.equal('priority' in readNotes(file).tasks[0], false, 'normal is the default and is not stored');
+  assert.throws(() => runCommand(file, ['task', 'priority', 't1', 'urgent'], noStdin), /one of low, normal, high/);
+  assert.throws(() => runCommand(file, ['ask', 'priority', 't1', 'low'], noStdin), /no answer t1/, 'an id of another kind is refused');
+});
+
 test('a file from before answers had their name keeps the user’s questions as answers, and earlier sessions’ commands still land', async () => {
   const dir = join(directory, 'legacy');
   const file = notesFile(dir, 'claude', 's6');
