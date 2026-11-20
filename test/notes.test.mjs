@@ -242,3 +242,20 @@ test('a session’s status is set and cleared by its agent, and done replaces it
   runCommand(file, ['status', 'clear'], noStdin);
   assert.equal(existsSync(file), false, 'a file with nothing left in it goes');
 });
+
+test('a note’s title is what it is about in three words at most, listed before its text', () => {
+  const file = notesFile(join(directory, 'titles'), 'claude', 's8');
+  assert.equal(runCommand(file, ['task', 'add', '--title', 'Agent Sessions', 'Show titles before notes'], noStdin), 't1 added');
+  runCommand(file, ['ask-user', 'add', 'Which', 'colour?', '--title', 'Status bar'], noStdin);
+  runCommand(file, ['ask', 'add', 'Untitled question'], noStdin);
+  const notes = readNotes(file);
+  assert.deepEqual([notes.tasks[0].title, notes.questions[0].title, 'title' in notes.answers[0]], ['Agent Sessions', 'Status bar', false]);
+  const list = runCommand(file, ['list'], noStdin);
+  assert.match(list, /t1 \[open\] Agent Sessions: Show titles before notes/, 'the list reads <title>: <text>');
+  assert.match(list, /q2 \[waiting for the user\] Status bar: Which colour\?/, '--title may come after the text');
+  assert.match(list, /a3 \[open\] Untitled question/, 'a note without a title reads as before');
+  assert.match(hookText('prompt', notes), /task t1: Agent Sessions: Show titles before notes/, 'the prompt hook lists the title too');
+  assert.throws(() => runCommand(file, ['task', 'add', '--title', 'One two three four', 'x'], noStdin), /longer than 3 words/);
+  assert.throws(() => runCommand(file, ['task', 'add', '--title', 'Extraordinarily-long-hyphenated-title', 'x'], noStdin), /longer than 30 characters/);
+  assert.throws(() => runCommand(file, ['task', 'done', 't1', '--title', 'X', 'done'], noStdin), /only when adding/);
+});

@@ -24,7 +24,7 @@ import { renameSession } from './rename.js';
 import { deleteWorktree } from './delete-worktree.js';
 import { rememberOpenSections, trackOpenSections } from './open-sections.js';
 import { CurrentSessionProvider, NoteGroupItem, NoteItem, ROW_DETAILS, noteChangedAt, SessionItem, SessionsProvider, type ActiveSort, type GroupBy, type RowDetail, type SubagentLayout, type ViewOptions } from './tree.js';
-import { DONE_PARTS, answerQuestion, editSessionDone, hasNotes, markAnswerRead, notesDir, notesFile, readAllNotes, removeNote, reopenSession, setStale, setTaskState, updateNotes, watchNotes, type Answer, type SessionNotes, type Task } from './notes.js';
+import { DONE_PARTS, answerQuestion, editSessionDone, hasNotes, markAnswerRead, noteLabel, notesDir, notesFile, readAllNotes, removeNote, reopenSession, setStale, setTaskState, updateNotes, watchNotes, type Answer, type SessionNotes, type Task } from './notes.js';
 import { installNotes, marketplacePath, notesCommandPath, notesOutdated, uninstallNotes, type NotesInstallPaths } from './notes-install.js';
 import { isLive, toolLabel, type Session, type Tool } from './types.js';
 import { switchCodexAccount } from './codex-accounts-ui.js';
@@ -979,7 +979,7 @@ export function activate(context: vscode.ExtensionContext): void {
           return [
             `# Answers${title ? ` in “${title}”` : ''}`,
             ...answers.map((a) => [
-              `## ${a.text}`,
+              `## ${noteLabel(a)}`,
               `You asked ${when(a.at)}${a.state === 'stale' ? ' · marked stale' : ''}`,
               a.answer === undefined ? '_Not answered yet._' : `${a.answer}\n\n_Answered ${when(a.answeredAt ?? a.at)}_`,
             ].join('\n\n')),
@@ -989,7 +989,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const t = mine?.tasks.find((x) => `${x.id}.md` === file);
         if (t) {
           return [
-            `# ${t.text}`,
+            `# ${noteLabel(t)}`,
             `Task added ${when(t.at)}${title ? ` in “${title}”` : ''}`,
             t.state === 'open' ? '_Not done yet._' : `## ${t.state === 'done' ? 'Done' : 'Dropped'}\n\n${t.resolution ?? '_Nothing was said of it._'}\n\n_${when(t.closedAt ?? t.at)}_`,
             '',
@@ -998,7 +998,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const a = mine?.answers.find((x) => `${x.id}.md` === file);
         if (a) {
           return [
-            `# ${a.text}`,
+            `# ${noteLabel(a)}`,
             `You asked ${when(a.at)}${title ? ` in “${title}”` : ''}${a.state === 'stale' ? ' · marked stale' : ''}`,
             a.answer === undefined ? '_Not answered yet._' : `## Answer\n\n${a.answer}\n\n_Answered ${when(a.answeredAt ?? a.at)}_`,
             '',
@@ -1007,7 +1007,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const q = mine?.questions.find((x) => `${x.id}.md` === file);
         if (!q) return '# This is no longer recorded.\n';
         return [
-          `# ${q.text}`,
+          `# ${noteLabel(q)}`,
           `Asked of you ${when(q.at)}${title ? ` in “${title}”` : ''}${q.state === 'stale' ? ' · marked stale' : ''}`,
           q.state === 'open' ? '_Waiting for your answer._'
           : q.answer === undefined ? `_Marked answered ${when(q.answeredAt ?? q.at)}._`
@@ -1027,7 +1027,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('agentSessions.note.done', async (arg: unknown, selected: unknown) => {
       const tasks = noteItemsOf(arg, selected).filter((item) => item.kind === 'task');
       if (!tasks.length) return;
-      const resolution = await askResolution(tasks.length === 1 ? `Done: ${tasks[0]!.note.text}` : `Done: ${tasks.length} tasks`, '');
+      const resolution = await askResolution(tasks.length === 1 ? `Done: ${noteLabel(tasks[0]!.note)}` : `Done: ${tasks.length} tasks`, '');
       if (resolution === undefined) return;
       for (const item of tasks) changeNote(item, (n) => void setTaskState(n, item.note.id, 'done', resolution));
     }),
@@ -1049,7 +1049,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!(arg instanceof NoteItem) || arg.kind !== 'task') return;
       const task = arg.note as Task;
       if (task.state === 'open') return;
-      const resolution = await askResolution(`${task.state === 'done' ? 'Done' : 'Dropped'}: ${task.text}`, task.resolution ?? '');
+      const resolution = await askResolution(`${task.state === 'done' ? 'Done' : 'Dropped'}: ${noteLabel(task)}`, task.resolution ?? '');
       if (resolution !== undefined) changeNote(arg, (n) => void setTaskState(n, task.id, task.state, resolution, task.closedAt));
     }),
     vscode.commands.registerCommand('agentSessions.note.markRead', (arg: unknown, selected: unknown) => {

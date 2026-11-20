@@ -15,9 +15,15 @@ import type { Tool } from './types.js';
 export const PRIORITIES = ['low', 'normal', 'high'] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
+/** A note's title is what it is about in at most this many words and characters ("Agent Sessions"). */
+export const TITLE_WORDS = 3;
+export const TITLE_CHARS = 30;
+
 export interface Task {
   id: string;
   text: string;
+  /** What it is about, shown before the text; notes from before titles have none. */
+  title?: string;
   priority?: Priority;
   /** `dropped`: abandoned. It stays listed, with why. */
   state: 'open' | 'done' | 'dropped';
@@ -32,6 +38,8 @@ export interface Answer {
   id: string;
   /** The user's question. */
   text: string;
+  /** What it is about, shown before the text; notes from before titles have none. */
+  title?: string;
   priority?: Priority;
   /** `stale`: no longer worth an answer. It keeps the answer it had, and reopening returns it to where it was. */
   state: 'open' | 'answered' | 'stale';
@@ -46,6 +54,8 @@ export interface Answer {
 export interface Question {
   id: string;
   text: string;
+  /** What it is about, shown before the text; notes from before titles have none. */
+  title?: string;
   priority?: Priority;
   /** `stale`: no longer needs the user. Reopening returns it to where it was. */
   state: 'open' | 'answered' | 'stale';
@@ -216,14 +226,33 @@ function clean(text: string, what: string): string {
   return t;
 }
 
+/** A title of at most `TITLE_WORDS` words and `TITLE_CHARS` characters, or none. */
+function checkTitle(title: string | undefined): string | undefined {
+  if (title === undefined) return undefined;
+  const t = clean(title, 'the title').replace(/\s+/g, ' ');
+  if (t.split(' ').length > TITLE_WORDS) throw new NoteError(`the title "${t}" is longer than ${TITLE_WORDS} words`);
+  if (t.length > TITLE_CHARS) throw new NoteError(`the title "${t}" is longer than ${TITLE_CHARS} characters`);
+  return t;
+}
+
+function titled(title: string | undefined): { title?: string } {
+  const t = checkTitle(title);
+  return t === undefined ? {} : { title: t };
+}
+
+/** How a note reads wherever it is listed: `<title>: <text>`, or its text alone without a title. */
+export function noteLabel(note: { title?: string; text: string }): string {
+  return note.title ? `${note.title}: ${note.text}` : note.text;
+}
+
 function find<T extends { id: string }>(list: T[], id: string, what: string): T {
   const row = list.find((x) => x.id === id);
   if (!row) throw new NoteError(`no ${what} ${id} in this session${list.length ? ` (it has ${list.map((x) => x.id).join(', ')})` : ''}`);
   return row;
 }
 
-export function addTask(notes: SessionNotes, text: string, now = Date.now()): Task {
-  const task: Task = { id: `t${++notes.seq}`, text: clean(text, 'the task'), state: 'open', at: now };
+export function addTask(notes: SessionNotes, text: string, title?: string, now = Date.now()): Task {
+  const task: Task = { id: `t${++notes.seq}`, ...titled(title), text: clean(text, 'the task'), state: 'open', at: now };
   notes.tasks.push(task);
   delete notes.done;
   return task;
@@ -244,8 +273,8 @@ export function setTaskState(notes: SessionNotes, id: string, state: Task['state
 }
 
 /** The user asked a question; the agent owes it an answer. */
-export function addAnswer(notes: SessionNotes, question: string, now = Date.now()): Answer {
-  const answer: Answer = { id: `a${++notes.seq}`, text: clean(question, 'the question'), state: 'open', at: now };
+export function addAnswer(notes: SessionNotes, question: string, title?: string, now = Date.now()): Answer {
+  const answer: Answer = { id: `a${++notes.seq}`, ...titled(title), text: clean(question, 'the question'), state: 'open', at: now };
   notes.answers.push(answer);
   delete notes.done;
   return answer;
@@ -262,8 +291,8 @@ export function writeAnswer(notes: SessionNotes, id: string, text: string, now =
 }
 
 /** The agent asked the user a question; it waits for the user. */
-export function addQuestion(notes: SessionNotes, text: string, now = Date.now()): Question {
-  const question: Question = { id: `q${++notes.seq}`, text: clean(text, 'the question'), state: 'open', at: now };
+export function addQuestion(notes: SessionNotes, text: string, title?: string, now = Date.now()): Question {
+  const question: Question = { id: `q${++notes.seq}`, ...titled(title), text: clean(text, 'the question'), state: 'open', at: now };
   notes.questions.push(question);
   delete notes.done;
   return question;

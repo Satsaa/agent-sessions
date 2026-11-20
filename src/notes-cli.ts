@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import {
-  DONE_PARTS, NoteError, PRIORITIES, setPriority, type Priority, addAnswer, clearSessionStatus, setSessionStatus, addTags, removeTags, addQuestion, addTask, answerQuestion, emptyNotes, kindOf, markSessionDone, notesDir, notesFile, readNotes, reopenSession, setStale, setTaskState,
+  DONE_PARTS, NoteError, PRIORITIES, noteLabel, setPriority, type Priority, addAnswer, clearSessionStatus, setSessionStatus, addTags, removeTags, addQuestion, addTask, answerQuestion, emptyNotes, kindOf, markSessionDone, notesDir, notesFile, readNotes, reopenSession, setStale, setTaskState,
   updateNotes, writeAnswer, type DonePart, type SessionNotes,
 } from './notes.js';
 import type { Tool } from './types.js';
@@ -12,12 +12,15 @@ import type { Tool } from './types.js';
  */
 const USAGE = `Records this session's tasks, answers and questions; the user sees them listed under the session.
 
-  agent-sessions task add <text>          a deliverable, e.g. "Create v2 phone engine"
+  agent-sessions task add --title <title> <text>
+                                          a deliverable, e.g. --title "Phone engine" "Create the v2 engine"
   agent-sessions task done <id> <what was delivered>
   agent-sessions task drop <id> <why it was abandoned>
-  agent-sessions ask add <question>       a question the user asked you
+  agent-sessions ask add --title <title> <question>
+                                          a question the user asked you
   agent-sessions ask write <id> <answer>
-  agent-sessions ask-user add <question>  a question you asked the user, waiting for them
+  agent-sessions ask-user add --title <title> <question>
+                                          a question you asked the user, waiting for them
   agent-sessions ask-user answered <id> <what the user answered>
   agent-sessions ask stale <id>, ask-user stale <id>
                                           no longer needed
@@ -33,6 +36,8 @@ const USAGE = `Records this session's tasks, answers and questions; the user see
                                           closes the session; every part is said, "none" with the reason included
   agent-sessions reopen                   the session is not done after all
 
+A title is what the note is about in at most 3 words ("Agent Sessions"), listed before it as <title>: <text>; the
+text never repeats it.
 A text given as - is read from standard input, for anything with quotes or several lines:
   agent-sessions ask write a1 - <<'END'
   …
@@ -50,11 +55,12 @@ export const INSTRUCTIONS = `## Session tasks, answers and questions (Agent Sess
 
 This applies to every session and is not optional: a task, an answer or a question left unrecorded is one the user loses track of. Record every time, in the same turn, before starting the work; when in doubt, record it.
 
-- **Every deliverable the user asks for is a task**, recorded the moment it is asked: a plan, a doc, a skill change, a code change, a fix, small ones and ones delegated to a subagent included. Name the deliverable, such as "Create v2 phone engine", never a step of one or your own todo list (\`task add "<name>"\`). Close it when it is finished and checked, saying in a line or two what was delivered and where (\`task done <id> "<what was delivered>"\`), or when it is abandoned, saying why (\`task drop <id> "<why>"\`).
-- **Every question the user asks is recorded as an answer to give**, in their words (\`ask add "<their question>"\`), unless your same short reply answers it fully.
+- **Every deliverable the user asks for is a task**, recorded the moment it is asked: a plan, a doc, a skill change, a code change, a fix, small ones and ones delegated to a subagent included. Name the deliverable, such as "Create v2 phone engine", never a step of one or your own todo list (\`task add --title "<title>" "<name>"\`). Close it when it is finished and checked, saying in a line or two what was delivered and where (\`task done <id> "<what was delivered>"\`), or when it is abandoned, saying why (\`task drop <id> "<why>"\`).
+- **Every question the user asks is recorded as an answer to give**, in their words (\`ask add --title "<title>" "<their question>"\`), unless your same short reply answers it fully.
 - **Answer it in both places**: write the answer in your reply, and record the same answer with \`ask write <id> -\`, the text on standard input. The user reads recorded answers on their own, so the text must make sense without the conversation. **A recorded answer, and a task's done or drop summary, is terse and specific**: only what answers it, with no hedging, no restating of the question, and no filler or obvious context; a short header per point with bullets under it, never paragraphs of prose.
 - **A recorded answer always matches the latest answer in the conversation**: when a later reply changes, corrects or extends it, such as after a follow-up like "are you sure?", record it again with \`ask write <id> -\` in the same turn, before ending it. A stale recorded answer is wrong.
-- **Every question you ask the user is recorded**, the moment you ask it (\`ask-user add "<question>"\`): a decision only they can make, something you need from them, a choice you offer. It stays listed as waiting for them. When they answer, record what they answered in the same turn (\`ask-user answered <id> "<their answer>"\`); \`ask-user stale <id>\` marks one that no longer needs them.
+- **Every question you ask the user is recorded**, the moment you ask it (\`ask-user add --title "<title>" "<question>"\`): a decision only they can make, something you need from them, a choice you offer. It stays listed as waiting for them. When they answer, record what they answered in the same turn (\`ask-user answered <id> "<their answer>"\`); \`ask-user stale <id>\` marks one that no longer needs them.
+- **Every task and question is added with a title**: what it is about in at most three words (\`--title "Agent Sessions"\`), listed before it as \`<title>: <text>\`, so the text never repeats it.
 - The user can record these themselves with the plugin's commands: /task, /ask for a question of theirs to you, /ask-user to see what waits for them. A question the user writes is theirs, whichever command they wrote it with. Do not expect them to record anything: recording is your job either way.
 - Before ending a turn in a session that has anything recorded, run \`list\` and answer what you can now. Leave the rest open; \`ask stale <id>\` marks a question of theirs that no longer matters.
 - **Tag the session with what it is about**, as soon as you know it (\`tag add "<key>:<value>"\`): \`tenant:<company>\` when the work is for one customer company, named as its tenant is, \`area:<product area>\` for the part of the product it changes, \`issue:#<id> <name>\` for each board issue it works on (number and name), and \`report-to:<person>\` for the person other than the user who waits for its outcome. The user's list groups sessions by them. Add a tag when the work reaches another one; remove one that turned out wrong (\`tag remove\`).
@@ -67,9 +73,9 @@ This applies to every session and is not optional: a task, an answer or a questi
  */
 export function hookText(event: string, notes: SessionNotes): string {
   const open = [
-    ...notes.tasks.filter((t) => t.state === 'open').map((t) => `  task ${t.id}: ${t.text}`),
-    ...notes.answers.filter((a) => a.state === 'open').map((a) => `  answer ${a.id} (not answered yet): ${a.text}`),
-    ...notes.questions.filter((q) => q.state === 'open').map((q) => `  question ${q.id} (waiting for the user): ${q.text}`),
+    ...notes.tasks.filter((t) => t.state === 'open').map((t) => `  task ${t.id}: ${noteLabel(t)}`),
+    ...notes.answers.filter((a) => a.state === 'open').map((a) => `  answer ${a.id} (not answered yet): ${noteLabel(a)}`),
+    ...notes.questions.filter((q) => q.state === 'open').map((q) => `  question ${q.id} (waiting for the user): ${noteLabel(q)}`),
   ];
   if (event === 'session-start') return [INSTRUCTIONS, ...(notes.tasks.length || notes.answers.length || notes.questions.length || notes.done || notes.status || notes.tags.length ? ['', 'Recorded for this session so far:', formatNotes(notes)] : [])].join('\n');
   if (event !== 'prompt') throw new NoteError('hook takes session-start or prompt');
@@ -148,9 +154,9 @@ export function formatNotes(notes: SessionNotes): string {
   if (notes.status) lines.push(`Status: ${notes.status.state}: ${notes.status.text}`);
   if (notes.tags.length) lines.push(`Tags: ${notes.tags.join(', ')}`);
   const pri = (row: { priority?: Priority }): string => (row.priority ? ` (${row.priority} priority)` : '');
-  if (notes.tasks.length) lines.push('Tasks', ...notes.tasks.map((t) => `  ${t.id} [${t.state}]${pri(t)} ${t.text}`));
-  if (notes.answers.length) lines.push("Answers (the user's questions)", ...notes.answers.map((a) => `  ${a.id} [${a.state}]${pri(a)} ${a.text}`));
-  if (notes.questions.length) lines.push('Questions (asked of the user)', ...notes.questions.map((q) => `  ${q.id} [${q.state === 'open' ? 'waiting for the user' : q.state}]${pri(q)} ${q.text}`));
+  if (notes.tasks.length) lines.push('Tasks', ...notes.tasks.map((t) => `  ${t.id} [${t.state}]${pri(t)} ${noteLabel(t)}`));
+  if (notes.answers.length) lines.push("Answers (the user's questions)", ...notes.answers.map((a) => `  ${a.id} [${a.state}]${pri(a)} ${noteLabel(a)}`));
+  if (notes.questions.length) lines.push('Questions (asked of the user)', ...notes.questions.map((q) => `  ${q.id} [${q.state === 'open' ? 'waiting for the user' : q.state}]${pri(q)} ${noteLabel(q)}`));
   if (notes.done) lines.push('Session done', ...DONE_PARTS.map((part) => `  ${part}: ${notes.done![part]}`));
   return lines.join('\n');
 }
@@ -180,7 +186,13 @@ export function runCommand(file: string, args: readonly string[], stdin: () => s
     if (!word) throw new NoteError('the id is missing; `agent-sessions list` shows them');
     return word;
   };
-  const [group, verb, ...rest] = args;
+  const [group, verb, ...words] = args;
+  // `--title <title>` anywhere after the verb names what an added note is about.
+  const at = words.indexOf('--title');
+  const title = at >= 0 ? words[at + 1] : undefined;
+  if (at >= 0 && title === undefined) throw new NoteError('--title takes the title');
+  const rest = at >= 0 ? words.filter((_, i) => i !== at && i !== at + 1) : words;
+  if (title !== undefined && verb !== 'add') throw new NoteError('--title is given only when adding a task or a question');
   let out = '';
   const change = (apply: (notes: SessionNotes) => string): void => {
     updateNotes(file, (notes) => { out = apply(notes); });
@@ -189,7 +201,7 @@ export function runCommand(file: string, args: readonly string[], stdin: () => s
     case 'list':
       return formatNotes(readNotes(file));
     case 'task add':
-      change((n) => `${addTask(n, text(rest, 'the task')).id} added`);
+      change((n) => `${addTask(n, text(rest, 'the task'), title).id} added`);
       break;
     case 'task done':
       change((n) => `${setTaskState(n, id(rest[0]), 'done', text(rest.slice(1), 'what was delivered (one or two lines the user reads under the task)')).id} done`);
@@ -201,7 +213,7 @@ export function runCommand(file: string, args: readonly string[], stdin: () => s
     // names are still understood.
     case 'ask add':
     case 'answer add':
-      change((n) => `${addAnswer(n, text(rest, 'the question')).id} added; answer it with: agent-sessions ask write <id> <answer>`);
+      change((n) => `${addAnswer(n, text(rest, 'the question'), title).id} added; answer it with: agent-sessions ask write <id> <answer>`);
       break;
     case 'ask write':
     case 'answer write':
@@ -209,7 +221,7 @@ export function runCommand(file: string, args: readonly string[], stdin: () => s
       break;
     case 'ask-user add':
     case 'question add':
-      change((n) => `${addQuestion(n, text(rest, 'the question')).id} added; when the user answers, record it with: agent-sessions ask-user answered <id> <their answer>`);
+      change((n) => `${addQuestion(n, text(rest, 'the question'), title).id} added; when the user answers, record it with: agent-sessions ask-user answered <id> <their answer>`);
       break;
     case 'ask-user answered':
     case 'question answered':

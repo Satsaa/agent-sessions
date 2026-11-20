@@ -5,7 +5,7 @@ argument-hint: <question>
 ---
 The question is the user's own: what they wrote with this command. You answer it.
 
-1. Record it first, in the same turn, before any work, in their words: `~/.agent-sessions/bin/agent-sessions ask add -`, the question on standard input. It prints its id.
+1. Record it first, in the same turn, before any work, in their words, with a title of what it is about in at most three words (`--title "Agent Sessions"`), listed before the text, which never repeats it: `~/.agent-sessions/bin/agent-sessions ask add --title "<title>" -`, the question on standard input. It prints its id.
 2. Answer it. Write the answer in your reply, and record the same answer with `~/.agent-sessions/bin/agent-sessions ask write <id> -`, the text on standard input. The user reads recorded answers outside this conversation, so the text must make sense on its own.
    **A recorded answer is terse and specific**: only what answers the question, with no hedging, no restating of the question, and no filler or obvious context. Give each point a short header with bullets under it, never paragraphs of prose.
 3. If the answer needs work you cannot finish in this turn, say so and leave it open; answer it in both places when you have it.

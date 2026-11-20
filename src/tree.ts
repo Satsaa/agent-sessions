@@ -6,7 +6,7 @@ import { statsInline, type WorktreeStats } from './worktree.js';
 import { stateIcon, toolIcon } from './icons.js';
 import { sectionState, type Section } from './open-sections.js';
 import { ANSWERS_FLAG, NOTE_GROUP_ACTIONS, noteGroupFits } from './row-actions.js';
-import { noteCounts, type Answer, type NoteKind, type Question, type SessionNotes, type Task } from './notes.js';
+import { noteCounts, noteLabel, type Answer, type NoteKind, type Question, type SessionNotes, type Task } from './notes.js';
 
 export type GroupBy = 'activity' | 'repository' | 'tool' | 'none';
 
@@ -159,7 +159,7 @@ export class NoteItem extends vscode.TreeItem implements HoverTooltip {
   readonly tooltipOnHover: () => vscode.MarkdownString;
 
   constructor(public readonly session: Session, public readonly kind: NoteKind, public readonly note: Task | Answer | Question, idPrefix: string) {
-    super(oneLine(note.text), vscode.TreeItemCollapsibleState.None);
+    super(oneLine(noteLabel(note)), vscode.TreeItemCollapsibleState.None);
     this.id = `${idPrefix}/${note.id}`;
     const unread = kind === 'answer' && note.state === 'answered' && !(note as Answer).read;
     // `note-<kind>-<state>[-unread]`: what the menus' when-clauses and the row action picker read (row-actions.ts).
@@ -176,7 +176,7 @@ export class NoteItem extends vscode.TreeItem implements HoverTooltip {
     this.description = relativeTime(noteChangedAt(kind, note));
     this.tooltipOnHover = () => {
       const md = new vscode.MarkdownString(undefined, true);
-      md.appendMarkdown(`**${escapeMd(note.text)}**\n\n`);
+      md.appendMarkdown(`**${escapeMd(noteLabel(note))}**\n\n`);
       if (kind === 'question' && note.state === 'open') md.appendMarkdown('Waiting for you\n\n');
       if (said !== undefined) md.appendMarkdown(`${said}\n\n`);
       md.appendMarkdown(`$(clock) ${new Date(note.at).toLocaleString()} · \`${note.id}\``);
